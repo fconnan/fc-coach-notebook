@@ -7,7 +7,8 @@ import {
 } from '$lib/utils/placement';
 import type { PlayerPostureId } from '$lib/utils/playerPostures';
 import { PLAYER_POSTURES } from '$lib/utils/playerPostures';
-import { CAM3D_DEFAULTS, clampCam3dAngles, migrateCam3dDistance } from '$lib/utils/camera3d';
+import { CAM3D_DEFAULTS, clampCam3dAngles, migrateCam3dDistance, migrateCam3dToUser, defaultCam3dPosition } from '$lib/utils/camera3d';
+import type { UserPoint } from '$lib/utils/field3d';
 
 // ---------------------------------------------------------
 // Schema versioning
@@ -163,10 +164,13 @@ export interface Page {
   /** 3D camera (view === '3d'), persisted per page */
   cam3dYaw?: number;
   cam3dPitch?: number;
-  /** Longitudinal offset along the pitch from centre (−60…+60 m). */
+  /** Camera position in user coords (X=length, Y=width, Z=height). */
+  cam3dPosition?: UserPoint;
+  /** @deprecated Legacy orbit — migrated to cam3dPosition on load */
   cam3dDistance?: number;
-  /** Orbit radius (zoom), adjusted with mouse wheel. */
+  /** @deprecated Legacy orbit — migrated to cam3dPosition on load */
   cam3dRadius?: number;
+  /** @deprecated Legacy orbit target — migrated on load */
   cam3dTarget?: Position;
   // Animation
   frames: Frame[];
@@ -207,9 +211,7 @@ export const DEFAULT_PAGE: Page = {
   perspectiveScale: 0.86,
   cam3dYaw: CAM3D_DEFAULTS.yaw,
   cam3dPitch: CAM3D_DEFAULTS.pitch,
-  cam3dDistance: CAM3D_DEFAULTS.offsetZ,
-  cam3dRadius: CAM3D_DEFAULTS.radius,
-  cam3dTarget: { x: 0, y: 0 },
+  cam3dPosition: defaultCam3dPosition(),
   frames: [],
   activeFrameIndex: 0,
   session: {}
@@ -244,15 +246,16 @@ export function migratePage(data: Partial<Page>): Page {
   if (typeof merged.perspectiveScale !== 'number') merged.perspectiveScale = DEFAULT_PAGE.perspectiveScale;
   if (typeof merged.cam3dYaw !== 'number') merged.cam3dYaw = DEFAULT_PAGE.cam3dYaw;
   if (typeof merged.cam3dPitch !== 'number') merged.cam3dPitch = DEFAULT_PAGE.cam3dPitch;
-  if (typeof merged.cam3dDistance !== 'number') merged.cam3dDistance = DEFAULT_PAGE.cam3dDistance;
-  if (typeof merged.cam3dRadius !== 'number') merged.cam3dRadius = DEFAULT_PAGE.cam3dRadius;
-  if (!merged.cam3dTarget) merged.cam3dTarget = { ...DEFAULT_PAGE.cam3dTarget! };
   const angles = clampCam3dAngles({ yaw: merged.cam3dYaw, pitch: merged.cam3dPitch });
   merged.cam3dYaw = angles.yaw;
   merged.cam3dPitch = angles.pitch;
-  const migrated = migrateCam3dDistance(merged.cam3dDistance, merged.cam3dRadius);
-  merged.cam3dDistance = migrated.offsetZ;
-  merged.cam3dRadius = migrated.radius;
+  if (typeof merged.cam3dDistance === 'number' || typeof merged.cam3dRadius === 'number') {
+    migrateCam3dDistance(merged.cam3dDistance, merged.cam3dRadius);
+  }
+  const camUser = migrateCam3dToUser(merged);
+  merged.cam3dPosition = camUser.cam3dPosition;
+  merged.cam3dYaw = camUser.cam3dYaw;
+  merged.cam3dPitch = camUser.cam3dPitch;
   merged.schemaVersion = SCHEMA_VERSION;
   return merged;
 }
@@ -698,8 +701,8 @@ export function setMarkdownContent(content: string) {
   });
 }
 
-export function updatePageSettings(updates: Partial<Page>) {
-  pushHistory();
+export function updatePageSettings(updates: Partial<Page>, opts?: { skipHistory?: boolean }) {
+  if (!opts?.skipHistory) pushHistory();
   isDirty.set(true);
   pages.update(p => {
     const activeId = getCurrentPageId();

@@ -159,6 +159,40 @@ function visibleLengthRange(template: FieldTemplate): { min: number; max: number
   return { min: 0, max: PITCH.lengthPx };
 }
 
+/** Visible grass footprint (half-field + run-off band), matching Pitch.svelte clip. */
+export function visibleGrassRect(template: FieldTemplate): RectDef {
+  const half = halfFieldClip(template);
+  if (half) return half.grass;
+  return grassBackgroundRect();
+}
+
+/** Penalty spots visible for the template (excludes centre spot, like 2D). */
+export function buildVisibleSpotMarkers(template: FieldTemplate): { cx: number; cy: number }[] {
+  const { min, max } = visibleLengthRange(template);
+  return buildSpotMarkers().filter((s, i) => i > 0 && s.cx >= min && s.cx <= max);
+}
+
+function appendArcSegmentsClipped(
+  pts: number[],
+  arc: ArcDef,
+  minX: number,
+  maxX: number,
+  y: number
+) {
+  const segCount = arc.endDeg - arc.startDeg >= 359 ? 64 : 24;
+  const samples = sampleArc(arc, segCount);
+  let prev: [number, number, number] | null = null;
+  for (const [px, py] of samples) {
+    if (px < minX || px > maxX) {
+      prev = null;
+      continue;
+    }
+    const w = pitchPxToWorld(px, py, y);
+    if (prev) pts.push(prev[0], prev[1], prev[2], w[0], w[1], w[2]);
+    prev = w;
+  }
+}
+
 /** Touchline / halfway outline segments for the active template. */
 export function buildOutlineSegments(template: FieldTemplate): LineSeg[] {
   const { lengthPx: pw, widthPx: ph, halfLengthPx: hw } = PITCH;
@@ -374,19 +408,15 @@ export function buildAllArcs(template: FieldTemplate): ArcDef[] {
 
 /** Merge segments + arcs into one BufferGeometry positions array for Three.js LineSegments. */
 export function buildWorldLinePositions(template: FieldTemplate, y = 0.03): Float32Array {
+  const { min, max } = visibleLengthRange(template);
   const pts: number[] = [];
   for (const s of buildAllLineSegments(template)) {
     const a = pitchPxToWorld(s.x1, s.y1, y);
     const b = pitchPxToWorld(s.x2, s.y2, y);
     pts.push(a[0], a[1], a[2], b[0], b[1], b[2]);
   }
-  for (const arc of buildAllArcs(template)) {
-    const sampled = sampleArc(arc, arc.endDeg - arc.startDeg >= 359 ? 64 : 24);
-    for (let i = 0; i < sampled.length - 1; i++) {
-      const a = pitchPxToWorld(sampled[i][0], sampled[i][1], y);
-      const b = pitchPxToWorld(sampled[i + 1][0], sampled[i + 1][1], y);
-      pts.push(a[0], a[1], a[2], b[0], b[1], b[2]);
-    }
+  for (const arc of [...buildCornerArcs(), buildCenterCircle(), ...buildPenaltyArcs()]) {
+    appendArcSegmentsClipped(pts, arc, min, max, y);
   }
   return new Float32Array(pts);
 }

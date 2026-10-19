@@ -1,29 +1,19 @@
 <script lang="ts">
   import { T, useThrelte } from '@threlte/core';
   import { Color } from 'three';
-  import { OrbitControls, interactivity } from '@threlte/extras';
+  import { interactivity } from '@threlte/extras';
   import {
     currentPage,
     selectedIds,
     isPlaying,
     playbackElements,
     clearSelection,
-    updatePageSettings,
     EQUIPMENT_TYPES,
     type ComponentElement
   } from '$lib/stores/workspace';
   import { isStandingElement } from '$lib/utils/projection';
   import { view3dRenderer, view3dCamera } from '$lib/stores/view3d';
-  import {
-    sphericalCameraPosition,
-    cameraToSpherical,
-    ORBIT_RADIUS,
-    ORBIT_POLAR,
-    ORBIT_AZIMUTH,
-    clampCam3dAngles,
-    clampOffsetZ,
-    clampOrbitRadius
-  } from '$lib/utils/camera3d';
+  import { pageToThreeCameraPosition, pageToThreeOrbitTarget } from '$lib/utils/camera3d';
   import { register3dDragContext } from '$lib/utils/interactions3d';
   import Pitch3D from './Pitch3D.svelte';
   import Player3D from './Player3D.svelte';
@@ -65,32 +55,16 @@
     displayElements.filter((el) => isStandingElement(el.type))
   );
 
-  const offsetZ = $derived(clampOffsetZ($currentPage?.cam3dDistance ?? 0));
-  const target = $derived({ x: 0, z: offsetZ });
+  const fieldTemplate = $derived($currentPage?.fieldTemplate ?? 'Complet');
 
-  const angles = $derived(
-    clampCam3dAngles({
-      yaw: $currentPage?.cam3dYaw,
-      pitch: $currentPage?.cam3dPitch
-    })
-  );
-
-  const radius = $derived(clampOrbitRadius($currentPage?.cam3dRadius ?? ORBIT_RADIUS.default));
-
-  const camPos = $derived(
-    sphericalCameraPosition(angles.yaw, angles.pitch, radius, target)
-  );
-
-  function onControlsChange() {
-    if (!$camera) return;
-    const c = $camera.position;
-    const sph = cameraToSpherical({ x: c.x, y: c.y, z: c.z }, target);
-    updatePageSettings({
-      cam3dYaw: sph.yaw,
-      cam3dPitch: sph.pitch,
-      cam3dRadius: sph.radius
-    });
-  }
+  $effect(() => {
+    if (!$camera || !$currentPage) return;
+    const pos = pageToThreeCameraPosition($currentPage);
+    const tgt = pageToThreeOrbitTarget($currentPage);
+    $camera.position.set(pos[0], pos[1], pos[2]);
+    $camera.lookAt(tgt[0], tgt[1], tgt[2]);
+    $camera.updateMatrixWorld();
+  });
 
   function onGroundPointerDown(e: PointerEvent & { stopPropagation: () => void }) {
     if ($isPlaying) return;
@@ -98,19 +72,7 @@
   }
 </script>
 
-<T.PerspectiveCamera makeDefault position={camPos} fov={45} near={0.1} far={500} />
-<OrbitControls
-  target={[target.x, 0, target.z]}
-  enableDamping
-  dampingFactor={0.08}
-  minAzimuthAngle={ORBIT_AZIMUTH.min}
-  maxAzimuthAngle={ORBIT_AZIMUTH.max}
-  minPolarAngle={ORBIT_POLAR.min}
-  maxPolarAngle={ORBIT_POLAR.max}
-  minDistance={ORBIT_RADIUS.min}
-  maxDistance={ORBIT_RADIUS.max}
-  onchange={onControlsChange}
-/>
+<T.PerspectiveCamera makeDefault fov={45} near={0.1} far={500} />
 
 <T.AmbientLight intensity={0.55} />
 <T.DirectionalLight
@@ -125,7 +87,7 @@
 />
 
 <Pitch3D
-  template={$currentPage?.fieldTemplate ?? 'Complet'}
+  template={fieldTemplate}
   grassColor={$currentPage?.backgroundColor}
   showStripes={$currentPage?.showFieldStripes}
   hideLines={$currentPage?.hidePitchLines}

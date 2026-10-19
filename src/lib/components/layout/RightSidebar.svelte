@@ -6,32 +6,49 @@
   } from '$lib/stores/workspace';
   import PlayerFigure from '../shapes/PlayerFigure.svelte';
   import { posturesForPlayer, resolvePosture, defaultPosture, type PlayerPostureId } from '$lib/utils/playerPostures';
-  import { CAM3D_LIMITS, CAM3D_DEFAULTS, cam3dOffsetHint, clampCam3dAngles, clampOffsetZ } from '$lib/utils/camera3d';
+  import {
+    CAM3D_LIMITS,
+    clampCam3dAngles,
+    clampUserCameraPosition,
+    getCam3dPosition
+  } from '$lib/utils/camera3d';
 
   let { width = 290 } = $props<{ width?: number }>();
 
   const sel = $derived($selectedElements);
   const one = $derived(sel.length === 1 ? sel[0] : null);
 
-  const cam3dUi = $derived({
-    yaw: clampCam3dAngles({ yaw: $currentPage.cam3dYaw, pitch: $currentPage.cam3dPitch }).yaw,
-    pitch: clampCam3dAngles({ yaw: $currentPage.cam3dYaw, pitch: $currentPage.cam3dPitch }).pitch,
-    offset: clampOffsetZ($currentPage.cam3dDistance ?? CAM3D_DEFAULTS.offsetZ)
+  const cam3dUi = $derived.by(() => {
+    const pos = getCam3dPosition($currentPage);
+    const angles = clampCam3dAngles({
+      yaw: $currentPage.cam3dYaw,
+      pitch: $currentPage.cam3dPitch
+    });
+    return {
+      x: Math.round(pos.x * 10) / 10,
+      y: Math.round(pos.y * 10) / 10,
+      z: Math.round(pos.z * 10) / 10,
+      yaw: angles.yaw,
+      pitch: angles.pitch
+    };
   });
 
-  function setCam3d(partial: { cam3dYaw?: number; cam3dPitch?: number; cam3dDistance?: number }) {
+  function setCam3dAngles(partial: { cam3dYaw?: number; cam3dPitch?: number }) {
     const angles = clampCam3dAngles({
       yaw: partial.cam3dYaw ?? $currentPage.cam3dYaw,
       pitch: partial.cam3dPitch ?? $currentPage.cam3dPitch
     });
-    const patch: Record<string, number> = {
-      cam3dYaw: angles.yaw,
-      cam3dPitch: angles.pitch
-    };
-    if (partial.cam3dDistance !== undefined) {
-      patch.cam3dDistance = clampOffsetZ(partial.cam3dDistance);
-    }
-    updatePageSettings(patch);
+    updatePageSettings({ cam3dYaw: angles.yaw, cam3dPitch: angles.pitch });
+  }
+
+  function setCam3dWorld(axis: 'x' | 'y' | 'z', e: Event) {
+    const v = parseFloat((e.target as HTMLInputElement).value);
+    if (isNaN(v)) return;
+    const pos = getCam3dPosition($currentPage);
+    const next = { ...pos, [axis]: v };
+    updatePageSettings({
+      cam3dPosition: clampUserCameraPosition(next, $currentPage.fieldTemplate)
+    });
   }
 
   function updateAll(updates: Partial<ComponentElement>) {
@@ -436,17 +453,32 @@
           </div>
         {/if}
         {#if $currentPage.view === '3d'}
+          <div class="prop-group perspective-props row cam-pos-row">
+            <div class="field">
+              <label for="camX">Caméra X</label>
+              <input id="camX" type="number" step="0.1" value={cam3dUi.x} oninput={(e) => setCam3dWorld('x', e)} />
+            </div>
+            <div class="field">
+              <label for="camY">Y</label>
+              <input id="camY" type="number" step="0.1" value={cam3dUi.y} oninput={(e) => setCam3dWorld('y', e)} />
+            </div>
+            <div class="field">
+              <label for="camZ">Z</label>
+              <input id="camZ" type="number" step="0.1" value={cam3dUi.z} oninput={(e) => setCam3dWorld('z', e)} />
+            </div>
+          </div>
+          <p class="help-text cam-pos-hint">Position en mètres (X = longueur · Y = largeur · Z = hauteur).</p>
           <div class="prop-group perspective-props">
-            <label for="camYaw">Rotation ({cam3dUi.yaw}°)</label>
+            <label for="camYaw">Angle ({cam3dUi.yaw}°)</label>
             <input
               id="camYaw"
               type="range"
               min={CAM3D_LIMITS.yawMin}
               max={CAM3D_LIMITS.yawMax}
               value={cam3dUi.yaw}
-              oninput={(e) => setCam3d({ cam3dYaw: parseInt(e.currentTarget.value) })}
+              oninput={(e) => setCam3dAngles({ cam3dYaw: parseInt(e.currentTarget.value) })}
             />
-            <p class="help-text">0°–180° autour du point de visée.</p>
+            <p class="help-text">0° = vue vers l'attaque (+X).</p>
           </div>
           <div class="prop-group perspective-props">
             <label for="camPitch">Inclinaison ({cam3dUi.pitch}°)</label>
@@ -456,23 +488,11 @@
               min={CAM3D_LIMITS.pitchMin}
               max={CAM3D_LIMITS.pitchMax}
               value={cam3dUi.pitch}
-              oninput={(e) => setCam3d({ cam3dPitch: parseInt(e.currentTarget.value) })}
+              oninput={(e) => setCam3dAngles({ cam3dPitch: parseInt(e.currentTarget.value) })}
             />
             <p class="help-text">0° = rasante · 90° = vue de dessus.</p>
           </div>
-          <div class="prop-group perspective-props">
-            <label for="camDist">Position ({cam3dUi.offset} m)</label>
-            <input
-              id="camDist"
-              type="range"
-              min={CAM3D_LIMITS.offsetMin}
-              max={CAM3D_LIMITS.offsetMax}
-              value={cam3dUi.offset}
-              oninput={(e) => setCam3d({ cam3dDistance: parseInt(e.currentTarget.value) })}
-            />
-            <p class="help-text">{cam3dOffsetHint()}</p>
-          </div>
-          <p class="help-text">Orbite : clic gauche · Zoom : molette · Pan : clic droit</p>
+          <p class="help-text">Molette : avancer/reculer · Shift+molette : latéral · Ctrl+molette : hauteur · Clic+drag : rotation · Shift+drag : inclinaison</p>
         {/if}
       </div>
 
@@ -623,6 +643,9 @@
   .prop-group input[type="range"] { width: 100%; accent-color: var(--accent-primary); }
   .perspective-props { margin-top: 10px; }
   .perspective-props .help-text { margin-top: 4px; font-style: normal; }
+  .cam-pos-row { margin-bottom: 4px; }
+  .cam-pos-row .field label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+  .cam-pos-hint { margin-top: 0; margin-bottom: 10px; }
   .posture-hint { margin: 4px 0 8px; font-style: normal; }
   .posture-grid {
     display: grid;

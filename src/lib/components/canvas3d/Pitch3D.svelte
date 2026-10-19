@@ -3,14 +3,13 @@
   import * as THREE from 'three';
   import type { FieldTemplate } from '$lib/utils/fieldBounds';
   import {
-    PX_PER_M,
     lightenGrassColor,
-    grassBackgroundRect,
+    visibleGrassRect,
     buildVisibleStripeRects,
     stripeRectToWorld,
     buildWorldLinePositions,
     buildPenaltyArcWorldPositions,
-    buildSpotMarkers,
+    buildVisibleSpotMarkers,
     pitchPxToWorld,
     buildGoal3DSpecs
   } from '$lib/utils/pitchMarkings';
@@ -33,11 +32,8 @@
     goalNetOpacity?: number;
   }>();
 
-  const grassRect = grassBackgroundRect();
-  const grassSizeM = $derived({
-    width: grassRect.h / PX_PER_M,
-    length: grassRect.w / PX_PER_M
-  });
+  const grassRect = $derived(visibleGrassRect(template));
+  const grassWorld = $derived(stripeRectToWorld(grassRect));
 
   const stripes = $derived(showStripes ? buildVisibleStripeRects(template) : []);
 
@@ -53,16 +49,16 @@
   });
 
   const spotPositions = $derived.by(() => {
-    return buildSpotMarkers().map((s) => pitchPxToWorld(s.cx, s.cy, 0.04));
+    return buildVisibleSpotMarkers(template).map((s) => pitchPxToWorld(s.cx, s.cy, 0.04));
   });
 
   const goals = $derived(buildGoal3DSpecs(template));
   const stripeColor = $derived(lightenGrassColor(grassColor));
 </script>
 
-<!-- Base grass (same footprint as 2D: field + run-off band) -->
-<T.Mesh rotation.x={-Math.PI / 2} position.y={0.001} receiveShadow>
-  <T.PlaneGeometry args={[grassSizeM.width, grassSizeM.length]} />
+<!-- Base grass (half-field + run-off band, same footprint as 2D clip) -->
+<T.Mesh rotation.x={-Math.PI / 2} position={[grassWorld.cx, 0.001, grassWorld.cz]} receiveShadow>
+  <T.PlaneGeometry args={[grassWorld.w, grassWorld.d]} />
   <T.MeshStandardMaterial color={grassColor} />
 </T.Mesh>
 

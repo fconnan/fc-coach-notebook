@@ -38,6 +38,11 @@ function clientToNdc(clientX: number, clientY: number, dom: HTMLElement) {
 
 let dragCamera: THREE.Camera | null = null;
 let dragDom: HTMLElement | null = null;
+let elementPointerDown = false;
+
+export function isElementPointerDown(): boolean {
+  return elementPointerDown;
+}
 
 export function beginElementDrag3d(
   e: PointerEvent,
@@ -46,6 +51,7 @@ export function beginElementDrag3d(
   dom?: HTMLElement
 ) {
   e.stopPropagation();
+  elementPointerDown = true;
   if (camera) dragCamera = camera;
   if (dom) dragDom = dom;
 
@@ -89,6 +95,7 @@ export function beginElementDrag3d(
   }
 
   function up() {
+    elementPointerDown = false;
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', up);
   }
