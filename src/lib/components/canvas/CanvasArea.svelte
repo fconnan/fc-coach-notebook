@@ -169,24 +169,55 @@
   function onWheel(e: WheelEvent) {
     if (!svgElement) return;
     e.preventDefault();
+
     const rect = svgElement.getBoundingClientRect();
-    const fx = (e.clientX - rect.left) / rect.width;
-    const fy = (e.clientY - rect.top) / rect.height;
-    const before = getSVGCoords(e);
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    const z = Math.max(0.3, Math.min(6, ($zoom || 1) * factor));
     const b = baseVB;
+    const z = $zoom || 1;
     const vbW = b.w / z;
     const vbH = b.h / z;
-    // Keep the point under the cursor fixed
-    const vbX = before.x - fx * vbW;
-    const vbY = before.y - fy * vbH;
-    pan.set({
-      x: vbX - b.x - (b.w - vbW) / 2,
-      y: vbY - b.y - (b.h - vbH) / 2
-    });
-    zoom.set(z);
+
+    // Ctrl + wheel → zoom toward cursor
+    if (e.ctrlKey) {
+      const fx = (e.clientX - rect.left) / rect.width;
+      const fy = (e.clientY - rect.top) / rect.height;
+      const before = getSVGCoords(e);
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const nextZ = Math.max(0.3, Math.min(6, z * factor));
+      const nextVbW = b.w / nextZ;
+      const nextVbH = b.h / nextZ;
+      const vbX = before.x - fx * nextVbW;
+      const vbY = before.y - fy * nextVbH;
+      pan.set({
+        x: vbX - b.x - (b.w - nextVbW) / 2,
+        y: vbY - b.y - (b.h - nextVbH) / 2
+      });
+      zoom.set(nextZ);
+      return;
+    }
+
+    const scrollFactor = 0.9;
+    if (e.shiftKey) {
+      // Shift + wheel → horizontal pan (deltaY on most browsers when shifted)
+      const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+      const dx = (delta / rect.width) * vbW * scrollFactor;
+      pan.update((p) => ({ ...p, x: p.x + dx }));
+    } else {
+      // Wheel → vertical pan
+      const dy = (e.deltaY / rect.height) * vbH * scrollFactor;
+      pan.update((p) => ({ ...p, y: p.y + dy }));
+    }
   }
+
+  // Non-passive wheel listener so preventDefault() blocks browser zoom on Ctrl+wheel
+  $effect(() => {
+    const el = svgElement;
+    const _fieldTpl = $currentPage?.fieldTemplate;
+    void _fieldTpl;
+    if (!el) return;
+    const handler = (e: WheelEvent) => onWheel(e);
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  });
 
   // Space-to-pan tracking
   let spaceHeld = $state(false);
@@ -219,7 +250,6 @@
     {viewBox}
     xmlns="http://www.w3.org/2000/svg"
     onpointerdown={onPointerDown}
-    onwheel={onWheel}
     role="presentation"
     aria-label="Tactical drawing board"
   >
