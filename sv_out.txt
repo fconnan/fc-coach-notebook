@@ -1,0 +1,7 @@
+
+HINT: Run "sv --help" to get the full list of commands, add-ons, and examples to one-shot and skip interactive prompts.
+[90m┌[39m  Welcome to the Svelte CLI! (v0.14.0)
+[?25l[90m│[39m
+[36m◆[39m  Directory not empty. Continue?
+[36m│[39m  [2m○[22m [2mYes[22m [2m/[22m [32m●[39m No
+[36m└[39m
