@@ -74,7 +74,7 @@
       <span>📝</span><span class="btn-text">Notes</span>
     </button>
     <div class="divider"></div>
-    <button class="tool-btn" class:active={isPerspective} title="Vue perspective (présentation)" onclick={toggleView}>🎥</button>
+    <button class="tool-btn" class:active={isPerspective} title="Vue perspective" onclick={toggleView}>🎥</button>
     <button class="tool-btn" title="Exporter (PDF / Image)" onclick={() => showExportDialog.set(true)}>📤</button>
     <button class="tool-btn" title={$theme === 'dark' ? 'Passer en clair' : 'Passer en sombre'} onclick={toggleTheme}>{$theme === 'dark' ? '☀️' : '🌙'}</button>
     <button class="tool-btn" title="Plein Écran" onclick={toggleFullscreen}>⛶</button>

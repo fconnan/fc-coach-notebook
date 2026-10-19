@@ -7,6 +7,7 @@ import {
   moveElements,
   type Position
 } from '$lib/stores/workspace';
+import { activeProjector, screenDeltaToWorld } from '$lib/utils/projection';
 
 /** Convert client (screen) coordinates to the SVG user space. */
 export function svgPoint(svg: SVGSVGElement, clientX: number, clientY: number): Position {
@@ -53,12 +54,17 @@ export function beginElementDrag(e: PointerEvent, element: { id: string; locked?
   });
 
   const start = svgPoint(svg, e.clientX, e.clientY);
+  const dragOrigin = page.elements.find((el) => el.id === element.id)?.position ?? { x: 0, y: 0 };
   let historyPushed = false;
 
   function move(ev: PointerEvent) {
     const cur = svgPoint(svg!, ev.clientX, ev.clientY);
-    const dx = cur.x - start.x;
-    const dy = cur.y - start.y;
+    const dScreenX = cur.x - start.x;
+    const dScreenY = cur.y - start.y;
+    const projector = get(activeProjector);
+    const { dx, dy } = projector
+      ? screenDeltaToWorld(projector, dragOrigin.x, dragOrigin.y, dScreenX, dScreenY)
+      : { dx: dScreenX, dy: dScreenY };
     if (!historyPushed && (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5)) {
       pushHistory(true);
       historyPushed = true;

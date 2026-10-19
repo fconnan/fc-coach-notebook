@@ -88,7 +88,7 @@
     return lum > 150 ? '#1a1a1a' : '#ffffff';
   }
   const patternColor = $derived(contrast(shirtColor));
-  const canRotate = $derived(isSelected && (useFigure || $currentPage.showPlayerDetails));
+  const canRotate = $derived(isSelected && ($currentPage.showPlayerDetails || anchor));
 </script>
 
 <g
@@ -102,6 +102,7 @@
   {#if anchor}
     <!-- Billboard: upright sprite, feet at projected anchor -->
     <g transform="scale({billboardScale})">
+      <rect x="-22" y="-48" width="44" height="52" fill="transparent" />
       <ellipse cx="0" cy="0" rx="7" ry="2.3" fill="#000" opacity="0.24" pointer-events="none" />
       <g transform="rotate({angle}) translate(0, -11)">
         {#if isSelected}
@@ -259,8 +260,8 @@
     </text>
   {/if}
 
-  {#if canRotate && !anchor}
-    <g transform="rotate({angle})">
+  {#if canRotate}
+    <g transform={anchor ? `scale(${billboardScale}) rotate(${angle}) translate(0, -11)` : `rotate(${angle})`}>
       <g
         class="rotation-handle-group"
         onpointerdown={onRotateDown}
@@ -270,16 +271,16 @@
       >
         <line
           x1="0"
-          y1={useFigure ? -38 : -radius}
+          y1={anchor ? -38 : useFigure ? -38 : -radius}
           x2="0"
-          y2={useFigure ? -52 : -45}
+          y2={anchor ? -52 : useFigure ? -52 : -45}
           stroke="var(--accent-primary)"
           stroke-width="1.5"
           stroke-dasharray="2,2"
         />
         <circle
           cx="0"
-          cy={useFigure ? -52 : -45}
+          cy={anchor ? -52 : useFigure ? -52 : -45}
           r="6"
           fill="var(--bg-panel)"
           stroke="var(--accent-primary)"

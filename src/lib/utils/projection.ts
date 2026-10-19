@@ -1,7 +1,11 @@
-import type { ElementType } from '$lib/stores/workspace';
+import type { ElementType, ComponentElement } from '$lib/stores/workspace';
 import type { FieldTemplate } from '$lib/utils/fieldBounds';
 import { contentBox } from '$lib/utils/fieldBounds';
 import { resolvePerspective } from '$lib/utils/perspective';
+import { writable } from 'svelte/store';
+
+/** Active projector while editing in perspective view (null in 2D). */
+export const activeProjector = writable<Projector | null>(null);
 
 export interface ProjectedPoint {
   x: number;
@@ -126,5 +130,31 @@ export function createProjector(
       const proj = corners.map((p) => projectGround(p.x, p.y));
       return proj.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ') + ' Z';
     }
+  };
+}
+
+/** Screen-space (SVG) position used for hit-testing / marquee in perspective. */
+export function elementDisplayPosition(
+  projector: Projector,
+  el: Pick<ComponentElement, 'type' | 'position'>
+): { x: number; y: number } {
+  const p = projector.projectGround(el.position.x, el.position.y);
+  return { x: p.x, y: p.y };
+}
+
+/** Convert a screen-space drag delta to world-space at a given ground point. */
+export function screenDeltaToWorld(
+  projector: Projector,
+  worldX: number,
+  worldY: number,
+  dScreenX: number,
+  dScreenY: number
+): { dx: number; dy: number } {
+  const p = projector.projectGround(worldX, worldY);
+  const cosT = Math.cos((projector.tilt * Math.PI) / 180);
+  const s = Math.max(0.12, p.scale);
+  return {
+    dx: dScreenX / s,
+    dy: dScreenY / (s * Math.max(0.15, cosT))
   };
 }

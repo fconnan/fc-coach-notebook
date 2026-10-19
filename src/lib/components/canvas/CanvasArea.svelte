@@ -11,7 +11,7 @@
   import Equipment from '../shapes/Equipment.svelte';
   import { EQUIPMENT_TYPES, isPlaying, playbackElements } from '$lib/stores/workspace';
   import { contentBox, fieldClipRect, FIELD_MARGIN } from '$lib/utils/fieldBounds';
-  import { createProjector, isStandingElement } from '$lib/utils/projection';
+  import { createProjector, isStandingElement, elementDisplayPosition, activeProjector } from '$lib/utils/projection';
   import PitchProjected from '../shapes/PitchProjected.svelte';
   import PerspectiveScope from './PerspectiveScope.svelte';
 
@@ -108,6 +108,12 @@
   const flatElements = $derived(
     displayElements.filter((el) => !isStandingElement(el.type))
   );
+  // Sync active projector for drag helpers (perspective editing).
+  $effect(() => {
+    activeProjector.set(projector);
+    return () => activeProjector.set(null);
+  });
+
   const standingElements = $derived.by(() => {
     if (!projector) return displayElements.filter((el) => isStandingElement(el.type));
     return displayElements
@@ -121,7 +127,7 @@
   });
 
   function onPointerDown(e: PointerEvent) {
-    if (isPerspective) return; // presentation mode is read-only
+    if ($isPlaying) return;
     if (!isBackground(e.target)) return;
 
     // Middle mouse or Space-pan → pan; otherwise marquee select
@@ -177,9 +183,11 @@
     window.removeEventListener('pointerup', onMarqueeUp);
     if (marquee && (marquee.w > 4 || marquee.h > 4)) {
       const inside = $currentPage.elements.filter((el: ComponentElement) => {
-        const p = el.position;
-        return p.x >= marquee!.x && p.x <= marquee!.x + marquee!.w &&
-               p.y >= marquee!.y && p.y <= marquee!.y + marquee!.h;
+        const pos = projector
+          ? elementDisplayPosition(projector, el)
+          : el.position;
+        return pos.x >= marquee!.x && pos.x <= marquee!.x + marquee!.w &&
+               pos.y >= marquee!.y && pos.y <= marquee!.y + marquee!.h;
       }).map((el: ComponentElement) => el.id);
       selectedIds.set(inside);
     } else {
@@ -305,7 +313,7 @@
             />
           {/if}
 
-          <g class="elements elements-flat" class:playing={$isPlaying || isPerspective}>
+          <g class="elements elements-flat" class:playing={$isPlaying}>
             {#each flatElements as element (element.id)}
               {@const sel = !$isPlaying && $selectedIds.includes(element.id)}
               {#if element.type === 'ball'}
@@ -324,7 +332,7 @@
             {/each}
           </g>
 
-          <g class="elements elements-standing" class:playing={$isPlaying || isPerspective}>
+          <g class="elements elements-standing" class:playing={$isPlaying}>
             {#each standingElements as element (element.id)}
               {@const sel = !$isPlaying && $selectedIds.includes(element.id)}
               {#if element.type === 'player'}
