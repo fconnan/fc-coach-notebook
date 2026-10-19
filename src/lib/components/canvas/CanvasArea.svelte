@@ -55,26 +55,44 @@
   <svg 
     bind:this={svgElement}
     class="drawing-surface-vertical" 
-    viewBox={$currentPage?.fieldTemplate === 'Complet' ? "-40 -40 760 1130" : "-40 -40 760 605"} 
+    viewBox={
+      $currentPage?.fieldTemplate === 'Complet' ? "-40 -40 760 1130" : 
+      $currentPage?.fieldTemplate === 'Demi' ? "-40 -40 760 566.25" : 
+      "-40 523.75 760 566.25"
+    } 
     xmlns="http://www.w3.org/2000/svg"
     onmousedown={onBackgroundClick}
     role="application"
     tabindex="0"
     aria-label="Tactical drawing board"
   >
-    {#if $currentPage}
-      <!-- Vertical Pitch -->
-      <Pitch template={$currentPage.fieldTemplate} orientation="vertical" />
+    <defs>
+      <clipPath id="zoom-clip">
+        {#if $currentPage?.fieldTemplate === 'Complet'}
+          <rect x="-40" y="-40" width="760" height="1130" />
+        {:else if $currentPage?.fieldTemplate === 'Demi'}
+          <rect x="-40" y="-40" width="760" height="566.25" />
+        {:else}
+          <rect x="-40" y="523.75" width="760" height="566.25" />
+        {/if}
+      </clipPath>
+    </defs>
 
-      {#each $currentPage.elements as element (element.id)}
-        {#if element.type === 'player'}
-          <Player {element} isSelected={$selectedIds.includes(element.id)} />
-        {/if}
-        {#if element.type === 'ball'}
-          <Ball {element} isSelected={$selectedIds.includes(element.id)} />
-        {/if}
-      {/each}
-    {/if}
+    <g clip-path="url(#zoom-clip)">
+      {#if $currentPage}
+        <Pitch template={$currentPage.fieldTemplate} orientation="vertical" />
+        
+        <g class="elements">
+          {#each $currentPage.elements as element (element.id)}
+            {#if element.type === 'player'}
+              <Player {element} isSelected={$selectedIds.includes(element.id)} />
+            {:else if element.type === 'ball'}
+              <Ball {element} isSelected={$selectedIds.includes(element.id)} />
+            {/if}
+          {/each}
+        </g>
+      {/if}
+    </g>
   </svg>
 </div>
 

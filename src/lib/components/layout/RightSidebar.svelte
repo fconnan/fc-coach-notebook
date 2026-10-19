@@ -102,28 +102,22 @@
                   </text>
                 </svg>
               {:else if category.type === 'field'}
+                <svg width="46" height="64" viewBox={
+                  item.label === 'Complet' ? "0 0 68 105" : 
+                  item.label === 'Demi' ? "0 0 68 53.5" : 
+                  "0 51.5 68 53.5"
+                }>
+                  <rect width="68" height="105" fill="#2b6b39" rx="2" />
+                  <rect x="2" y="2" width="64" height="101" fill="none" stroke="white" stroke-width="2" />
+                  <line x1="2" y1="52.5" x2="66" y2="52.5" stroke="white" stroke-width="2" />
                   {#if item.label === 'Complet'}
-                    <svg width="46" height="64" viewBox="0 0 68 105">
-                      <rect width="68" height="105" fill="#2b6b39" rx="2" />
-                      <rect x="2" y="2" width="64" height="101" fill="none" stroke="white" stroke-width="2" />
-                      <line x1="2" y1="52.5" x2="66" y2="52.5" stroke="white" stroke-width="2" />
-                      <circle cx="34" cy="52.5" r="10" fill="none" stroke="white" stroke-width="2" />
-                    </svg>
+                    <circle cx="34" cy="52.5" r="10" fill="none" stroke="white" stroke-width="2" />
                   {:else if item.label === 'Demi'}
-                    <svg width="46" height="32" viewBox="0 0 68 52.5">
-                      <rect width="68" height="105" fill="#2b6b39" rx="2" />
-                      <rect x="2" y="2" width="64" height="101" fill="none" stroke="white" stroke-width="2" />
-                      <line x1="2" y1="52.5" x2="66" y2="52.5" stroke="white" stroke-width="2" />
-                      <path d="M 24,52.5 A 10,10 0 0 1 44,52.5" fill="none" stroke="white" stroke-width="2" />
-                    </svg>
+                    <path d="M 24,52.5 A 10,10 0 0 1 44,52.5" fill="none" stroke="white" stroke-width="2" />
                   {:else if item.label === 'DemiBas'}
-                    <svg width="46" height="32" viewBox="0 52.5 68 52.5">
-                      <rect width="68" height="105" fill="#2b6b39" rx="2" />
-                      <rect x="2" y="2" width="64" height="101" fill="none" stroke="white" stroke-width="2" />
-                      <line x1="2" y1="52.5" x2="66" y2="52.5" stroke="white" stroke-width="2" />
-                      <path d="M 24,52.5 A 10,10 0 0 0 44,52.5" fill="none" stroke="white" stroke-width="2" />
-                    </svg>
+                    <path d="M 24,52.5 A 10,10 0 0 0 44,52.5" fill="none" stroke="white" stroke-width="2" />
                   {/if}
+                </svg>
               {:else}
                 <span class="icon">{item.icon}</span>
               {/if}
