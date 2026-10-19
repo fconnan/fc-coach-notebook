@@ -152,11 +152,16 @@ export interface Page {
   backgroundColor: string;
   hideGoals: boolean;
   hidePitchLines: boolean;
-  view: '2d' | 'perspective';
+  view: '2d' | 'perspective' | '3d';
   /** Perspective presentation (view === 'perspective') */
   perspectiveTilt?: number;       // rotateX degrees (15–55)
   perspectiveIntensity?: number;  // 0 = léger, 100 = prononcé
   perspectiveScale?: number;      // fit scale (0.7–1)
+  /** 3D camera (view === '3d'), persisted per page */
+  cam3dYaw?: number;
+  cam3dPitch?: number;
+  cam3dDistance?: number;
+  cam3dTarget?: Position;
   // Animation
   frames: Frame[];
   activeFrameIndex: number;
@@ -193,6 +198,10 @@ export const DEFAULT_PAGE: Page = {
   perspectiveTilt: 34,
   perspectiveIntensity: 62,
   perspectiveScale: 0.86,
+  cam3dYaw: 45,
+  cam3dPitch: 55,
+  cam3dDistance: 95,
+  cam3dTarget: { x: 0, y: 0 },
   frames: [],
   activeFrameIndex: 0,
   session: {}
@@ -212,6 +221,7 @@ export function migratePage(data: Partial<Page>): Page {
   if (!merged.grassType) merged.grassType = 'stripes';
   if (!merged.backgroundColor) merged.backgroundColor = '#2b6b39';
   if (!merged.view) merged.view = '2d';
+  if (!['2d', 'perspective', '3d'].includes(merged.view)) merged.view = '2d';
   const validPostures = new Set(PLAYER_POSTURES.map((p) => p.id));
   merged.elements = merged.elements.map((el) => {
     if (el.type !== 'player') return el;
@@ -224,6 +234,10 @@ export function migratePage(data: Partial<Page>): Page {
   if (typeof merged.perspectiveTilt !== 'number') merged.perspectiveTilt = DEFAULT_PAGE.perspectiveTilt;
   if (typeof merged.perspectiveIntensity !== 'number') merged.perspectiveIntensity = DEFAULT_PAGE.perspectiveIntensity;
   if (typeof merged.perspectiveScale !== 'number') merged.perspectiveScale = DEFAULT_PAGE.perspectiveScale;
+  if (typeof merged.cam3dYaw !== 'number') merged.cam3dYaw = DEFAULT_PAGE.cam3dYaw;
+  if (typeof merged.cam3dPitch !== 'number') merged.cam3dPitch = DEFAULT_PAGE.cam3dPitch;
+  if (typeof merged.cam3dDistance !== 'number') merged.cam3dDistance = DEFAULT_PAGE.cam3dDistance;
+  if (!merged.cam3dTarget) merged.cam3dTarget = { ...DEFAULT_PAGE.cam3dTarget! };
   merged.schemaVersion = SCHEMA_VERSION;
   return merged;
 }

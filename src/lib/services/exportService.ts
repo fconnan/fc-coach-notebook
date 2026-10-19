@@ -44,6 +44,24 @@ export interface ImageExportOptions {
 
 async function renderToCanvas(opts: { resolution: string; crop: boolean }): Promise<HTMLCanvasElement> {
   const page = get(currentPage);
+
+  if (page.view === '3d') {
+    const { view3dRenderer } = await import('$lib/stores/view3d');
+    const renderer = get(view3dRenderer);
+    if (!renderer) throw new Error('Renderer 3D introuvable');
+    const canvas = renderer.domElement as HTMLCanvasElement;
+    const targetW = RES_WIDTH[opts.resolution] || 1400;
+    const targetH = Math.round(targetW * (canvas.height / canvas.width) || targetW * 0.65);
+    const out = document.createElement('canvas');
+    out.width = targetW;
+    out.height = targetH;
+    const ctx = out.getContext('2d')!;
+    ctx.fillStyle = page.backgroundColor || '#2b6b39';
+    ctx.fillRect(0, 0, targetW, targetH);
+    ctx.drawImage(canvas, 0, 0, targetW, targetH);
+    return out;
+  }
+
   const live = document.querySelector('svg.drawing-surface-vertical') as SVGSVGElement | null;
   if (!live) throw new Error('Canvas SVG introuvable');
 

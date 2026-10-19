@@ -358,12 +358,12 @@
 
       <div class="prop-group">
         <label>Affichage</label>
-        <div class="btn-group">
-          <button class:active={$currentPage.view !== 'perspective'} onclick={() => updatePageSettings({ view: '2d' })}>2D (dessus)</button>
+        <div class="btn-group view-btns">
+          <button class:active={$currentPage.view === '2d'} onclick={() => updatePageSettings({ view: '2d' })}>2D</button>
           <button class:active={$currentPage.view === 'perspective'} onclick={() => updatePageSettings({ view: 'perspective' })}>Perspective</button>
+          <button class:active={$currentPage.view === '3d'} onclick={() => updatePageSettings({ view: '3d' })}>3D</button>
         </div>
         {#if $currentPage.view === 'perspective'}
-          <p class="help-text" style="margin-top:6px">Mode présentation : repassez en 2D pour éditer.</p>
           <div class="prop-group perspective-props">
             <label for="persTilt">Inclinaison ({$currentPage.perspectiveTilt ?? 34}°)</label>
             <input
@@ -398,6 +398,21 @@
               oninput={(e) => updatePageSettings({ perspectiveScale: parseInt(e.currentTarget.value) / 100 })}
             />
           </div>
+        {/if}
+        {#if $currentPage.view === '3d'}
+          <div class="prop-group perspective-props">
+            <label for="camYaw">Rotation caméra ({$currentPage.cam3dYaw ?? 45}°)</label>
+            <input id="camYaw" type="range" min="0" max="360" value={$currentPage.cam3dYaw ?? 45} oninput={(e) => updatePageSettings({ cam3dYaw: parseInt(e.currentTarget.value) })} />
+          </div>
+          <div class="prop-group perspective-props">
+            <label for="camPitch">Inclinaison caméra ({$currentPage.cam3dPitch ?? 55}°)</label>
+            <input id="camPitch" type="range" min="20" max="85" value={$currentPage.cam3dPitch ?? 55} oninput={(e) => updatePageSettings({ cam3dPitch: parseInt(e.currentTarget.value) })} />
+          </div>
+          <div class="prop-group perspective-props">
+            <label for="camDist">Distance ({$currentPage.cam3dDistance ?? 95} m)</label>
+            <input id="camDist" type="range" min="30" max="160" value={$currentPage.cam3dDistance ?? 95} oninput={(e) => updatePageSettings({ cam3dDistance: parseInt(e.currentTarget.value) })} />
+          </div>
+          <p class="help-text">Orbite : clic gauche · Zoom : molette · Pan : clic droit</p>
         {/if}
       </div>
 

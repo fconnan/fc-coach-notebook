@@ -24,6 +24,10 @@
 	"dependencies": {
 		"@milkdown/crepe": "^7.20.0",
 		"@milkdown/kit": "^7.20.0",
-		"pdf-lib": "^1.17.1"
+		"@threlte/core": "^8.5.16",
+		"@threlte/extras": "^9.21.0",
+		"@types/three": "^0.185.0",
+		"pdf-lib": "^1.17.1",
+		"three": "^0.185.0"
 	}
 }
