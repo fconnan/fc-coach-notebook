@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { activeTool, currentPage, selectedIds, updateElement, addElement, incrementTeamNumber, zoom, pan, clearSelection, type Position, type ComponentElement } from '$lib/stores/workspace';
+  import { currentPage, selectedIds, zoom, pan, clearSelection, placeElementAt, type Position, type ComponentElement, type ElementType, type TeamType } from '$lib/stores/workspace';
   import { svgPoint } from '$lib/utils/interactions';
   import Player from '../shapes/Player.svelte';
   import Ball from '../shapes/Ball.svelte';
@@ -31,10 +31,6 @@
     ro.observe(containerEl);
     return () => ro.disconnect();
   });
-
-  // Drawing State
-  let drawingPoint1: Position | null = $state(null);
-  let mousePos: Position | null = $state(null);
 
   // Marquee / pan state
   let marquee: { x: number; y: number; w: number; h: number } | null = $state(null);
@@ -88,51 +84,12 @@
     e.preventDefault();
     if (!svgElement) return;
 
-    const { x, y } = getSVGCoords(e);
-
-    const type = e.dataTransfer?.getData('type') as any;
-    const team = e.dataTransfer?.getData('team') as any;
+    const type = e.dataTransfer?.getData('type') as ElementType | '';
+    const team = (e.dataTransfer?.getData('team') || 'none') as TeamType;
     const label = e.dataTransfer?.getData('label') || '';
 
     if (type && type !== 'field') {
-      let radius = 14;
-      let color: string | undefined = '#fff';
-
-      if (type === 'ball') {
-        radius = $currentPage.ballSize;
-        color = $currentPage.ballColor;
-      } else if (team === 'team1') {
-        radius = $currentPage.team1Size;
-        color = $currentPage.team1Color;
-      } else if (team === 'team2') {
-        radius = $currentPage.team2Size;
-        color = $currentPage.team2Color;
-      } else if (EQUIPMENT_TYPES.includes(type)) {
-        color = undefined; // let the Equipment component pick its default colour
-      }
-
-      const elementData: any = {
-        type,
-        team: team || 'none',
-        position: { x, y },
-        label: label,
-        radius,
-        angle: team === 'team2' ? 180 : 0,
-        color
-      };
-
-      if (type === 'arrow') {
-        elementData.pathPoints = [{ x, y }, { x: x + 100, y: y }];
-        elementData.curveType = 'L';
-        elementData.arrowEnd = true;
-        elementData.strokeWidth = 3;
-      }
-
-      addElement(elementData);
-
-      if (type === 'player' && label !== 'G') {
-        incrementTeamNumber(team);
-      }
+      placeElementAt(getSVGCoords(e), { type, team, label });
     }
   }
 
@@ -141,59 +98,10 @@
     return el === svgElement || el?.classList?.contains('pitch-surface') || el?.classList?.contains('bg-rect');
   }
 
-  // Shape (rect/ellipse/zone) drag-create state
-  let shapeStart: Position | null = null;
-  let shapePreview: { x: number; y: number; w: number; h: number } | null = $state(null);
-
   const isPerspective = $derived($currentPage?.view === 'perspective');
 
   function onPointerDown(e: PointerEvent) {
     if (isPerspective) return; // presentation mode is read-only
-
-    // Arrow drawing tool (two-click)
-    if ($activeTool === 'arrow') {
-      const coords = getSVGCoords(e);
-      if (!drawingPoint1) {
-        drawingPoint1 = coords;
-        mousePos = coords;
-      } else {
-        addElement({
-          type: 'arrow',
-          team: 'none',
-          position: drawingPoint1,
-          pathPoints: [drawingPoint1, coords],
-          curveType: 'L',
-          arrowEnd: true,
-          strokeWidth: 3,
-          color: '#ffffff'
-        });
-        drawingPoint1 = null;
-        mousePos = null;
-        activeTool.set(null);
-      }
-      return;
-    }
-
-    // Click-to-place tools: text & callout
-    if ($activeTool === 'text' || $activeTool === 'callout') {
-      const { x, y } = getSVGCoords(e);
-      const tool = $activeTool;
-      addElement(tool === 'text'
-        ? { type: 'text', team: 'none', position: { x, y }, text: 'Texte', fontSize: 24, color: '#ffffff', fontWeight: 'bold' }
-        : { type: 'callout', team: 'none', position: { x, y }, text: 'Annotation', width: 180, fillColor: '#fdf7d0', color: '#1a1a1a', fontSize: 13 });
-      activeTool.set(null);
-      return;
-    }
-
-    // Drag-create tools: rect / ellipse / zone
-    if ($activeTool === 'rect' || $activeTool === 'ellipse' || $activeTool === 'zone') {
-      shapeStart = getSVGCoords(e);
-      shapePreview = { x: shapeStart.x, y: shapeStart.y, w: 0, h: 0 };
-      window.addEventListener('pointermove', onShapeMove);
-      window.addEventListener('pointerup', onShapeUp);
-      return;
-    }
-
     if (!isBackground(e.target)) return;
 
     // Middle mouse or Space-pan → pan; otherwise marquee select
@@ -261,49 +169,6 @@
     marqueeStart = null;
   }
 
-  function onShapeMove(e: PointerEvent) {
-    if (!shapeStart) return;
-    const cur = getSVGCoords(e);
-    shapePreview = {
-      x: Math.min(shapeStart.x, cur.x),
-      y: Math.min(shapeStart.y, cur.y),
-      w: Math.abs(cur.x - shapeStart.x),
-      h: Math.abs(cur.y - shapeStart.y)
-    };
-  }
-  function onShapeUp(e: PointerEvent) {
-    window.removeEventListener('pointermove', onShapeMove);
-    window.removeEventListener('pointerup', onShapeUp);
-    const cur = getSVGCoords(e);
-    const w = Math.max(24, Math.abs(cur.x - (shapeStart?.x ?? cur.x)));
-    const h = Math.max(24, Math.abs(cur.y - (shapeStart?.y ?? cur.y)));
-    const cx = ((shapeStart?.x ?? cur.x) + cur.x) / 2;
-    const cy = ((shapeStart?.y ?? cur.y) + cur.y) / 2;
-    const tool = $activeTool;
-    if (tool === 'rect' || tool === 'ellipse' || tool === 'zone') {
-      addElement({
-        type: tool,
-        team: 'none',
-        position: { x: cx, y: cy },
-        width: w,
-        height: h,
-        color: tool === 'zone' ? '#9bd64a' : '#ffffff',
-        strokeWidth: 2,
-        fillColor: tool === 'zone' ? '#9bd64a' : 'none',
-        fillOpacity: tool === 'zone' ? 0.25 : 0
-      });
-    }
-    shapeStart = null;
-    shapePreview = null;
-    activeTool.set(null);
-  }
-
-  function onPointerMove(e: PointerEvent) {
-    if (drawingPoint1) {
-      mousePos = getSVGCoords(e);
-    }
-  }
-
   function onWheel(e: WheelEvent) {
     if (!svgElement) return;
     e.preventDefault();
@@ -344,7 +209,6 @@
 <div
   bind:this={containerEl}
   class="canvas-container"
-  class:drawing-mode={$activeTool !== null}
   class:pan-mode={spaceHeld}
   ondragover={onDragOver}
   ondrop={onDrop}
@@ -358,24 +222,10 @@
     {viewBox}
     xmlns="http://www.w3.org/2000/svg"
     onpointerdown={onPointerDown}
-    onpointermove={onPointerMove}
     onwheel={onWheel}
     role="presentation"
     aria-label="Tactical drawing board"
   >
-    <defs>
-      <marker
-        id="preview-arrowhead"
-        markerWidth="10"
-        markerHeight="7"
-        refX="9"
-        refY="3.5"
-        orient="auto"
-      >
-        <polygon points="0 0, 10 3.5, 0 7" fill="white" opacity="0.6" />
-      </marker>
-    </defs>
-
     <g>
       {#if $currentPage}
         <Pitch
@@ -408,39 +258,6 @@
           {/each}
         </g>
 
-        <!-- Drawing Preview -->
-        {#if drawingPoint1 && mousePos}
-          <line
-            x1={drawingPoint1.x}
-            y1={drawingPoint1.y}
-            x2={mousePos.x}
-            y2={mousePos.y}
-            stroke="white"
-            stroke-width="3"
-            stroke-dasharray="5,5"
-            opacity="0.6"
-            marker-end="url(#preview-arrowhead)"
-          />
-        {/if}
-
-        <!-- Shape creation preview -->
-        {#if shapePreview && ($activeTool === 'rect' || $activeTool === 'ellipse' || $activeTool === 'zone')}
-          {#if $activeTool === 'ellipse'}
-            <ellipse
-              cx={shapePreview.x + shapePreview.w / 2}
-              cy={shapePreview.y + shapePreview.h / 2}
-              rx={shapePreview.w / 2} ry={shapePreview.h / 2}
-              fill="rgba(255,255,255,0.08)" stroke="#fff" stroke-width="2" stroke-dasharray="5,5" pointer-events="none"
-            />
-          {:else}
-            <rect
-              x={shapePreview.x} y={shapePreview.y} width={shapePreview.w} height={shapePreview.h}
-              fill={$activeTool === 'zone' ? 'rgba(155,214,74,0.25)' : 'rgba(255,255,255,0.08)'}
-              stroke={$activeTool === 'zone' ? '#9bd64a' : '#fff'} stroke-width="2" stroke-dasharray="5,5" pointer-events="none"
-            />
-          {/if}
-        {/if}
-
         <!-- Marquee selection rectangle -->
         {#if marquee}
           <rect
@@ -468,10 +285,6 @@
     overflow: hidden;
     display: flex;
     background-color: var(--bg-canvas);
-  }
-
-  .canvas-container.drawing-mode {
-    cursor: crosshair;
   }
 
   .canvas-container.pan-mode {

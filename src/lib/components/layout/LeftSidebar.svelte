@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { activeTool, currentPage, setTeamFormation, type ElementType } from '$lib/stores/workspace';
+  import { currentPage, setTeamFormation, placeAtCenter, activeTool, type ElementType, type TeamType } from '$lib/stores/workspace';
   import EquipmentIcon from '../shapes/EquipmentIcon.svelte';
   import { FORMATION_NAMES, formationPositions } from '$lib/utils/formations';
 
@@ -73,8 +73,16 @@
     }
   }
 
-  function selectTool(tool: ElementType | null) {
-    activeTool.set($activeTool === tool ? null : tool);
+  function placeItem(type: ElementType, team: TeamType, label: string) {
+    placeAtCenter({ type, team, label });
+  }
+
+  function onToolClick(tool: ElementType | null) {
+    if (tool === null) {
+      activeTool.set(null);
+      return;
+    }
+    placeAtCenter({ type: tool, team: 'none' });
   }
 </script>
 
@@ -93,6 +101,8 @@
             {#each group.items as item}
               <div class="item" draggable="true" role="button" tabindex="0"
                 title={item.isGK ? 'Gardien' : 'Joueur'}
+                onclick={() => placeItem(group.type, group.team, item.label)}
+                onkeydown={(e) => e.key === 'Enter' && placeItem(group.type, group.team, item.label)}
                 ondragstart={(e) => onDragStart(e, group.type, group.team, item.label)}>
                 <svg width="48" height="48" viewBox="0 0 56 56">
                   <circle cx="28" cy="28" r="22" fill={item.isGK ? '#d4ff00' : item.color} stroke={item.isGK ? item.color : 'white'} stroke-width="4" />
@@ -105,6 +115,8 @@
         <div class="group-label">Ballon</div>
         <div class="items-row">
           <div class="item" draggable="true" role="button" tabindex="0" title="Ballon"
+            onclick={() => placeItem('ball', 'none', '')}
+            onkeydown={(e) => e.key === 'Enter' && placeItem('ball', 'none', '')}
             ondragstart={(e) => onDragStart(e, 'ball', 'none', '')}>
             <div class="emoji-item">⚽</div>
           </div>
@@ -132,6 +144,8 @@
         <div class="items-row wrap">
           {#each equipment as eq}
             <div class="item small" draggable="true" role="button" tabindex="0" title={eq.label}
+              onclick={() => placeItem(eq.type, 'none', '')}
+              onkeydown={(e) => e.key === 'Enter' && placeItem(eq.type, 'none', '')}
               ondragstart={(e) => onDragStart(e, eq.type, 'none', '')}>
               <EquipmentIcon type={eq.type} />
             </div>
@@ -148,16 +162,14 @@
       <div class="section-body">
         <div class="tool-grid">
           {#each tools as t}
-            <button class="tool-cell" class:active={$activeTool === t.tool} title={t.label}
-              onclick={() => selectTool(t.tool)}>
+            <button class="tool-cell" class:active={t.tool === null && $activeTool === null} title={t.label}
+              onclick={() => onToolClick(t.tool)}>
               <span class="tool-icon">{t.icon}</span>
               <span class="tool-name">{t.label}</span>
             </button>
           {/each}
         </div>
-        {#if $activeTool}
-          <p class="hint">Cliquez {#if $activeTool === 'arrow'}deux fois{:else if $activeTool === 'rect' || $activeTool === 'ellipse' || $activeTool === 'zone'}-glissez{:else}sur le terrain{/if} pour dessiner.</p>
-        {/if}
+        <p class="hint">Cliquez sur un élément pour l'ajouter au centre du terrain.</p>
       </div>
     {/if}
   </div>
@@ -214,7 +226,7 @@
     border: 1px solid var(--border-strong);
     border-radius: 6px;
     display: flex; align-items: center; justify-content: center;
-    cursor: grab;
+    cursor: pointer;
     transition: all 0.15s ease;
   }
   .item.small { width: 50px; height: 50px; }

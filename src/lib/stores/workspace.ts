@@ -1,4 +1,10 @@
 import { writable, derived, get } from 'svelte/store';
+import {
+  buildElementAt,
+  findFreePosition,
+  pitchCenter,
+  type LibraryPlaceArgs
+} from '$lib/utils/placement';
 
 // ---------------------------------------------------------
 // Schema versioning
@@ -357,6 +363,25 @@ export function addElement(element: Omit<ComponentElement, 'id'>) {
   // Select the newly added element
   selectedIds.set([newElement.id]);
   return newElement.id;
+}
+
+/** Place a library item at a given position (with collision offset). */
+export function placeElementAt(position: Position, args: LibraryPlaceArgs) {
+  const page = get(currentPage);
+  if (!page) return;
+  activeTool.set(null);
+  const pos = findFreePosition(position, page.elements);
+  addElement(buildElementAt(page, pos, args));
+  if (args.type === 'player' && args.label !== 'G' && args.team && args.team !== 'none') {
+    incrementTeamNumber(args.team);
+  }
+}
+
+/** Place a library item at the centre of the visible pitch. */
+export function placeAtCenter(args: LibraryPlaceArgs) {
+  const page = get(currentPage);
+  if (!page) return;
+  placeElementAt(pitchCenter(page.fieldTemplate), args);
 }
 
 export function updateElement(id: string, updates: Partial<ComponentElement>) {
