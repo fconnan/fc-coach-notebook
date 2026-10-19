@@ -1,8 +1,22 @@
 <script lang="ts">
   import type { ComponentElement } from '$lib/stores/workspace';
   import { beginElementDrag } from '$lib/utils/interactions';
+  import { getPerspectiveContext } from '$lib/utils/perspectiveContext';
+  import { isStandingElement } from '$lib/utils/projection';
 
   let { element, isSelected } = $props<{ element: ComponentElement, isSelected: boolean }>();
+
+  const projector = $derived(getPerspectiveContext());
+  const anchor = $derived(
+    projector && isStandingElement(element.type)
+      ? projector.projectGround(element.position.x, element.position.y)
+      : null
+  );
+  const flatAnchor = $derived(
+    projector && !isStandingElement(element.type)
+      ? projector.projectGround(element.position.x, element.position.y)
+      : null
+  );
 
   const angle = $derived(element.angle || 0);
   const c = $derived(element.color || defaultColor(element.type));
@@ -41,6 +55,17 @@
       default: return { w: 18, h: 14 }; // cone
     }
   });
+  const billboardScale = $derived(anchor ? anchor.scale * scale : scale);
+  const footY = $derived(
+    element.type === 'cone' ? 6
+    : element.type === 'coneTall' ? 14
+    : element.type === 'pole' ? 22
+    : element.type === 'hurdle' ? 8
+    : element.type === 'mannequin' ? 22
+    : element.type === 'miniGoal' ? 8
+    : element.type === 'fullGoal' ? 10
+    : 6
+  );
 </script>
 
 <g
@@ -50,8 +75,16 @@
   tabindex="0"
   aria-label={element.type}
   onpointerdown={onPointerDown}
-  transform="translate({element.position.x}, {element.position.y}) rotate({angle}) scale({scale})"
+  transform={anchor
+    ? `translate(${anchor.x}, ${anchor.y}) scale(${billboardScale})`
+    : flatAnchor
+      ? `translate(${flatAnchor.x}, ${flatAnchor.y}) scale(${flatAnchor.scale * scale})`
+      : `translate(${element.position.x}, ${element.position.y}) rotate(${angle}) scale(${scale})`}
 >
+  <g transform={anchor ? `rotate(${angle}) translate(0, ${-footY})` : flatAnchor ? `rotate(${angle})` : ''}>
+  {#if anchor}
+    <ellipse cx="0" cy={footY} rx="8" ry="2.5" fill="#000" opacity="0.22" pointer-events="none" />
+  {/if}
   {#if element.type === 'cone'}
     <ellipse cx="0" cy="6" rx="11" ry="3.5" fill={c} opacity="0.55" />
     <path d="M -8 6 L 0 -10 L 8 6 Z" fill={c} stroke="#0006" stroke-width="0.5" />
@@ -63,7 +96,7 @@
     <rect x="-1.5" y="-22" width="3" height="44" fill={c} />
     <ellipse cx="0" cy="22" rx="5" ry="2" fill="#0008" />
   {:else if element.type === 'ring'}
-    <ellipse cx="0" cy="0" rx="14" ry="7" fill="none" stroke={c} stroke-width="3.5" />
+    <ellipse cx="0" cy="0" rx="14" ry={flatAnchor ? 4 : 7} fill="none" stroke={c} stroke-width="3.5" />
   {:else if element.type === 'hurdle'}
     <path d="M -12 8 L -12 -6 L 12 -6 L 12 8" fill="none" stroke={c} stroke-width="3" stroke-linejoin="round" />
     <line x1="-12" y1="-6" x2="12" y2="-6" stroke={c} stroke-width="3" />
@@ -91,12 +124,14 @@
       {/each}
     </g>
   {/if}
+  </g>
 
   {#if isSelected}
     <rect
       x={-box.w} y={-box.h} width={box.w * 2} height={box.h * 2}
       fill="none" stroke="var(--accent-primary)" stroke-width={1.5 / scale}
       stroke-dasharray="4,3" pointer-events="none"
+      transform={anchor ? `rotate(${angle}) translate(0, ${-footY})` : ''}
     />
     {#if element.locked}
       <text x="0" y={-box.h - 4} text-anchor="middle" font-size="10" fill="#ffd54f">🔒</text>

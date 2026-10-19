@@ -11,7 +11,9 @@
   import Equipment from '../shapes/Equipment.svelte';
   import { EQUIPMENT_TYPES, isPlaying, playbackElements } from '$lib/stores/workspace';
   import { contentBox, fieldClipRect, FIELD_MARGIN } from '$lib/utils/fieldBounds';
-  import { resolvePerspective } from '$lib/utils/perspective';
+  import { createProjector, isStandingElement } from '$lib/utils/projection';
+  import PitchProjected from '../shapes/PitchProjected.svelte';
+  import PerspectiveScope from './PerspectiveScope.svelte';
 
   const displayElements = $derived($isPlaying ? $playbackElements : ($currentPage?.elements ?? []));
 
@@ -97,17 +99,26 @@
   }
 
   const isPerspective = $derived($currentPage?.view === 'perspective');
-  const persp = $derived(resolvePerspective($currentPage ?? {}));
-  const stageStyle = $derived(
-    isPerspective
-      ? `perspective: ${persp.distancePx}px; perspective-origin: center 58%;`
-      : undefined
+  const projector = $derived(
+    isPerspective && $currentPage
+      ? createProjector($currentPage.fieldTemplate, $currentPage)
+      : null
   );
-  const svgPerspStyle = $derived(
-    isPerspective
-      ? `transform: rotateX(${persp.tilt}deg) scale(${persp.scale}); transform-origin: center 58%;`
-      : undefined
+
+  const flatElements = $derived(
+    displayElements.filter((el) => !isStandingElement(el.type))
   );
+  const standingElements = $derived.by(() => {
+    if (!projector) return displayElements.filter((el) => isStandingElement(el.type));
+    return displayElements
+      .filter((el) => isStandingElement(el.type))
+      .map((el) => ({
+        el,
+        depth: projector.projectGround(el.position.x, el.position.y).depth
+      }))
+      .sort((a, b) => a.depth - b.depth)
+      .map((x) => x.el);
+  });
 
   function onPointerDown(e: PointerEvent) {
     if (isPerspective) return; // presentation mode is read-only
@@ -255,11 +266,10 @@
   aria-label="Drawing area"
   role="region"
 >
-  <div class="canvas-stage" class:perspective={isPerspective} style={stageStyle}>
+  <div class="canvas-stage">
   <svg
     bind:this={svgElement}
     class="drawing-surface-vertical"
-    style={svgPerspStyle}
     {viewBox}
     xmlns="http://www.w3.org/2000/svg"
     onpointerdown={onPointerDown}
@@ -274,21 +284,31 @@
           </clipPath>
         </defs>
         <g clip-path="url(#canvas-field-clip)">
-          <Pitch
-            template={$currentPage.fieldTemplate}
-            orientation="vertical"
-            showStripes={$currentPage.showFieldStripes}
-            grassColor={$currentPage.backgroundColor}
-            hideGoals={$currentPage.hideGoals}
-            hideLines={$currentPage.hidePitchLines}
-          />
+          <PerspectiveScope {projector}>
+          {#if projector}
+            <PitchProjected
+              template={$currentPage.fieldTemplate}
+              showStripes={$currentPage.showFieldStripes}
+              grassColor={$currentPage.backgroundColor}
+              hideGoals={$currentPage.hideGoals}
+              hideLines={$currentPage.hidePitchLines}
+              {projector}
+            />
+          {:else}
+            <Pitch
+              template={$currentPage.fieldTemplate}
+              orientation="vertical"
+              showStripes={$currentPage.showFieldStripes}
+              grassColor={$currentPage.backgroundColor}
+              hideGoals={$currentPage.hideGoals}
+              hideLines={$currentPage.hidePitchLines}
+            />
+          {/if}
 
-          <g class="elements" class:playing={$isPlaying || isPerspective}>
-            {#each displayElements as element (element.id)}
+          <g class="elements elements-flat" class:playing={$isPlaying || isPerspective}>
+            {#each flatElements as element (element.id)}
               {@const sel = !$isPlaying && $selectedIds.includes(element.id)}
-              {#if element.type === 'player'}
-                <Player {element} isSelected={sel} />
-              {:else if element.type === 'ball'}
+              {#if element.type === 'ball'}
                 <Ball {element} isSelected={sel} />
               {:else if element.type === 'arrow'}
                 <Arrow {element} isSelected={sel} />
@@ -303,6 +323,18 @@
               {/if}
             {/each}
           </g>
+
+          <g class="elements elements-standing" class:playing={$isPlaying || isPerspective}>
+            {#each standingElements as element (element.id)}
+              {@const sel = !$isPlaying && $selectedIds.includes(element.id)}
+              {#if element.type === 'player'}
+                <Player {element} isSelected={sel} />
+              {:else if EQUIPMENT_TYPES.includes(element.type)}
+                <Equipment {element} isSelected={sel} />
+              {/if}
+            {/each}
+          </g>
+          </PerspectiveScope>
 
           <!-- Marquee selection rectangle -->
           {#if marquee}
@@ -346,10 +378,6 @@
     display: flex;
     min-width: 0;
     min-height: 0;
-  }
-
-  .canvas-stage.perspective .drawing-surface-vertical {
-    transition: transform 0.35s ease;
   }
 
   .elements.playing { pointer-events: none; }

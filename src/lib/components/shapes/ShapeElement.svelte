@@ -2,8 +2,11 @@
   import type { ComponentElement } from '$lib/stores/workspace';
   import { updateElement, pushHistory } from '$lib/stores/workspace';
   import { beginElementDrag, svgPoint } from '$lib/utils/interactions';
+  import { getPerspectiveContext } from '$lib/utils/perspectiveContext';
 
   let { element, isSelected } = $props<{ element: ComponentElement, isSelected: boolean }>();
+
+  const projector = $derived(getPerspectiveContext());
 
   const w = $derived(element.width || 120);
   const h = $derived(element.height || 80);
@@ -22,6 +25,25 @@
       ? (element.fillOpacity ?? 0.25)
       : (element.fillOpacity ?? (element.fillColor && element.fillColor !== 'none' ? 0.3 : 0))
   );
+
+  const projectedPath = $derived.by(() => {
+    if (!projector) return null;
+    const hw = w / 2;
+    const hh = h / 2;
+    const rad = (angle * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const corners = [
+      { x: -hw, y: -hh },
+      { x: hw, y: -hh },
+      { x: hw, y: hh },
+      { x: -hw, y: hh }
+    ].map((c) => ({
+      x: element.position.x + c.x * cos - c.y * sin,
+      y: element.position.y + c.x * sin + c.y * cos
+    }));
+    return projector.projectPolyline([...corners, corners[0]]);
+  });
 
   function onPointerDown(e: PointerEvent) {
     beginElementDrag(e, element);
@@ -56,9 +78,18 @@
   tabindex="0"
   aria-label="Forme"
   onpointerdown={onPointerDown}
-  transform="translate({element.position.x}, {element.position.y}) rotate({angle})"
+  transform={projectedPath ? undefined : `translate(${element.position.x}, ${element.position.y}) rotate(${angle})`}
 >
-  {#if element.type === 'ellipse'}
+  {#if projectedPath}
+    <path
+      d={projectedPath}
+      fill={fill}
+      fill-opacity={fillOpacity}
+      stroke={stroke}
+      stroke-width={strokeWidth}
+      stroke-dasharray={dash}
+    />
+  {:else if element.type === 'ellipse'}
     <ellipse
       cx="0" cy="0" rx={w / 2} ry={h / 2}
       fill={fill} fill-opacity={fillOpacity}

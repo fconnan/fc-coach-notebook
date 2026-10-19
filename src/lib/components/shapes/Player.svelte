@@ -3,6 +3,8 @@
   import { updateElement, currentPage } from '$lib/stores/workspace';
   import { beginElementDrag } from '$lib/utils/interactions';
   import { resolvePosture } from '$lib/utils/playerPostures';
+  import { getPerspectiveContext } from '$lib/utils/perspectiveContext';
+  import { spriteFacing } from '$lib/utils/projection';
   import PlayerFigure from './PlayerFigure.svelte';
 
   let { element, isSelected } = $props<{ element: ComponentElement; isSelected: boolean }>();
@@ -69,8 +71,14 @@
   const leftLegH = $derived(element.leftLegLength || 10);
   const rightLegH = $derived(element.rightLegLength || 10);
   const useFigure = $derived($currentPage.view === 'perspective');
+  const projector = $derived(getPerspectiveContext());
   const posture = $derived(resolvePosture(element));
   const figScale = $derived((radius / 12) * 1.2);
+  const anchor = $derived(
+    projector ? projector.projectGround(element.position.x, element.position.y) : null
+  );
+  const facing = $derived(spriteFacing(angle, posture));
+  const billboardScale = $derived(anchor ? anchor.scale * figScale : figScale);
 
   function contrast(hex: string): string {
     const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -89,8 +97,31 @@
   role="button"
   tabindex="0"
   onpointerdown={onPointerDown}
-  style="transform: translate({element.position.x}px, {element.position.y}px);"
+  transform={anchor ? `translate(${anchor.x}, ${anchor.y})` : `translate(${element.position.x}, ${element.position.y})`}
 >
+  {#if anchor}
+    <!-- Billboard: upright sprite, feet at projected anchor -->
+    <g transform="scale({billboardScale})">
+      <ellipse cx="0" cy="0" rx="7" ry="2.3" fill="#000" opacity="0.24" pointer-events="none" />
+      <g transform="rotate({angle}) translate(0, -11)">
+        {#if isSelected}
+          <rect x="-22" y="-38" width="44" height="48" rx="6" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="4,2" />
+        {/if}
+        <PlayerFigure
+          {posture}
+          {facing}
+          shirt={shirtColor}
+          short={shortColor}
+          skin={skinColor}
+          {pattern}
+          {patternColor}
+          stroke={strokeCol}
+          scale={1}
+          uid={element.id}
+        />
+      </g>
+    </g>
+  {:else}
   <g transform="rotate({angle})">
     {#if isSelected}
       {#if useFigure}
@@ -195,17 +226,18 @@
       {/if}
     {/if}
   </g>
+  {/if}
 
   {#if element.label}
   <text
     x="0"
-    y={useFigure ? -8 : 0}
+    y={anchor ? -14 * billboardScale - 11 * billboardScale : useFigure ? -8 : 0}
     text-anchor="middle"
     dominant-baseline="central"
-    fill={useFigure ? '#ffffff' : isGK ? element.color || teamColor : patternColor}
-    font-size={useFigure ? 9 : radius * 0.9}
+    fill={anchor || useFigure ? '#ffffff' : isGK ? element.color || teamColor : patternColor}
+    font-size={anchor ? 9 * anchor.scale : useFigure ? 9 : radius * 0.9}
     font-weight="bold"
-    style={useFigure ? 'paint-order: stroke; stroke: rgba(0,0,0,0.75); stroke-width: 2px;' : undefined}
+    style={anchor || useFigure ? 'paint-order: stroke; stroke: rgba(0,0,0,0.75); stroke-width: 2px;' : undefined}
     pointer-events="none"
   >
     {element.label}
@@ -215,7 +247,7 @@
   {#if element.name}
     <text
       x="0"
-      y={useFigure ? radius + 18 : radius + 11}
+      y={anchor ? 20 * billboardScale : useFigure ? radius + 18 : radius + 11}
       text-anchor="middle"
       fill="#ffffff"
       font-size="11"
@@ -227,7 +259,7 @@
     </text>
   {/if}
 
-  {#if canRotate}
+  {#if canRotate && !anchor}
     <g transform="rotate({angle})">
       <g
         class="rotation-handle-group"

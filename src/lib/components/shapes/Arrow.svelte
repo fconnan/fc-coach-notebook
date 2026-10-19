@@ -2,8 +2,11 @@
   import type { ComponentElement, Position, HeadStyle } from '$lib/stores/workspace';
   import { updateElement, currentPage, selectElement, pushHistory } from '$lib/stores/workspace';
   import { svgPoint, beginElementDrag } from '$lib/utils/interactions';
+  import { getPerspectiveContext } from '$lib/utils/perspectiveContext';
 
   let { element, isSelected } = $props<{ element: ComponentElement, isSelected: boolean }>();
+
+  const projector = $derived(getPerspectiveContext());
 
   // DRAG LOGIC FOR POINTS (endpoint / vertex editing)
   let activePointIndex = $state<number | null>(null);
@@ -81,45 +84,53 @@
 
   // PATH GENERATION
   const pathPoints = $derived(element.pathPoints || [element.position, element.endPosition || {x: element.position.x + 100, y: element.position.y}]);
+  const displayPoints = $derived(
+    projector
+      ? pathPoints.map((p: { x: number; y: number }) => {
+          const pr = projector.projectGround(p.x, p.y);
+          return { x: pr.x, y: pr.y };
+        })
+      : pathPoints
+  );
   const curveType = $derived(element.curveType || 'L');
   
   const pathData = $derived.by(() => {
-    if (pathPoints.length < 2) return '';
-    let d = `M ${pathPoints[0].x} ${pathPoints[0].y}`;
+    if (displayPoints.length < 2) return '';
+    let d = `M ${displayPoints[0].x} ${displayPoints[0].y}`;
     
     if (curveType === 'L') {
-      for (let i = 1; i < pathPoints.length; i++) {
-        d += ` L ${pathPoints[i].x} ${pathPoints[i].y}`;
+      for (let i = 1; i < displayPoints.length; i++) {
+        d += ` L ${displayPoints[i].x} ${displayPoints[i].y}`;
       }
     } else if (curveType === 'Q') {
-      if (pathPoints.length >= 3) {
-        d += ` Q ${pathPoints[1].x} ${pathPoints[1].y} ${pathPoints[2].x} ${pathPoints[2].y}`;
-        for (let i = 3; i < pathPoints.length; i++) {
-          d += ` T ${pathPoints[i].x} ${pathPoints[i].y}`;
+      if (displayPoints.length >= 3) {
+        d += ` Q ${displayPoints[1].x} ${displayPoints[1].y} ${displayPoints[2].x} ${displayPoints[2].y}`;
+        for (let i = 3; i < displayPoints.length; i++) {
+          d += ` T ${displayPoints[i].x} ${displayPoints[i].y}`;
         }
       } else {
-        d += ` L ${pathPoints[1].x} ${pathPoints[1].y}`;
+        d += ` L ${displayPoints[1].x} ${displayPoints[1].y}`;
       }
     } else if (curveType === 'C') {
-      if (pathPoints.length >= 4) {
-        d += ` C ${pathPoints[1].x} ${pathPoints[1].y} ${pathPoints[2].x} ${pathPoints[2].y} ${pathPoints[3].x} ${pathPoints[3].y}`;
-        for (let i = 4; i < pathPoints.length; i++) {
-          d += ` S ${pathPoints[i].x} ${pathPoints[i].y} ${pathPoints[i+1]?.x || pathPoints[i].x} ${pathPoints[i+1]?.y || pathPoints[i].y}`;
-          if (pathPoints[i+1]) i++;
+      if (displayPoints.length >= 4) {
+        d += ` C ${displayPoints[1].x} ${displayPoints[1].y} ${displayPoints[2].x} ${displayPoints[2].y} ${displayPoints[3].x} ${displayPoints[3].y}`;
+        for (let i = 4; i < displayPoints.length; i++) {
+          d += ` S ${displayPoints[i].x} ${displayPoints[i].y} ${displayPoints[i+1]?.x || displayPoints[i].x} ${displayPoints[i+1]?.y || displayPoints[i].y}`;
+          if (displayPoints[i+1]) i++;
         }
       } else {
-        for (let i = 1; i < pathPoints.length; i++) {
-          d += ` L ${pathPoints[i].x} ${pathPoints[i].y}`;
+        for (let i = 1; i < displayPoints.length; i++) {
+          d += ` L ${displayPoints[i].x} ${displayPoints[i].y}`;
         }
       }
     } else if (curveType === 'T') {
-       for (let i = 1; i < pathPoints.length; i++) {
-         d += ` T ${pathPoints[i].x} ${pathPoints[i].y}`;
+       for (let i = 1; i < displayPoints.length; i++) {
+         d += ` T ${displayPoints[i].x} ${displayPoints[i].y}`;
        }
     } else if (curveType === 'S') {
-       for (let i = 1; i < pathPoints.length; i++) {
-         d += ` S ${pathPoints[i].x} ${pathPoints[i].y} ${pathPoints[i+1]?.x || pathPoints[i].x} ${pathPoints[i+1]?.y || pathPoints[i].y}`;
-         if (pathPoints[i+1]) i++;
+       for (let i = 1; i < displayPoints.length; i++) {
+         d += ` S ${displayPoints[i].x} ${displayPoints[i].y} ${displayPoints[i+1]?.x || displayPoints[i].x} ${displayPoints[i+1]?.y || displayPoints[i].y}`;
+         if (displayPoints[i+1]) i++;
        }
     }
     return d;

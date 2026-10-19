@@ -11,6 +11,7 @@
     patternColor = '#ffffff',
     stroke = '#111',
     scale = 1,
+    facing = 'front' as 'front' | 'back' | 'side-right' | 'side-left',
     uid = 'pf'
   } = $props<{
     posture?: PlayerPostureId;
@@ -21,6 +22,7 @@
     patternColor?: string;
     stroke?: string;
     scale?: number;
+    facing?: 'front' | 'back' | 'side-right' | 'side-left';
     uid?: string;
   }>();
 
@@ -66,11 +68,16 @@
     running_back: { kick: false, back: true }
   };
 
-  const symCfg = $derived(SYM[posture]);
-  const strideCfg = $derived(STRIDE[posture]);
+  const symCfg = $derived(SYM[posture as PlayerPostureId]);
+  const strideCfg = $derived(STRIDE[posture as PlayerPostureId]);
+  const useBack = $derived(facing === 'back' || strideCfg?.back === true);
+  const mirrorX = $derived(facing === 'side-left' ? -1 : 1);
+  const useSideProfile = $derived(
+    (facing === 'side-right' || facing === 'side-left') && symCfg && !strideCfg
+  );
 </script>
 
-<g class="player-figure" transform="scale({scale})">
+<g class="player-figure" transform="scale({scale * mirrorX}, {scale})">
   <defs>
     <clipPath id={clipId}>
       <path d="M -7.5 -20 Q 0 -22.5 7.5 -20 L 6.2 -8.5 L -6.2 -8.5 Z" />
@@ -117,7 +124,27 @@
     <path d="M -2.6 -20.6 Q 0 -19 2.6 -20.6 L 1.4 -18.4 Q 0 -17.6 -1.4 -18.4 Z" fill={shirtSh} opacity="0.55" />
   {/snippet}
 
-  {#if symCfg}
+  {#if useSideProfile}
+    {@const c = { kick: false, back: false }}
+    <!-- side profile (reuse stride silhouette) -->
+    <ellipse cx="1" cy="10.6" rx="8.5" ry="2.2" fill="#000" opacity="0.22" />
+    <path d="M 0 -2.5 Q -3.5 3 -6 8.4" fill="none" stroke={sockSh} stroke-width="4.1" stroke-linecap="round" />
+    <ellipse cx="-6" cy="9.6" rx="2.6" ry="1.5" fill={shoe} />
+    <path d="M 1.5 -2.5 Q 5 4 8 8.4" fill="none" stroke={sock} stroke-width="4.1" stroke-linecap="round" />
+    <ellipse cx="8" cy="9.6" rx="2.6" ry="1.5" fill={shoe} />
+    <path d="M -5.5 -9 L 6 -9 L 5 -1.5 L 0 -2.6 L -4.4 -1.5 Z" fill={short} stroke={stroke} stroke-width={sw} />
+    <g transform="rotate(-13 0 -9)">
+      <path d="M -6.5 -18.5 Q -10 -14 -10.5 -8.5" fill="none" stroke={skin} stroke-width="2.8" stroke-linecap="round" />
+      <circle cx="-10.6" cy="-8.2" r="1.6" fill={hand} />
+      {@render torso()}
+      <path d="M 6.5 -18.5 Q 10 -20 11 -24" fill="none" stroke={skin} stroke-width="2.8" stroke-linecap="round" />
+      <circle cx="11.2" cy="-24.2" r="1.6" fill={hand} />
+      <path d="M -7.5 -20 Q -9.5 -18.5 -8.5 -15.5 L -6 -16.5 Z" fill={shirtSh} />
+      <path d="M 7.5 -20 Q 9.5 -18.5 8.5 -15.5 L 6 -16.5 Z" fill={shirtSh} />
+      {@render head(false)}
+    </g>
+
+  {:else if symCfg}
     {@const c = symCfg}
     <!-- ground shadow -->
     <ellipse cx="0" cy="10.6" rx={6 + c.foot * 0.5} ry="2.3" fill="#000" opacity="0.22" />
@@ -155,7 +182,7 @@
     <path d="M -7.5 -20 Q -9.5 -18.5 -8.5 -15.5 L -6 -16.5 Z" fill={shirtSh} />
     <path d="M 7.5 -20 Q 9.5 -18.5 8.5 -15.5 L 6 -16.5 Z" fill={shirtSh} />
 
-    {@render head(false)}
+    {@render head(useBack)}
 
   {:else if strideCfg}
     {@const c = strideCfg}
@@ -192,7 +219,7 @@
       <path d="M -7.5 -20 Q -9.5 -18.5 -8.5 -15.5 L -6 -16.5 Z" fill={shirtSh} />
       <path d="M 7.5 -20 Q 9.5 -18.5 8.5 -15.5 L 6 -16.5 Z" fill={shirtSh} />
 
-      {@render head(c.back)}
+      {@render head(useBack || c.back)}
     </g>
 
   {:else}
