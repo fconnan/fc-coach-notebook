@@ -22,7 +22,12 @@ export interface ComponentElement {
   label?: string;
   color?: string;
   strokeWidth?: number;
-  endPosition?: Position; // For arrows/lines
+  endPosition?: Position; // Deprecated, using pathPoints for new arrows
+  pathPoints?: Position[]; // Array of points for arrows/paths
+  curveType?: 'L' | 'Q' | 'C' | 'S' | 'T'; 
+  arrowStart?: boolean;
+  arrowEnd?: boolean;
+  strokeDasharray?: string;
   angle?: number; // Rotation in degrees (0-359)
   leftLegLength?: number; 
   rightLegLength?: number;
@@ -77,6 +82,9 @@ export const currentPageId = writable<string>('1');
 
 // Currently selected element IDs on the active page
 export const selectedIds = writable<string[]>([]);
+
+// Currently active tool (e.g., 'arrow')
+export const activeTool = writable<ElementType | null>(null);
 
 // Derived store to get the currently active page object easily
 export const currentPage = derived(

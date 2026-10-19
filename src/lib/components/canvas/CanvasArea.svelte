@@ -1,11 +1,25 @@
 <script lang="ts">
-  import { currentPage, selectedIds, updateElement, addElement, incrementTeamNumber } from '$lib/stores/workspace';
+  import { activeTool, currentPage, selectedIds, updateElement, addElement, incrementTeamNumber, type Position } from '$lib/stores/workspace';
   import Player from '../shapes/Player.svelte';
   import Ball from '../shapes/Ball.svelte';
   import Pitch from '../shapes/Pitch.svelte';
+  import Arrow from '../shapes/Arrow.svelte';
 
   let svgElement: SVGSVGElement | undefined = $state();
   
+  // Drawing State
+  let drawingPoint1: Position | null = $state(null);
+  let mousePos: Position | null = $state(null);
+
+  function getSVGCoords(e: MouseEvent | PointerEvent) {
+    if (!svgElement) return { x: 0, y: 0 };
+    const pt = svgElement.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const svgPoint = pt.matrixTransform(svgElement.getScreenCTM()?.inverse());
+    return { x: svgPoint.x, y: svgPoint.y };
+  }
+
   function onDragOver(e: DragEvent) {
     e.preventDefault(); 
   }
@@ -14,14 +28,7 @@
     e.preventDefault();
     if (!svgElement) return;
     
-    // Official way to get coordinates in SVG space
-    const pt = svgElement.createSVGPoint();
-    pt.x = e.clientX;
-    pt.y = e.clientY;
-    const svgPoint = pt.matrixTransform(svgElement.getScreenCTM()?.inverse());
-    
-    const x = svgPoint.x;
-    const y = svgPoint.y;
+    const { x, y } = getSVGCoords(e);
     
     const type = e.dataTransfer?.getData('type') as any;
     const team = e.dataTransfer?.getData('team') as any;
@@ -42,7 +49,7 @@
         color = $currentPage.team2Color;
       }
 
-      addElement({
+      const elementData: any = {
         type,
         team: team || 'none',
         position: { x, y },
@@ -50,7 +57,16 @@
         radius,
         angle: team === 'team2' ? 180 : 0,
         color
-      });
+      };
+
+      if (type === 'arrow') {
+        elementData.pathPoints = [{ x, y }, { x: x + 100, y: y }];
+        elementData.curveType = 'L';
+        elementData.arrowEnd = true;
+        elementData.strokeWidth = 3;
+      }
+
+      addElement(elementData);
 
       // Increment numbering if it was a numbered field player
       if (type === 'player' && label !== 'G') {
@@ -59,14 +75,52 @@
     }
   }
 
-  function onBackgroundClick(e: MouseEvent) {
-    if (e.target === svgElement || e.target instanceof SVGRectElement) {
+  function onPointerDown(e: PointerEvent) {
+    if ($activeTool === 'arrow') {
+      const coords = getSVGCoords(e);
+      if (!drawingPoint1) {
+        drawingPoint1 = coords;
+        mousePos = coords;
+      } else {
+        // Finalize arrow
+        addElement({
+          type: 'arrow',
+          team: 'none',
+          position: drawingPoint1,
+          pathPoints: [drawingPoint1, coords],
+          curveType: 'L',
+          arrowEnd: true,
+          strokeWidth: 3,
+          color: '#ffffff'
+        });
+        drawingPoint1 = null;
+        mousePos = null;
+        activeTool.set(null);
+      }
+      return;
+    }
+
+    if (e.target === svgElement || (e.target as Element).classList.contains('pitch-surface')) {
       selectedIds.set([]);
     }
   }
+
+  function onPointerMove(e: PointerEvent) {
+    if (drawingPoint1) {
+      mousePos = getSVGCoords(e);
+    }
+  }
+
 </script>
 
-<div class="canvas-container" ondragover={onDragOver} ondrop={onDrop} aria-label="Drawing area" role="region">
+<div 
+  class="canvas-container" 
+  class:drawing-mode={$activeTool !== null}
+  ondragover={onDragOver} 
+  ondrop={onDrop} 
+  aria-label="Drawing area" 
+  role="region"
+>
   <svg 
     bind:this={svgElement}
     class="drawing-surface-vertical" 
@@ -77,7 +131,8 @@
       "-40 523.75 760 566.25"
     } 
     xmlns="http://www.w3.org/2000/svg"
-    onmousedown={onBackgroundClick}
+    onpointerdown={onPointerDown}
+    onpointermove={onPointerMove}
     role="application"
     tabindex="0"
     aria-label="Tactical drawing board"
@@ -92,6 +147,17 @@
           <rect x="-40" y="523.75" width="760" height="566.25" />
         {/if}
       </clipPath>
+
+      <marker 
+        id="preview-arrowhead" 
+        markerWidth="10" 
+        markerHeight="7" 
+        refX="9" 
+        refY="3.5" 
+        orient="auto"
+      >
+        <polygon points="0 0, 10 3.5, 0 7" fill="white" opacity="0.6" />
+      </marker>
     </defs>
 
     <g clip-path="url(#zoom-clip)">
@@ -108,9 +174,26 @@
               <Player {element} isSelected={$selectedIds.includes(element.id)} />
             {:else if element.type === 'ball'}
               <Ball {element} isSelected={$selectedIds.includes(element.id)} />
+            {:else if element.type === 'arrow'}
+              <Arrow {element} isSelected={$selectedIds.includes(element.id)} />
             {/if}
           {/each}
         </g>
+
+        <!-- Drawing Preview -->
+        {#if drawingPoint1 && mousePos}
+          <line 
+            x1={drawingPoint1.x} 
+            y1={drawingPoint1.y} 
+            x2={mousePos.x} 
+            y2={mousePos.y} 
+            stroke="white" 
+            stroke-width="3" 
+            stroke-dasharray="5,5"
+            opacity="0.6"
+            marker-end="url(#preview-arrowhead)"
+          />
+        {/if}
       {/if}
     </g>
   </svg>
@@ -125,6 +208,10 @@
     justify-content: center;
     align-items: center;
     padding: 10px;
+  }
+
+  .canvas-container.drawing-mode {
+    cursor: crosshair;
   }
   
   .drawing-surface-vertical {

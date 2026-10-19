@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { currentPage, selectedElements, updateElement, removeElements, setFieldTemplate, setShowPlayerDetails, updatePageSettings, type ComponentElement } from '$lib/stores/workspace';
+  import { activeTool, currentPage, selectedElements, updateElement, removeElements, setFieldTemplate, setShowPlayerDetails, updatePageSettings, type ComponentElement } from '$lib/stores/workspace';
   
   // Library Data
   const categories = $derived([
@@ -21,8 +21,8 @@
         { label: 'G', isGK: true, color: $currentPage.team2Color, icon: '' }
       ] 
     },
-    { title: 'Éléments', type: 'ball' as const, team: 'none' as const, items: [{ icon: '⚽', label: '', isGK: false, color: $currentPage.ballColor }, { icon: '🚩', label: '', isGK: false, color: '' }] },
-    { title: 'Tracés', type: 'arrow' as const, team: 'none' as const, items: [{ icon: '↗️', label: '', isGK: false, color: '' }, { icon: '➡️', label: '', isGK: false, color: '' }] }
+    { title: 'Éléments', type: 'ball' as const, team: 'none' as const, items: [{ icon: '⚽', label: '', isGK: false, color: $currentPage.ballColor }] },
+    { title: 'Tracés', type: 'arrow' as const, team: 'none' as const, items: [{ icon: '↗️', label: '', isGK: false, color: '' }] }
   ]);
 
   // Drag & Click Handlers for Library
@@ -36,7 +36,9 @@
   }
 
   function onItemClick(type: string, label: string) {
-    if (type === 'field') {
+    if (type === 'arrow') {
+      activeTool.update(current => current === 'arrow' ? null : 'arrow');
+    } else if (type === 'field') {
       const template = label as 'Complet' | 'Demi' | 'DemiBas';
       setFieldTemplate(template);
     }
@@ -101,6 +103,36 @@
     }
   }
 
+  function addPoint() {
+    const el = $selectedElements[0];
+    if (el.type !== 'arrow') return;
+    const points = el.pathPoints || [el.position, el.endPosition || {x: el.position.x + 100, y: el.position.y}];
+    
+    // Add a point between the second to last and last point
+    const last = points[points.length - 1];
+    const secondLast = points[points.length - 2];
+    
+    const newPoint = {
+      x: (last.x + secondLast.x) / 2 + 20, 
+      y: (last.y + secondLast.y) / 2 + 20
+    };
+    
+    const newPoints = [...points];
+    newPoints.splice(points.length - 1, 0, newPoint);
+    updateElement(el.id, { pathPoints: newPoints });
+  }
+
+  function removePoint() {
+    const el = $selectedElements[0];
+    if (el.type !== 'arrow') return;
+    const points = el.pathPoints || [];
+    if (points.length > 2) {
+      const newPoints = [...points];
+      newPoints.splice(newPoints.length - 2, 1); 
+      updateElement(el.id, { pathPoints: newPoints });
+    }
+  }
+
   function deleteSelection() {
     if ($selectedElements.length > 0) {
       removeElements($selectedElements.map(el => el.id));
@@ -118,6 +150,7 @@
           {#each category.items as item}
             <div 
               class="item" 
+              class:active-tool={$activeTool === category.type && category.type === 'arrow'}
               draggable="true" 
               role="button"
               tabindex="0"
@@ -198,6 +231,55 @@
               <label for="posYInput">Position Y</label>
               <input id="posYInput" type="number" value={Math.round($selectedElements[0].position.y)} oninput={(e) => updatePosition('y', e)} />
             </div>
+          </div>
+        {/if}
+
+        <!-- ARROW SPECIFIC PROPERTIES -->
+        {#if $selectedElements.length === 1 && $selectedElements[0].type === 'arrow'}
+          <div class="prop-group">
+            <label>Type de courbe</label>
+            <div class="btn-group">
+               <button class:active={$selectedElements[0].curveType === 'L'} onclick={() => updateElement($selectedElements[0].id, { curveType: 'L' })}>Poly</button>
+               <button class:active={$selectedElements[0].curveType === 'Q'} onclick={() => updateElement($selectedElements[0].id, { curveType: 'Q' })}>Quad</button>
+               <button class:active={$selectedElements[0].curveType === 'C'} onclick={() => updateElement($selectedElements[0].id, { curveType: 'C' })}>Cubic</button>
+            </div>
+          </div>
+          
+          <div class="prop-group">
+            <label>Flèches</label>
+            <div class="btn-group">
+               <button class:active={$selectedElements[0].arrowStart} onclick={() => updateElement($selectedElements[0].id, { arrowStart: !$selectedElements[0].arrowStart })}>Début</button>
+               <button class:active={$selectedElements[0].arrowEnd} onclick={() => updateElement($selectedElements[0].id, { arrowEnd: !$selectedElements[0].arrowEnd })}>Fin</button>
+            </div>
+          </div>
+
+          <div class="prop-group">
+             <label>Points intermédiaires</label>
+             <div class="btn-group">
+                <button onclick={addPoint}>+</button>
+                <button onclick={removePoint} disabled={($selectedElements[0].pathPoints?.length || 0) <= 2}>-</button>
+             </div>
+          </div>
+
+          <div class="prop-group">
+            <label for="strokeWidthInput">Épaisseur ({$selectedElements[0].strokeWidth || 3})</label>
+            <input 
+              id="strokeWidthInput" 
+              type="range" 
+              min="1" 
+              max="12" 
+              value={$selectedElements[0].strokeWidth || 3} 
+              oninput={(e) => updateElement($selectedElements[0].id, { strokeWidth: parseInt(e.currentTarget.value) })} 
+            />
+          </div>
+
+          <div class="prop-group">
+            <label for="dashSelect">Style de trait</label>
+            <select id="dashSelect" onchange={(e) => updateElement($selectedElements[0].id, { strokeDasharray: e.currentTarget.value })}>
+              <option value="" selected={$selectedElements[0].strokeDasharray === ''}>Plein</option>
+              <option value="5,5" selected={$selectedElements[0].strokeDasharray === '5,5'}>Pointillés</option>
+              <option value="2,4" selected={$selectedElements[0].strokeDasharray === '2,4'}>Finement pointillés</option>
+            </select>
           </div>
         {/if}
 
@@ -453,6 +535,12 @@
     background-color: var(--hover-bg);
     transform: translateY(-1px);
     box-shadow: 0 3px 8px rgba(0,0,0,0.2);
+  }
+  
+  .item.active-tool {
+    border-color: var(--accent-primary);
+    background-color: rgba(94, 106, 210, 0.15);
+    box-shadow: inset 0 0 0 1px var(--accent-primary), 0 3px 8px rgba(0,0,0,0.1);
   }
   
   .item:active {
