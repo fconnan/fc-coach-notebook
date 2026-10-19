@@ -1,60 +1,24 @@
 <script lang="ts">
-  import { Carta, MarkdownEditor } from 'carta-md';
-  import 'carta-md/default.css';
-  import { setMarkdownContent } from '$lib/stores/workspace';
-  import { onMount, onDestroy } from 'svelte';
-
-  let { content = '' } = $props<{ content: string }>();
-
-  // Initialize Carta
-  const carta = new Carta({
-    sanitizer: false, // For maximum flexibility if needed
-  });
-
-  let editorValue = $state(content);
-
-  // Sync to store
-  $effect(() => {
-    setMarkdownContent(editorValue);
-  });
 </script>
 
-<div class="carta-wrapper">
-  <!-- MarkdownEditor from Carta -->
-  <MarkdownEditor {carta} bind:value={editorValue} mode="tabs" />
-</div>
+<textarea class="markdown-editor">TODO</textarea>
 
 <style>
-  .carta-wrapper {
+  .markdown-editor {
+    width: 100%;
     height: 100%;
-    display: flex;
-    flex-direction: column;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    padding: 1rem;
+    font-family: inherit;
+    font-size: 1rem;
+    line-height: 1.5;
+    color: #1e293b;
     background-color: #fff;
-    color: #333;
-    overflow: auto;
-  }
-
-  /* Some visual tweaks to make it feel more "A4" and standard */
-  :global(.carta-editor) {
-    height: 100% !important;
-    border: none !important;
-  }
-
-  :global(.carta-input) {
-    font-size: 15px !important;
-    background: transparent !important;
-    color: #333 !important;
-    padding: 30px !important;
-    font-family: inherit !important;
-  }
-
-  :global(.carta-renderer) {
-    padding: 30px !important;
-  }
-
-  @media print {
-    :global(.carta-input-wrapper) {
-      display: none !important;
-    }
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    resize: none;
+    outline: none;
   }
 </style>
+
+

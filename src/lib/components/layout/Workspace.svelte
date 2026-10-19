@@ -19,7 +19,7 @@
   
   <div class="main-column">
     <div class="editor-pane">
-      <MarkdownEditor content={$currentPage.markdownContent} />
+      <MarkdownEditor />
     </div>
     
     <div class="canvas-pane">

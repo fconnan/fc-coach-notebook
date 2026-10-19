@@ -5,3 +5,8 @@ HINT: Run "sv --help" to get the full list of commands, add-ons, and examples to
 [36m◆[39m  Directory not empty. Continue?
 [36m│[39m  [2m○[22m [2mYes[22m [2m/[22m [32m●[39m No
 [36m└[39m
+[999D[4A[1B[J[31m■[39m  Directory not empty. Continue?
+[90m│[39m  [9m[2mNo[22m[29m
+[90m│[39m
+[?25h[90m└[39m  [31mExiting.[39m
+

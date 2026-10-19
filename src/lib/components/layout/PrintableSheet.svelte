@@ -16,7 +16,7 @@
 
 <div class="printable-fiche">
   <div class="left-pane">
-    <MarkdownEditor content={activePage.markdownContent} />
+    <MarkdownEditor />
   </div>
   
   <div class="right-pane">

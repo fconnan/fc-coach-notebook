@@ -21,3 +21,7 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+sv_out.txt
+build_output.txt
+check_logs.txt
+sv_out.txt
