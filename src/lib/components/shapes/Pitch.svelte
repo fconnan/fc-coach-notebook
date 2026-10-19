@@ -41,7 +41,7 @@
   const dy = 185;
 
   // Stripe configuration
-  const stripeCount = 15;
+  const stripeCount = 18;
   const stripeWidth = pw / stripeCount;
 </script>
 
