@@ -25,30 +25,6 @@ export const PITCH = {
   goalMouthPx: 73.2
 } as const;
 
-/** Official goal dimensions in metres. */
-export const GOAL_M = {
-  width: 7.32,
-  height: 2.44,
-  depth: 2,
-  postRadius: 0.06
-} as const;
-
-export const PLAYER_HEIGHT_M = 1.8;
-export const BALL_RADIUS_M = 0.11;
-/** Default equipment handle radius in display px (matches 2D Equipment.svelte). */
-export const EQUIPMENT_DEFAULT_RADIUS_PX = 14;
-
-/** Real-world equipment dimensions in metres (at scale factor 1). */
-export const EQUIPMENT_3D = {
-  cone: { height: 0.3, radius: 0.15 },
-  coneTall: { height: 0.5, radius: 0.1 },
-  pole: { height: 1.8, radius: 0.025 },
-  hurdle: { width: 1.2, height: 0.7, depth: 0.08 },
-  mannequin: { height: 1.7, radius: 0.2 },
-  miniGoal: { width: 1.8, height: 0.8, depth: 0.6 },
-  fullGoal: { width: GOAL_M.width, height: GOAL_M.height, depth: GOAL_M.depth }
-} as const;
-
 export type LineSeg = { x1: number; y1: number; x2: number; y2: number };
 export type RectDef = { x: number; y: number; w: number; h: number };
 export type ArcDef = {
@@ -121,20 +97,6 @@ export function buildVisibleStripeRects(template: FieldTemplate): RectDef[] {
     .filter(Boolean) as RectDef[];
 }
 
-/** Stripe rect (pitch-local px) → ground placement on world XZ. */
-export function stripeRectToWorld(rect: RectDef): { cx: number; cz: number; w: number; d: number } {
-  return {
-    cx: (rect.y + rect.h / 2 - PITCH.halfWidthPx) / PX_PER_M,
-    cz: (rect.x + rect.w / 2 - PITCH.halfLengthPx) / PX_PER_M,
-    w: rect.h / PX_PER_M,
-    d: rect.w / PX_PER_M
-  };
-}
-
-export function equipmentScaleFactor(radiusPx?: number): number {
-  return (radiusPx ?? EQUIPMENT_DEFAULT_RADIUS_PX) / EQUIPMENT_DEFAULT_RADIUS_PX;
-}
-
 export function halfFieldClip(template: FieldTemplate) {
   const { lengthPx: pw, widthPx: ph, halfLengthPx: hw, bandPx: band } = PITCH;
   if (template === 'Demi') {
@@ -172,27 +134,6 @@ export function buildVisibleSpotMarkers(template: FieldTemplate): { cx: number; 
   return buildSpotMarkers().filter((s, i) => i > 0 && s.cx >= min && s.cx <= max);
 }
 
-function appendArcSegmentsClipped(
-  pts: number[],
-  arc: ArcDef,
-  minX: number,
-  maxX: number,
-  y: number
-) {
-  const segCount = arc.endDeg - arc.startDeg >= 359 ? 64 : 24;
-  const samples = sampleArc(arc, segCount);
-  let prev: [number, number, number] | null = null;
-  for (const [px, py] of samples) {
-    if (px < minX || px > maxX) {
-      prev = null;
-      continue;
-    }
-    const w = pitchPxToWorld(px, py, y);
-    if (prev) pts.push(prev[0], prev[1], prev[2], w[0], w[1], w[2]);
-    prev = w;
-  }
-}
-
 /** Touchline / halfway outline segments for the active template. */
 export function buildOutlineSegments(template: FieldTemplate): LineSeg[] {
   const { lengthPx: pw, widthPx: ph, halfLengthPx: hw } = PITCH;
@@ -219,6 +160,34 @@ export function buildOutlineSegments(template: FieldTemplate): LineSeg[] {
     { x1: 0, y1: ph, x2: 0, y2: 0 },
     { x1: hw, y1: 0, x2: hw, y2: ph }
   ];
+}
+
+/**
+ * Ordered corner points of the touchline border for the template (closed loop).
+ * Rendered as a single path so miter joins finish the corners cleanly.
+ */
+export function buildOutlinePolygon(template: FieldTemplate): { x: number; y: number }[] {
+  const { lengthPx: pw, widthPx: ph, halfLengthPx: hw } = PITCH;
+  if (template === 'Demi') {
+    return [{ x: 0, y: 0 }, { x: hw, y: 0 }, { x: hw, y: ph }, { x: 0, y: ph }];
+  }
+  if (template === 'DemiBas') {
+    return [{ x: hw, y: 0 }, { x: pw, y: 0 }, { x: pw, y: ph }, { x: hw, y: ph }];
+  }
+  return [{ x: 0, y: 0 }, { x: pw, y: 0 }, { x: pw, y: ph }, { x: 0, y: ph }];
+}
+
+/** Closed SVG path for the touchline border. */
+export function outlinePolygonPath(template: FieldTemplate): string {
+  const pts = buildOutlinePolygon(template);
+  return pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ') + ' Z';
+}
+
+/** Halfway line (full pitch only; half templates have it as a border edge). */
+export function buildHalfwayLine(template: FieldTemplate): LineSeg | null {
+  if (template !== 'Complet') return null;
+  const { widthPx: ph, halfLengthPx: hw } = PITCH;
+  return { x1: hw, y1: 0, x2: hw, y2: ph };
 }
 
 function rectEdges(x: number, y: number, w: number, h: number): LineSeg[] {
@@ -253,11 +222,12 @@ export function buildMarkingSegments(template: FieldTemplate): LineSeg[] {
 
 export function buildCornerArcs(): ArcDef[] {
   const { lengthPx: pw, widthPx: ph, cornerR: r } = PITCH;
+  // Quarter circles centred on each pitch corner, curving into the field.
   return [
-    { cx: 0, cy: r, r, startDeg: 180, endDeg: 270 },
-    { cx: pw - r, cy: 0, r, startDeg: 270, endDeg: 360 },
-    { cx: pw, cy: ph - r, r, startDeg: 0, endDeg: 90 },
-    { cx: r, cy: ph, r, startDeg: 90, endDeg: 180 }
+    { cx: 0, cy: 0, r, startDeg: 0, endDeg: 90 },       // top-left
+    { cx: pw, cy: 0, r, startDeg: 90, endDeg: 180 },    // top-right
+    { cx: pw, cy: ph, r, startDeg: 180, endDeg: 270 },  // bottom-right
+    { cx: 0, cy: ph, r, startDeg: 270, endDeg: 360 }    // bottom-left
   ];
 }
 
@@ -298,42 +268,6 @@ export function buildGoalRects(): { side: 'left' | 'right'; rect: RectDef }[] {
   return [
     { side: 'left', rect: { x: -gd, y: gy, w: gd, h: gh } },
     { side: 'right', rect: { x: pw, y: gy, w: gd, h: gh } }
-  ];
-}
-
-export type Goal3DSpec = {
-  side: 'left' | 'right';
-  /** World-space centre of the goal mouth line on the pitch edge. */
-  mouthCenter: { x: number; y: number; z: number };
-  /** Unit vector from pitch into the goal (into the net). */
-  intoGoal: { x: number; z: number };
-};
-
-export function buildGoal3DSpecs(template: FieldTemplate): Goal3DSpec[] {
-  const halfLenM = PITCH.lengthPx / PX_PER_M / 2;
-  const goals: Goal3DSpec[] = [
-    {
-      side: 'left',
-      mouthCenter: { x: 0, y: 0, z: -halfLenM },
-      intoGoal: { x: 0, z: -1 }
-    },
-    {
-      side: 'right',
-      mouthCenter: { x: 0, y: 0, z: halfLenM },
-      intoGoal: { x: 0, z: 1 }
-    }
-  ];
-  if (template === 'Demi') return [goals[0]];
-  if (template === 'DemiBas') return [goals[1]];
-  return goals;
-}
-
-/** Pitch-local px → world metres (Y up, ground XZ). */
-export function pitchPxToWorld(px: number, py: number, y = 0.02): [number, number, number] {
-  return [
-    (py - PITCH.halfWidthPx) / PX_PER_M,
-    y,
-    (px - PITCH.halfLengthPx) / PX_PER_M
   ];
 }
 
@@ -404,48 +338,6 @@ export function buildAllLineSegments(template: FieldTemplate): LineSeg[] {
 export function buildAllArcs(template: FieldTemplate): ArcDef[] {
   const arcs = [...buildCornerArcs(), buildCenterCircle(), ...buildPenaltyArcs()];
   return arcs.map((a) => filterArcForTemplate(a, template)).filter(Boolean) as ArcDef[];
-}
-
-/** Merge segments + arcs into one BufferGeometry positions array for Three.js LineSegments. */
-export function buildWorldLinePositions(template: FieldTemplate, y = 0.03): Float32Array {
-  const { min, max } = visibleLengthRange(template);
-  const pts: number[] = [];
-  for (const s of buildAllLineSegments(template)) {
-    const a = pitchPxToWorld(s.x1, s.y1, y);
-    const b = pitchPxToWorld(s.x2, s.y2, y);
-    pts.push(a[0], a[1], a[2], b[0], b[1], b[2]);
-  }
-  for (const arc of [...buildCornerArcs(), buildCenterCircle(), ...buildPenaltyArcs()]) {
-    appendArcSegmentsClipped(pts, arc, min, max, y);
-  }
-  return new Float32Array(pts);
-}
-
-/** Penalty arc clipped to outside the box (approximate visible arc). */
-export function buildPenaltyArcWorldPositions(template: FieldTemplate, y = 0.03): Float32Array {
-  const { penAreaW, centerCircleR: r, penSpotX, lengthPx: pw } = PITCH;
-  const d = pitchDerived();
-  const pts: number[] = [];
-  const specs = [
-    { cx: penSpotX, minX: penAreaW },
-    { cx: d.penSpotRightX, maxX: pw - penAreaW }
-  ];
-  for (const spec of specs) {
-    let prev: [number, number, number] | null = null;
-    for (let deg = -60; deg <= 60; deg += 3) {
-      const rad = (deg * Math.PI) / 180;
-      const px = spec.cx + Math.cos(rad) * r;
-      const py = PITCH.halfWidthPx + Math.sin(rad) * r;
-      if (spec.minX !== undefined && px < spec.minX) continue;
-      if (spec.maxX !== undefined && px > spec.maxX) continue;
-      const range = visibleLengthRange(template);
-      if (px < range.min || px > range.max) continue;
-      const w = pitchPxToWorld(px, py, y);
-      if (prev) pts.push(prev[0], prev[1], prev[2], w[0], w[1], w[2]);
-      prev = w;
-    }
-  }
-  return new Float32Array(pts);
 }
 
 export function arcToSvgPath(arc: ArcDef): string {

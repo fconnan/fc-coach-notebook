@@ -6,7 +6,8 @@
     halfFieldClip,
     grassBackgroundRect,
     buildStripeRects,
-    buildOutlineSegments,
+    outlinePolygonPath,
+    buildHalfwayLine,
     buildMarkingSegments,
     buildCornerArcs,
     buildCenterCircle,
@@ -50,7 +51,8 @@
 
   const grassRect = grassBackgroundRect();
   const stripes = $derived(showStripes ? buildStripeRects() : []);
-  const outline = $derived(buildOutlineSegments(template));
+  const outlinePath = $derived(outlinePolygonPath(template));
+  const halfwayLine = $derived(buildHalfwayLine(template));
   const markings = $derived(buildMarkingSegments(template));
   const corners = buildCornerArcs();
   const centerCircle = buildCenterCircle();
@@ -106,9 +108,10 @@
   {/if}
 
   {#if !hideLines}
-    {#each outline as seg}
-      <line x1={seg.x1} y1={seg.y1} x2={seg.x2} y2={seg.y2} class="line" />
-    {/each}
+    <path d={outlinePath} fill="none" class="line" />
+    {#if halfwayLine}
+      <line x1={halfwayLine.x1} y1={halfwayLine.y1} x2={halfwayLine.x2} y2={halfwayLine.y2} class="line" />
+    {/if}
 
     <g class="field-lines" clip-path={playingClipId}>
       {#each markings as seg}

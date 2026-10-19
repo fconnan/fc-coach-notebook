@@ -24,7 +24,7 @@
   const hasSelection = $derived($selectedIds.length > 0);
   const viewMode = $derived($currentPage?.view ?? '2d');
 
-  function setView(view: '2d' | 'perspective' | '3d') {
+  function setView(view: '2d' | 'perspective') {
     updatePageSettings({ view });
   }
 
@@ -77,7 +77,6 @@
     <div class="view-switch">
       <button class="tool-btn" class:active={viewMode === '2d'} title="Vue 2D (dessus)" onclick={() => setView('2d')}>2D</button>
       <button class="tool-btn" class:active={viewMode === 'perspective'} title="Vue perspective" onclick={() => setView('perspective')}>2.5D</button>
-      <button class="tool-btn" class:active={viewMode === '3d'} title="Vue 3D" onclick={() => setView('3d')}>3D</button>
     </div>
     <button class="tool-btn" title="Exporter (PDF / Image)" onclick={() => showExportDialog.set(true)}>📤</button>
     <button class="tool-btn" title={$theme === 'dark' ? 'Passer en clair' : 'Passer en sombre'} onclick={toggleTheme}>{$theme === 'dark' ? '☀️' : '🌙'}</button>

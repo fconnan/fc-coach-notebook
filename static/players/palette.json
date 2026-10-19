@@ -1,0 +1,15 @@
+{
+  "sources": {
+    "shirt": { "hex": "#0048A0", "tolerance": 72 },
+    "short": { "hex": "#C00018", "tolerance": 72 },
+    "sock": { "hex": "#F8C008", "tolerance": 64 },
+    "ball": { "hex": "#F87800", "tolerance": 64 }
+  },
+  "defaults": {
+    "shirt": "#5e6ad2",
+    "short": "#1c1c1c",
+    "sock": "#F8C008",
+    "ball": "#F87800"
+  },
+  "notes": "Source colours from Gemini pose boards. Recolor matches by RGB distance within tolerance, preserving relative luminance for shaded pixels."
+}

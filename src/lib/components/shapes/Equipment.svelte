@@ -8,17 +8,23 @@
     goalEquipmentFrontLayout
   } from '$lib/utils/goalVisual';
   import GoalEquipmentFront from './GoalEquipmentFront.svelte';
+  import EquipmentSprite from './EquipmentSprite.svelte';
+  import { EQUIPMENT_SPRITE_IDS } from '$lib/utils/playerSpriteCatalog';
+  import { currentPage } from '$lib/stores/workspace';
 
   let { element, isSelected } = $props<{ element: ComponentElement, isSelected: boolean }>();
 
   const projector = $derived(getPerspectiveContext());
+  const usePng = $derived(
+    !!projector && !!EQUIPMENT_SPRITE_IDS[element.type]
+  );
   const anchor = $derived(
-    projector && isStandingElement(element.type)
+    projector && isStandingElement(element.type) && !usePng
       ? projector.projectGround(element.position.x, element.position.y)
       : null
   );
   const flatAnchor = $derived(
-    projector && !isStandingElement(element.type)
+    projector && (usePng || !isStandingElement(element.type))
       ? projector.projectGround(element.position.x, element.position.y)
       : null
   );
@@ -86,6 +92,16 @@
       ? `translate(${flatAnchor.x}, ${flatAnchor.y}) scale(${flatAnchor.scale * scale})`
       : `translate(${element.position.x}, ${element.position.y}) rotate(${angle}) scale(${scale})`}
 >
+  {#if usePng && flatAnchor}
+    <ellipse cx="0" cy="0" rx="10" ry="3" fill="#000" opacity="0.2" pointer-events="none" />
+    <EquipmentSprite
+      type={element.type}
+      angle={angle}
+      color={c}
+      ballColor={element.ballColor || $currentPage.ballColor || '#F87800'}
+      displaySize={36}
+    />
+  {:else}
   <g transform={anchor ? `rotate(${angle}) translate(0, ${-footY})` : flatAnchor ? `rotate(${angle})` : ''}>
   {#if anchor}
     <ellipse cx="0" cy={footY} rx="8" ry="2.5" fill="#000" opacity="0.22" pointer-events="none" />
@@ -123,6 +139,7 @@
     />
   {/if}
   </g>
+  {/if}
 
   {#if isSelected}
     <rect

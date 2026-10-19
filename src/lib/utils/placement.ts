@@ -1,5 +1,6 @@
 import type { ComponentElement, ElementType, Page, Position, TeamType } from '$lib/stores/workspace';
 import { pitchCenter as centerForTemplate } from '$lib/utils/fieldBounds';
+import { defaultPosture } from '$lib/utils/playerPostures';
 
 const EQUIPMENT_TYPES: ElementType[] = [
   'cone', 'coneTall', 'pole', 'hurdle', 'ladder', 'ring', 'mannequin', 'miniGoal', 'fullGoal'
@@ -59,7 +60,7 @@ export function buildElementAt(
       color: team === 'team1' ? page.team1Color : page.team2Color,
       angle: team === 'team2' ? 180 : 0,
       role: isGK ? 'goalkeeper' : 'outfield',
-      posture: isGK ? 'gk_ready' : 'standing'
+      posture: defaultPosture(isGK)
     };
   }
 

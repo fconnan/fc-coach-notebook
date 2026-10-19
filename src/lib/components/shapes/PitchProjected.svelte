@@ -142,30 +142,27 @@
 
   {#if !hideLines}
     {#if template === 'Complet'}
-      <path class="line" d={linePath(0, 0, pw, 0)} />
-      <path class="line" d={linePath(pw, 0, pw, ph)} />
-      <path class="line" d={linePath(pw, ph, 0, ph)} />
-      <path class="line" d={linePath(0, ph, 0, 0)} />
+      <path class="line" fill="none" d={quadPath([
+        { lx: 0, ly: 0 }, { lx: pw, ly: 0 }, { lx: pw, ly: ph }, { lx: 0, ly: ph }
+      ])} />
       <path class="line" d={linePath(hw, 0, hw, ph)} />
     {:else if template === 'Demi'}
-      <path class="line" d={linePath(0, 0, hw, 0)} />
-      <path class="line" d={linePath(hw, 0, hw, ph)} />
-      <path class="line" d={linePath(hw, ph, 0, ph)} />
-      <path class="line" d={linePath(0, ph, 0, 0)} />
+      <path class="line" fill="none" d={quadPath([
+        { lx: 0, ly: 0 }, { lx: hw, ly: 0 }, { lx: hw, ly: ph }, { lx: 0, ly: ph }
+      ])} />
     {:else}
-      <path class="line" d={linePath(hw, 0, pw, 0)} />
-      <path class="line" d={linePath(pw, 0, pw, ph)} />
-      <path class="line" d={linePath(pw, ph, hw, ph)} />
-      <path class="line" d={linePath(hw, ph, hw, 0)} />
+      <path class="line" fill="none" d={quadPath([
+        { lx: hw, ly: 0 }, { lx: pw, ly: 0 }, { lx: pw, ly: ph }, { lx: hw, ly: ph }
+      ])} />
     {/if}
 
     <path class="line" d={circlePath(hw, ph / 2, centerCircleR)} fill="none" />
     <circle cx={proj(hw, ph / 2).x} cy={proj(hw, ph / 2).y} r={2.5 * proj(hw, ph / 2).scale} fill="#fff" />
 
-    <path class="line" d={arcPath(0, cornerR, cornerR, 180, 270)} fill="none" />
-    <path class="line" d={arcPath(pw - cornerR, 0, cornerR, 270, 360)} fill="none" />
-    <path class="line" d={arcPath(pw, ph - cornerR, cornerR, 0, 90)} fill="none" />
-    <path class="line" d={arcPath(cornerR, ph, cornerR, 90, 180)} fill="none" />
+    <path class="line" d={arcPath(0, 0, cornerR, 0, 90)} fill="none" />
+    <path class="line" d={arcPath(pw, 0, cornerR, 90, 180)} fill="none" />
+    <path class="line" d={arcPath(pw, ph, cornerR, 180, 270)} fill="none" />
+    <path class="line" d={arcPath(0, ph, cornerR, 270, 360)} fill="none" />
 
     <path class="line" d={quadPath([
       { lx: 0, ly: penAreaY },

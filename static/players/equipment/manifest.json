@@ -1,0 +1,99 @@
+{
+  "sheet": {
+    "layout": "row",
+    "cell": {
+      "w": 160,
+      "h": 160
+    }
+  },
+  "yaws": [
+    0,
+    15,
+    30,
+    45,
+    60,
+    75,
+    90,
+    105,
+    120,
+    135,
+    150,
+    165,
+    180
+  ],
+  "items": [
+    {
+      "id": "ball",
+      "label": "Ballon",
+      "oriented": false,
+      "yaws": [
+        0
+      ],
+      "anchor": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "recolor": "ball"
+    },
+    {
+      "id": "cone",
+      "label": "Plot",
+      "oriented": false,
+      "yaws": [
+        0
+      ],
+      "anchor": {
+        "x": 0.5,
+        "y": 1.0
+      }
+    },
+    {
+      "id": "hurdle",
+      "label": "Haie",
+      "oriented": true,
+      "yaws": [
+        0,
+        15,
+        30,
+        45,
+        60,
+        75,
+        90,
+        105,
+        120,
+        135,
+        150,
+        165,
+        180
+      ],
+      "anchor": {
+        "x": 0.5,
+        "y": 1.0
+      }
+    },
+    {
+      "id": "ladder",
+      "label": "\u00c9chelle d'agilit\u00e9",
+      "oriented": true,
+      "yaws": [
+        0,
+        15,
+        30,
+        45,
+        60,
+        75,
+        90,
+        105,
+        120,
+        135,
+        150,
+        165,
+        180
+      ],
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      }
+    }
+  ]
+}

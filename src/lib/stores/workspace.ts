@@ -5,10 +5,8 @@ import {
   pitchCenter,
   type LibraryPlaceArgs
 } from '$lib/utils/placement';
-import type { PlayerPostureId } from '$lib/utils/playerPostures';
-import { PLAYER_POSTURES } from '$lib/utils/playerPostures';
-import { CAM3D_DEFAULTS, clampCam3dAngles, migrateCam3dDistance, migrateCam3dToUser, defaultCam3dPosition } from '$lib/utils/camera3d';
-import type { UserPoint } from '$lib/utils/field3d';
+import type { PlayerAnimId } from '$lib/utils/playerPostures';
+import { migratePlayerPosture, defaultPosture, isGoalkeeper } from '$lib/utils/playerPostures';
 
 // ---------------------------------------------------------
 // Schema versioning
@@ -44,7 +42,7 @@ export type TeamType = 'team1' | 'team2' | 'none';
 
 export type ShirtPattern = 'solid' | 'stripes' | 'hoops';
 export type PlayerRole = 'outfield' | 'goalkeeper';
-export type { PlayerPostureId };
+export type { PlayerAnimId, PlayerPostureId } from '$lib/utils/playerPostures';
 
 // Equipment element types (draggable training gear)
 export const EQUIPMENT_TYPES: ElementType[] = [
@@ -93,10 +91,12 @@ export interface ComponentElement {
   skinColor?: string;
   shirtColor?: string;
   shortColor?: string;
+  sockColor?: string;
+  ballColor?: string;
   shirtPattern?: ShirtPattern;
   role?: PlayerRole;
-  /** Silhouette en vue perspective (label JSON → posture). */
-  posture?: PlayerPostureId;
+  /** 2D silhouette / 2.5D PNG posture id (`element.posture`). */
+  posture?: PlayerAnimId;
 
   // --- Text / shapes / callouts / zones ---
   text?: string;
@@ -131,6 +131,8 @@ export interface SessionMeta {
   coachingPoints?: string;
 }
 
+export type PageMorphology = 'man' | 'woman' | 'child';
+
 export interface Page {
   id: string;
   name: string;
@@ -141,6 +143,8 @@ export interface Page {
   markdownContent: string;
   elements: ComponentElement[];
   showPlayerDetails: boolean;
+  /** Body type for perspective PNG sprites (no mix on one page). */
+  morphology?: PageMorphology;
   // Global styles
   team1Color: string;
   team2Color: string;
@@ -156,22 +160,11 @@ export interface Page {
   /** Semi-transparency of pitch goal net faces (0–1). */
   goalNetOpacity?: number;
   hidePitchLines: boolean;
-  view: '2d' | 'perspective' | '3d';
+  view: '2d' | 'perspective';
   /** Perspective presentation (view === 'perspective') */
   perspectiveTilt?: number;       // rotateX degrees (15–55)
   perspectiveIntensity?: number;  // 0 = léger, 100 = prononcé
   perspectiveScale?: number;      // fit scale (0.7–1)
-  /** 3D camera (view === '3d'), persisted per page */
-  cam3dYaw?: number;
-  cam3dPitch?: number;
-  /** Camera position in user coords (X=length, Y=width, Z=height). */
-  cam3dPosition?: UserPoint;
-  /** @deprecated Legacy orbit — migrated to cam3dPosition on load */
-  cam3dDistance?: number;
-  /** @deprecated Legacy orbit — migrated to cam3dPosition on load */
-  cam3dRadius?: number;
-  /** @deprecated Legacy orbit target — migrated on load */
-  cam3dTarget?: Position;
   // Animation
   frames: Frame[];
   activeFrameIndex: number;
@@ -193,6 +186,7 @@ export const DEFAULT_PAGE: Page = {
   nextTeam1Number: 1,
   nextTeam2Number: 1,
   showPlayerDetails: false,
+  morphology: 'man',
   team1Color: '#5e6ad2',
   team2Color: '#d25e5e',
   team1Size: 14,
@@ -209,9 +203,6 @@ export const DEFAULT_PAGE: Page = {
   perspectiveTilt: 34,
   perspectiveIntensity: 62,
   perspectiveScale: 0.86,
-  cam3dYaw: CAM3D_DEFAULTS.yaw,
-  cam3dPitch: CAM3D_DEFAULTS.pitch,
-  cam3dPosition: defaultCam3dPosition(),
   frames: [],
   activeFrameIndex: 0,
   session: {}
@@ -231,31 +222,33 @@ export function migratePage(data: Partial<Page>): Page {
   if (!merged.grassType) merged.grassType = 'stripes';
   if (!merged.backgroundColor) merged.backgroundColor = '#2b6b39';
   if (!merged.view) merged.view = '2d';
-  if (!['2d', 'perspective', '3d'].includes(merged.view)) merged.view = '2d';
-  const validPostures = new Set(PLAYER_POSTURES.map((p) => p.id));
+  if ((data as { view?: string }).view === '3d') merged.view = 'perspective';
+  if (!['2d', 'perspective'].includes(merged.view)) merged.view = '2d';
+  if (!merged.morphology || !['man', 'woman', 'child'].includes(merged.morphology)) {
+    merged.morphology = 'man';
+  }
   merged.elements = merged.elements.map((el) => {
     if (el.type !== 'player') return el;
-    if (el.posture && !validPostures.has(el.posture)) {
+    if (!el.posture) return el;
+    const migrated = migratePlayerPosture(el.posture, isGoalkeeper(el));
+    if (!migrated) {
       const { posture: _, ...rest } = el;
       return rest;
     }
+    if (migrated !== el.posture) return { ...el, posture: migrated };
     return el;
   });
   if (typeof merged.perspectiveTilt !== 'number') merged.perspectiveTilt = DEFAULT_PAGE.perspectiveTilt;
   if (typeof merged.perspectiveIntensity !== 'number') merged.perspectiveIntensity = DEFAULT_PAGE.perspectiveIntensity;
   if (typeof merged.perspectiveScale !== 'number') merged.perspectiveScale = DEFAULT_PAGE.perspectiveScale;
-  if (typeof merged.cam3dYaw !== 'number') merged.cam3dYaw = DEFAULT_PAGE.cam3dYaw;
-  if (typeof merged.cam3dPitch !== 'number') merged.cam3dPitch = DEFAULT_PAGE.cam3dPitch;
-  const angles = clampCam3dAngles({ yaw: merged.cam3dYaw, pitch: merged.cam3dPitch });
-  merged.cam3dYaw = angles.yaw;
-  merged.cam3dPitch = angles.pitch;
-  if (typeof merged.cam3dDistance === 'number' || typeof merged.cam3dRadius === 'number') {
-    migrateCam3dDistance(merged.cam3dDistance, merged.cam3dRadius);
-  }
-  const camUser = migrateCam3dToUser(merged);
-  merged.cam3dPosition = camUser.cam3dPosition;
-  merged.cam3dYaw = camUser.cam3dYaw;
-  merged.cam3dPitch = camUser.cam3dPitch;
+  const leftover = merged as Page & Record<string, unknown>;
+  delete leftover.cam3dYaw;
+  delete leftover.cam3dPitch;
+  delete leftover.cam3dPosition;
+  delete leftover.cam3dDistance;
+  delete leftover.cam3dRadius;
+  delete leftover.cam3dTarget;
+  delete leftover.playerAnimations;
   merged.schemaVersion = SCHEMA_VERSION;
   return merged;
 }
@@ -832,7 +825,7 @@ export function setTeamFormation(team: TeamType, positions: { label: string; x: 
       radius: size,
       color,
       role: p.label === 'G' ? 'goalkeeper' : 'outfield',
-      posture: p.label === 'G' ? 'gk_ready' : 'standing',
+      posture: defaultPosture(p.label === 'G'),
       angle: team === 'team2' ? 180 : 0
     }));
     const maxNum = positions.reduce((m, p) => {

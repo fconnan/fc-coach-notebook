@@ -15,20 +15,6 @@
   import PitchProjected from '../shapes/PitchProjected.svelte';
   import PerspectiveScope from './PerspectiveScope.svelte';
 
-  const is3d = $derived($currentPage?.view === '3d');
-  const isSvgView = $derived($currentPage?.view === '2d' || $currentPage?.view === 'perspective');
-
-  let View3DComponent = $state<typeof import('../canvas3d/View3D.svelte').default | null>(null);
-
-  $effect(() => {
-    if (is3d && !View3DComponent) {
-      import('../canvas3d/View3D.svelte').then((m) => {
-        View3DComponent = m.default;
-      });
-    }
-    if (!is3d) View3DComponent = null;
-  });
-
   const displayElements = $derived($isPlaying ? $playbackElements : ($currentPage?.elements ?? []));
 
   let svgElement: SVGSVGElement | undefined = $state();
@@ -96,7 +82,7 @@
 
   function onDrop(e: DragEvent) {
     e.preventDefault();
-    if (is3d || !svgElement) return;
+    if (!svgElement) return;
 
     const type = e.dataTransfer?.getData('type') as ElementType | '';
     const team = (e.dataTransfer?.getData('team') || 'none') as TeamType;
@@ -289,9 +275,6 @@
   role="region"
 >
   <div class="canvas-stage">
-  {#if is3d && View3DComponent}
-    <View3DComponent />
-  {:else if isSvgView}
   <svg
     bind:this={svgElement}
     class="drawing-surface-vertical"
@@ -381,7 +364,6 @@
       {/if}
     </g>
   </svg>
-  {/if}
   </div>
 </div>
 

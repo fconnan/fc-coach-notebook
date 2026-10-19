@@ -4,52 +4,20 @@
     updateElement, removeElements, setFieldTemplate, setShowPlayerDetails,
     updatePageSettings, type ComponentElement
   } from '$lib/stores/workspace';
-  import PlayerFigure from '../shapes/PlayerFigure.svelte';
-  import { posturesForPlayer, resolvePosture, defaultPosture, type PlayerPostureId } from '$lib/utils/playerPostures';
+  import PlayerSprite from '../shapes/PlayerSprite.svelte';
+  import { resolvePlayerAnimId, defaultPosture, listCatalogAnimations } from '$lib/utils/playerPostures';
   import {
-    CAM3D_LIMITS,
-    clampCam3dAngles,
-    clampUserCameraPosition,
-    getCam3dPosition
-  } from '$lib/utils/camera3d';
+    loadPoseManifest,
+    normalizePostureId,
+    type PoseManifest
+  } from '$lib/utils/playerSpriteCatalog';
+  import { toColorInputValue } from '$lib/utils/colors';
+  import { palette } from '$lib/utils/recolorSprite';
 
   let { width = 290 } = $props<{ width?: number }>();
 
   const sel = $derived($selectedElements);
   const one = $derived(sel.length === 1 ? sel[0] : null);
-
-  const cam3dUi = $derived.by(() => {
-    const pos = getCam3dPosition($currentPage);
-    const angles = clampCam3dAngles({
-      yaw: $currentPage.cam3dYaw,
-      pitch: $currentPage.cam3dPitch
-    });
-    return {
-      x: Math.round(pos.x * 10) / 10,
-      y: Math.round(pos.y * 10) / 10,
-      z: Math.round(pos.z * 10) / 10,
-      yaw: angles.yaw,
-      pitch: angles.pitch
-    };
-  });
-
-  function setCam3dAngles(partial: { cam3dYaw?: number; cam3dPitch?: number }) {
-    const angles = clampCam3dAngles({
-      yaw: partial.cam3dYaw ?? $currentPage.cam3dYaw,
-      pitch: partial.cam3dPitch ?? $currentPage.cam3dPitch
-    });
-    updatePageSettings({ cam3dYaw: angles.yaw, cam3dPitch: angles.pitch });
-  }
-
-  function setCam3dWorld(axis: 'x' | 'y' | 'z', e: Event) {
-    const v = parseFloat((e.target as HTMLInputElement).value);
-    if (isNaN(v)) return;
-    const pos = getCam3dPosition($currentPage);
-    const next = { ...pos, [axis]: v };
-    updatePageSettings({
-      cam3dPosition: clampUserCameraPosition(next, $currentPage.fieldTemplate)
-    });
-  }
 
   function updateAll(updates: Partial<ComponentElement>) {
     sel.forEach(el => updateElement(el.id, updates));
@@ -68,8 +36,8 @@
     const a = parseInt((e.target as HTMLInputElement).value);
     updateAll({ angle: a });
   }
-  function setPosture(posture: PlayerPostureId) {
-    updateAll({ posture });
+  function setPlayerAnim(animId: string) {
+    updateAll({ posture: animId });
   }
   function addPoint() {
     if (!one || one.type !== 'arrow') return;
@@ -98,8 +66,40 @@
   const isEquip = $derived(one && ['cone','coneTall','pole','hurdle','ladder','ring','mannequin','miniGoal','fullGoal'].includes(one.type));
   const isGoalEquip = $derived(one && (one.type === 'miniGoal' || one.type === 'fullGoal'));
   const playerIsGK = $derived(one?.role === 'goalkeeper' || one?.label === 'G');
-  const playerPostures = $derived(posturesForPlayer(!!playerIsGK));
-  const currentPosture = $derived(one ? resolvePosture(one) : 'standing');
+  const playerAnims = $derived(listCatalogAnimations(!!playerIsGK));
+  const currentAnimId = $derived(one ? resolvePlayerAnimId(one) : 'idle');
+  const currentSpritePosture = $derived(normalizePostureId(one?.posture || currentAnimId));
+  const isPerspective = $derived($currentPage.view === 'perspective');
+  const playerTeam = $derived(one?.team ?? 'none');
+  const morphology = $derived($currentPage.morphology || 'man');
+
+  let poseManifest = $state<PoseManifest | null>(null);
+  $effect(() => {
+    if (!isPerspective) return;
+    loadPoseManifest()
+      .then((m) => {
+        poseManifest = m;
+      })
+      .catch(() => {
+        poseManifest = null;
+      });
+  });
+  const spritePostures = $derived(poseManifest?.postures ?? []);
+
+  function setSpritePosture(id: string) {
+    updateAll({ posture: id });
+  }
+
+  function setPlayerTeam(team: 'team1' | 'team2' | 'none') {
+    if (!one) return;
+    updateElement(one.id, { team });
+  }
+
+  function applyTeamShirtColor(team: 'team1' | 'team2') {
+    if (!one || playerIsGK) return;
+    const color = team === 'team1' ? $currentPage.team1Color : $currentPage.team2Color;
+    updateElement(one.id, { team, shirtColor: color, color });
+  }
 </script>
 
 <div class="sidebar" style:width="{width}px">
@@ -197,7 +197,7 @@
         <div class="prop-group">
           <label for="tcol">Couleur</label>
           <div class="color-picker-wrap">
-            <input id="tcol" type="color" value={one.color || '#1f2329'} oninput={updateColor} />
+            <input id="tcol" type="color" value={toColorInputValue(one.color, '#1f2329')} oninput={updateColor} />
           </div>
         </div>
       {/if}
@@ -215,11 +215,11 @@
         <div class="prop-group row">
           <div class="field">
             <label>Fond</label>
-            <input type="color" value={one.fillColor || '#fdf7d0'} oninput={(e) => updateElement(one.id, { fillColor: e.currentTarget.value })} />
+            <input type="color" value={toColorInputValue(one.fillColor, '#fdf7d0')} oninput={(e) => updateElement(one.id, { fillColor: e.currentTarget.value })} />
           </div>
           <div class="field">
             <label>Texte</label>
-            <input type="color" value={one.color || '#1a1a1a'} oninput={(e) => updateElement(one.id, { color: e.currentTarget.value })} />
+            <input type="color" value={toColorInputValue(one.color, '#1a1a1a')} oninput={(e) => updateElement(one.id, { color: e.currentTarget.value })} />
           </div>
         </div>
         <div class="prop-group">
@@ -243,11 +243,11 @@
         <div class="prop-group row">
           <div class="field">
             <label>Contour</label>
-            <input type="color" value={one.color || '#ffffff'} oninput={(e) => updateElement(one.id, { color: e.currentTarget.value })} />
+            <input type="color" value={toColorInputValue(one.color, '#ffffff')} oninput={(e) => updateElement(one.id, { color: e.currentTarget.value })} />
           </div>
           <div class="field">
             <label>Remplissage</label>
-            <input type="color" value={one.fillColor && one.fillColor !== 'none' ? one.fillColor : '#9bd64a'} oninput={(e) => updateElement(one.id, { fillColor: e.currentTarget.value })} />
+            <input type="color" value={toColorInputValue(one.fillColor, '#9bd64a')} oninput={(e) => updateElement(one.id, { fillColor: e.currentTarget.value })} />
           </div>
         </div>
         <div class="prop-group">
@@ -272,28 +272,70 @@
             <input id="pname" type="text" value={one.name || ''} oninput={(e) => updateElement(one.id, { name: e.currentTarget.value })} />
           </div>
         </div>
+
+        <div class="section-title">Apparence</div>
         <div class="prop-group">
-          <label>Maillot</label>
+          <label>Équipe</label>
           <div class="btn-group">
-            <button class:active={(one.shirtPattern || 'solid') === 'solid'} onclick={() => updateElement(one.id, { shirtPattern: 'solid' })}>Uni</button>
-            <button class:active={one.shirtPattern === 'stripes'} onclick={() => updateElement(one.id, { shirtPattern: 'stripes' })}>Rayé</button>
-            <button class:active={one.shirtPattern === 'hoops'} onclick={() => updateElement(one.id, { shirtPattern: 'hoops' })}>Cerclé</button>
+            <button class:active={playerTeam === 'team1'} onclick={() => setPlayerTeam('team1')}>Éq. 1</button>
+            <button class:active={playerTeam === 'team2'} onclick={() => setPlayerTeam('team2')}>Éq. 2</button>
+            <button class:active={playerTeam === 'none'} onclick={() => setPlayerTeam('none')}>Neutre</button>
           </div>
         </div>
         <div class="prop-group row">
           <div class="field">
-            <label>Maillot</label>
-            <input type="color" value={one.shirtColor || one.color || '#5e6ad2'} oninput={(e) => updateElement(one.id, { shirtColor: e.currentTarget.value })} />
+            <label for="shirtCol">Maillot</label>
+            <input
+              id="shirtCol"
+              type="color"
+              disabled={playerIsGK}
+              title={playerIsGK ? 'Gilet jaune automatique pour le gardien' : undefined}
+              value={toColorInputValue(
+                playerIsGK ? '#d4ff00' : one.shirtColor ?? one.color ?? (playerTeam === 'team2' ? $currentPage.team2Color : playerTeam === 'team1' ? $currentPage.team1Color : '#5e6ad2'),
+                '#5e6ad2'
+              )}
+              oninput={(e) => updateElement(one.id, { shirtColor: e.currentTarget.value, color: e.currentTarget.value })}
+            />
           </div>
           <div class="field">
-            <label>Short</label>
-            <input type="color" value={one.shortColor || '#1c1c1c'} oninput={(e) => updateElement(one.id, { shortColor: e.currentTarget.value })} />
+            <label for="shortCol">Short</label>
+            <input
+              id="shortCol"
+              type="color"
+              value={toColorInputValue(one.shortColor, '#1c1c1c')}
+              oninput={(e) => updateElement(one.id, { shortColor: e.currentTarget.value })}
+            />
           </div>
           <div class="field">
-            <label>Peau</label>
-            <input type="color" value={one.skinColor || '#e8b58c'} oninput={(e) => updateElement(one.id, { skinColor: e.currentTarget.value })} />
+            <label for="sockCol">Chaussettes</label>
+            <input
+              id="sockCol"
+              type="color"
+              value={toColorInputValue(one.sockColor, palette.defaults.sock)}
+              oninput={(e) => updateElement(one.id, { sockColor: e.currentTarget.value })}
+            />
+          </div>
+          <div class="field">
+            <label for="skinCol">Peau</label>
+            <input
+              id="skinCol"
+              type="color"
+              value={toColorInputValue(one.skinColor, '#e8b58c')}
+              oninput={(e) => updateElement(one.id, { skinColor: e.currentTarget.value })}
+            />
           </div>
         </div>
+        {#if !playerIsGK}
+          <div class="prop-group">
+            <label>Maillot équipe</label>
+            <div class="btn-group">
+              <button onclick={() => applyTeamShirtColor('team1')}>Couleur éq. 1</button>
+              <button onclick={() => applyTeamShirtColor('team2')}>Couleur éq. 2</button>
+            </div>
+          </div>
+        {:else}
+          <p class="help-text gk-hint">Gardien : gilet jaune (couleur non modifiable).</p>
+        {/if}
         <div class="prop-group">
           <label class="toggle-wrap" for="isgk">
             <input id="isgk" type="checkbox" checked={playerIsGK} onchange={(e) => {
@@ -307,6 +349,19 @@
             <span class="label-text">Gardien de but</span>
           </label>
         </div>
+
+        <div class="section-title">Silhouette 2D</div>
+        <div class="prop-group">
+          <label>Motif maillot</label>
+          <div class="btn-group">
+            <button class:active={(one.shirtPattern || 'solid') === 'solid'} onclick={() => updateElement(one.id, { shirtPattern: 'solid' })}>Uni</button>
+            <button class:active={one.shirtPattern === 'stripes'} onclick={() => updateElement(one.id, { shirtPattern: 'stripes' })}>Rayé</button>
+            <button class:active={one.shirtPattern === 'hoops'} onclick={() => updateElement(one.id, { shirtPattern: 'hoops' })}>Cerclé</button>
+          </div>
+          <p class="help-text pattern-hint">Motifs visibles en vue 2D.</p>
+        </div>
+
+        <div class="section-title">Pose</div>
         <div class="prop-group">
           <label for="rot">Orientation</label>
           <div class="rotation-control">
@@ -315,37 +370,53 @@
             <span class="unit">°</span>
           </div>
         </div>
-        <div class="prop-group">
-          <span class="label-text">Posture</span>
-          <p class="help-text posture-hint">Utilisée en vue perspective (sauvegardée dans le JSON).</p>
-          <div class="posture-grid">
-            {#each playerPostures as p}
-              <button
-                type="button"
-                class="posture-cell"
-                class:active={currentPosture === p.id}
-                title={p.label}
-                onclick={() => setPosture(p.id)}
-              >
-                <svg width="40" height="48" viewBox="-16 -38 32 48" aria-hidden="true">
-                  <PlayerFigure
-                    posture={p.id}
-                    shirt={one.shirtColor || one.color || '#5e6ad2'}
-                    short={one.shortColor || '#1c1c1c'}
-                    skin={one.skinColor || '#e8b58c'}
-                    pattern={one.shirtPattern || 'solid'}
-                    patternColor="#fff"
-                    scale={0.85}
-                    uid="thumb-{one.id}-{p.id}"
-                  />
-                </svg>
-                <span>{p.label}</span>
-              </button>
-            {/each}
+        {#if isPerspective && spritePostures.length > 0}
+          <div class="prop-group">
+            <label>Posture (PNG)</label>
+            <p class="help-text posture-hint">Banque <code>static/players</code> — morphologie de la page.</p>
+            <div class="posture-grid">
+              {#each spritePostures as pose (pose.id)}
+                <button
+                  type="button"
+                  class="posture-cell"
+                  class:active={currentSpritePosture === pose.id}
+                  title={pose.label}
+                  onclick={() => setSpritePosture(pose.id)}
+                >
+                  <svg width="40" height="48" viewBox="-20 -48 40 50" aria-hidden="true">
+                    <PlayerSprite
+                      morphology={morphology}
+                      postureId={pose.id}
+                      angle={one.angle || 0}
+                      shirt={one.shirtColor || one.color || '#5e6ad2'}
+                      short={one.shortColor || '#1c1c1c'}
+                      sock={one.sockColor || palette.defaults.sock}
+                      ball={one.ballColor || $currentPage.ballColor || palette.defaults.ball}
+                      displayHeight={44}
+                    />
+                  </svg>
+                  <span>{pose.label}</span>
+                </button>
+              {/each}
+            </div>
           </div>
-        </div>
-        {#if $currentPage.showPlayerDetails && $currentPage.view !== 'perspective'}
-          <p class="help-text">En vue 2D détaillée, la posture s’applique à la vue perspective.</p>
+        {/if}
+        {#if !isPerspective}
+          <div class="prop-group">
+            <label for="playerAnim">Pose</label>
+            <select
+              id="playerAnim"
+              value={currentAnimId}
+              onchange={(e) => setPlayerAnim(e.currentTarget.value)}
+            >
+              {#each playerAnims as anim (anim.id)}
+                <option value={anim.id}>{anim.label}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+        {#if $currentPage.view === '2d' && $currentPage.showPlayerDetails}
+          <p class="help-text">La silhouette 2D suit la pose choisie.</p>
         {/if}
       {/if}
 
@@ -383,7 +454,7 @@
         <div class="prop-group">
           <label for="col">Couleur</label>
           <div class="color-picker-wrap">
-            <input id="col" type="color" value={one?.color || '#ffffff'} oninput={updateColor} />
+            <input id="col" type="color" value={toColorInputValue(one?.color, '#ffffff')} oninput={updateColor} />
           </div>
         </div>
       {/if}
@@ -413,10 +484,30 @@
         <label>Affichage</label>
         <div class="btn-group view-btns">
           <button class:active={$currentPage.view === '2d'} onclick={() => updatePageSettings({ view: '2d' })}>2D</button>
-          <button class:active={$currentPage.view === 'perspective'} onclick={() => updatePageSettings({ view: 'perspective' })}>Perspective</button>
-          <button class:active={$currentPage.view === '3d'} onclick={() => updatePageSettings({ view: '3d' })}>3D</button>
+          <button class:active={$currentPage.view === 'perspective'} onclick={() => updatePageSettings({ view: 'perspective' })}>2.5D</button>
         </div>
         {#if $currentPage.view === 'perspective'}
+          <div class="prop-group perspective-props">
+            <label>Morphologie (page)</label>
+            <div class="btn-group">
+              <button
+                type="button"
+                class:active={($currentPage.morphology || 'man') === 'man'}
+                onclick={() => updatePageSettings({ morphology: 'man' })}
+              >Homme</button>
+              <button
+                type="button"
+                class:active={$currentPage.morphology === 'woman'}
+                onclick={() => updatePageSettings({ morphology: 'woman' })}
+              >Femme</button>
+              <button
+                type="button"
+                class:active={$currentPage.morphology === 'child'}
+                onclick={() => updatePageSettings({ morphology: 'child' })}
+              >Enfant</button>
+            </div>
+            <p class="help-text">Tous les joueurs de la page utilisent la même morphologie.</p>
+          </div>
           <div class="prop-group perspective-props">
             <label for="persTilt">Inclinaison ({$currentPage.perspectiveTilt ?? 34}°)</label>
             <input
@@ -429,7 +520,7 @@
             />
           </div>
           <div class="prop-group perspective-props">
-            <label for="persInt">Intensité 3D ({$currentPage.perspectiveIntensity ?? 62}%)</label>
+            <label for="persInt">Intensité ({$currentPage.perspectiveIntensity ?? 62}%)</label>
             <input
               id="persInt"
               type="range"
@@ -452,48 +543,6 @@
             />
           </div>
         {/if}
-        {#if $currentPage.view === '3d'}
-          <div class="prop-group perspective-props row cam-pos-row">
-            <div class="field">
-              <label for="camX">Caméra X</label>
-              <input id="camX" type="number" step="0.1" value={cam3dUi.x} oninput={(e) => setCam3dWorld('x', e)} />
-            </div>
-            <div class="field">
-              <label for="camY">Y</label>
-              <input id="camY" type="number" step="0.1" value={cam3dUi.y} oninput={(e) => setCam3dWorld('y', e)} />
-            </div>
-            <div class="field">
-              <label for="camZ">Z</label>
-              <input id="camZ" type="number" step="0.1" value={cam3dUi.z} oninput={(e) => setCam3dWorld('z', e)} />
-            </div>
-          </div>
-          <p class="help-text cam-pos-hint">Position en mètres (X = longueur · Y = largeur · Z = hauteur).</p>
-          <div class="prop-group perspective-props">
-            <label for="camYaw">Angle ({cam3dUi.yaw}°)</label>
-            <input
-              id="camYaw"
-              type="range"
-              min={CAM3D_LIMITS.yawMin}
-              max={CAM3D_LIMITS.yawMax}
-              value={cam3dUi.yaw}
-              oninput={(e) => setCam3dAngles({ cam3dYaw: parseInt(e.currentTarget.value) })}
-            />
-            <p class="help-text">0° = vue vers l'attaque (+X).</p>
-          </div>
-          <div class="prop-group perspective-props">
-            <label for="camPitch">Inclinaison ({cam3dUi.pitch}°)</label>
-            <input
-              id="camPitch"
-              type="range"
-              min={CAM3D_LIMITS.pitchMin}
-              max={CAM3D_LIMITS.pitchMax}
-              value={cam3dUi.pitch}
-              oninput={(e) => setCam3dAngles({ cam3dPitch: parseInt(e.currentTarget.value) })}
-            />
-            <p class="help-text">0° = rasante · 90° = vue de dessus.</p>
-          </div>
-          <p class="help-text">Molette : avancer/reculer · Shift+molette : latéral · Ctrl+molette : hauteur · Clic+drag : rotation · Shift+drag : inclinaison</p>
-        {/if}
       </div>
 
       <div class="prop-group">
@@ -509,14 +558,14 @@
           <div class="field">
             <label>Équipe 1</label>
             <div class="color-size-row">
-              <input type="color" value={$currentPage.team1Color} oninput={(e) => updatePageSettings({ team1Color: e.currentTarget.value })} />
+              <input type="color" value={toColorInputValue($currentPage.team1Color, '#5e6ad2')} oninput={(e) => updatePageSettings({ team1Color: e.currentTarget.value })} />
               <input type="number" value={$currentPage.team1Size} oninput={(e) => updatePageSettings({ team1Size: parseInt(e.currentTarget.value) })} />
             </div>
           </div>
           <div class="field">
             <label>Équipe 2</label>
             <div class="color-size-row">
-              <input type="color" value={$currentPage.team2Color} oninput={(e) => updatePageSettings({ team2Color: e.currentTarget.value })} />
+              <input type="color" value={toColorInputValue($currentPage.team2Color, '#d25e5e')} oninput={(e) => updatePageSettings({ team2Color: e.currentTarget.value })} />
               <input type="number" value={$currentPage.team2Size} oninput={(e) => updatePageSettings({ team2Size: parseInt(e.currentTarget.value) })} />
             </div>
           </div>
@@ -535,7 +584,7 @@
         <div class="prop-group row">
           <div class="field">
             <label>Couleur pelouse</label>
-            <input type="color" value={$currentPage.backgroundColor} oninput={(e) => updatePageSettings({ backgroundColor: e.currentTarget.value })} />
+            <input type="color" value={toColorInputValue($currentPage.backgroundColor, '#2b6b39')} oninput={(e) => updatePageSettings({ backgroundColor: e.currentTarget.value })} />
           </div>
           <div class="field">
             <label>Taille ballon</label>
@@ -595,7 +644,19 @@
   .selection-count { font-size: 11px; color: var(--text-muted); margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border-color); }
 
   .prop-group { margin-bottom: 16px; }
+  .section-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+    margin: 4px 0 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+  }
+  .section-title:first-of-type { border-top: none; padding-top: 0; }
+  .pattern-hint, .gk-hint { margin: 0 0 12px; font-style: normal; line-height: 1.35; }
   .prop-group > label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+  .prop-group input[type="color"]:disabled { opacity: 0.55; cursor: not-allowed; }
   .prop-group input[type="text"], .prop-group textarea, .prop-group select {
     width: 100%;
     background: var(--bg-subtle);
@@ -643,10 +704,18 @@
   .prop-group input[type="range"] { width: 100%; accent-color: var(--accent-primary); }
   .perspective-props { margin-top: 10px; }
   .perspective-props .help-text { margin-top: 4px; font-style: normal; }
-  .cam-pos-row { margin-bottom: 4px; }
-  .cam-pos-row .field label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
-  .cam-pos-hint { margin-top: 0; margin-bottom: 10px; }
   .posture-hint { margin: 4px 0 8px; font-style: normal; }
+  .prop-group select {
+    width: 100%;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-color);
+    color: var(--text-main);
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .prop-group code { font-size: 10px; }
   .posture-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);

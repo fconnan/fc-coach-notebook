@@ -2,10 +2,13 @@
   import type { ComponentElement } from '$lib/stores/workspace';
   import { updateElement, currentPage } from '$lib/stores/workspace';
   import { beginElementDrag } from '$lib/utils/interactions';
-  import { resolvePosture } from '$lib/utils/playerPostures';
+  import { resolvePlayerAnimId, animIdToFigurePosture } from '$lib/utils/playerPostures';
   import { getPerspectiveContext } from '$lib/utils/perspectiveContext';
   import { spriteFacing } from '$lib/utils/projection';
   import PlayerFigure from './PlayerFigure.svelte';
+  import PlayerSprite from './PlayerSprite.svelte';
+  import { normalizePostureId } from '$lib/utils/playerSpriteCatalog';
+  import { palette } from '$lib/utils/recolorSprite';
 
   let { element, isSelected } = $props<{ element: ComponentElement; isSelected: boolean }>();
 
@@ -65,20 +68,27 @@
   );
   const shirtColor = $derived(isGK ? '#d4ff00' : element.shirtColor || element.color || teamColor);
   const shortColor = $derived(element.shortColor || '#1c1c1c');
+  const sockColor = $derived(element.sockColor || palette.defaults.sock);
+  const ballTint = $derived(element.ballColor || $currentPage.ballColor || palette.defaults.ball);
   const skinColor = $derived(element.skinColor || '#e8b58c');
   const pattern = $derived(element.shirtPattern || 'solid');
   const strokeCol = $derived(isGK ? element.color || teamColor : '#111');
   const leftLegH = $derived(element.leftLegLength || 10);
   const rightLegH = $derived(element.rightLegLength || 10);
   const useFigure = $derived($currentPage.view === 'perspective');
+  const usePngSprite = $derived($currentPage.view === 'perspective');
+  const morphology = $derived($currentPage.morphology || 'man');
   const projector = $derived(getPerspectiveContext());
-  const posture = $derived(resolvePosture(element));
+  const animId = $derived(resolvePlayerAnimId(element));
+  const posture = $derived(animIdToFigurePosture(animId));
+  const spritePostureId = $derived(normalizePostureId(element.posture || animId));
   const figScale = $derived((radius / 12) * 1.2);
   const anchor = $derived(
     projector ? projector.projectGround(element.position.x, element.position.y) : null
   );
-  const facing = $derived(spriteFacing(angle, posture));
+  const facing = $derived(spriteFacing(angle, animId));
   const billboardScale = $derived(anchor ? anchor.scale * figScale : figScale);
+  const spriteDisplayH = $derived(48);
 
   function contrast(hex: string): string {
     const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -102,25 +112,38 @@
   {#if anchor}
     <!-- Billboard: upright sprite, feet at projected anchor -->
     <g transform="scale({billboardScale})">
-      <rect x="-22" y="-48" width="44" height="52" fill="transparent" />
-      <ellipse cx="0" cy="0" rx="7" ry="2.3" fill="#000" opacity="0.24" pointer-events="none" />
-      <g transform="rotate({angle}) translate(0, -11)">
-        {#if isSelected}
-          <rect x="-22" y="-38" width="44" height="48" rx="6" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="4,2" />
-        {/if}
-        <PlayerFigure
-          {posture}
-          {facing}
+      <rect x="-28" y="-52" width="56" height="56" fill="transparent" />
+      <ellipse cx="0" cy="0" rx="8" ry="2.5" fill="#000" opacity="0.26" pointer-events="none" />
+      {#if isSelected}
+        <rect x="-26" y="-50" width="52" height="52" rx="6" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="4,2" />
+      {/if}
+      {#if usePngSprite}
+        <PlayerSprite
+          morphology={morphology}
+          postureId={spritePostureId}
+          angle={angle}
           shirt={shirtColor}
           short={shortColor}
-          skin={skinColor}
-          {pattern}
-          {patternColor}
-          stroke={strokeCol}
-          scale={1}
-          uid={element.id}
+          sock={sockColor}
+          ball={ballTint}
+          displayHeight={spriteDisplayH}
         />
-      </g>
+      {:else}
+        <g transform="rotate({angle}) translate(0, -11)">
+          <PlayerFigure
+            {posture}
+            {facing}
+            shirt={shirtColor}
+            short={shortColor}
+            skin={skinColor}
+            {pattern}
+            {patternColor}
+            stroke={strokeCol}
+            scale={1}
+            uid={element.id}
+          />
+        </g>
+      {/if}
     </g>
   {:else}
   <g transform="rotate({angle})">

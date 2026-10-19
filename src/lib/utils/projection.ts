@@ -2,6 +2,7 @@ import type { ElementType, ComponentElement } from '$lib/stores/workspace';
 import type { FieldTemplate } from '$lib/utils/fieldBounds';
 import { contentBox } from '$lib/utils/fieldBounds';
 import { resolvePerspective } from '$lib/utils/perspective';
+import { resolveYaw as resolveYawImpl } from '$lib/utils/resolveYaw';
 import { writable } from 'svelte/store';
 
 /** Active projector while editing in perspective view (null in 2D). */
@@ -60,12 +61,19 @@ export function isStandingElement(type: ElementType): boolean {
   return STANDING_ELEMENT_TYPES.includes(type);
 }
 
-/** Map player orientation (0 = toward far goal / screen-up) to sprite facing. */
+export function resolveYaw(
+  angleDeg: number,
+  available?: number[]
+): { yaw: number; flip: boolean; frameIndex: number } {
+  return resolveYawImpl(angleDeg, available);
+}
+
+/** Map player orientation (0 = toward far goal / screen-up) to legacy SVG figure facing. */
 export function spriteFacing(
   angle: number,
   posture: string
 ): 'front' | 'back' | 'side-right' | 'side-left' {
-  if (posture === 'running_back') return 'back';
+  if (posture === 'running_back' || posture === 'run_back') return 'back';
   const a = ((angle % 360) + 360) % 360;
   if (a >= 135 && a < 225) return 'back';
   if (a >= 45 && a < 135) return 'side-right';
