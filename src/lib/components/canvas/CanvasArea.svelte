@@ -28,14 +28,28 @@
     const label = e.dataTransfer?.getData('label') || '';
     
     if (type && type !== 'field') {
+      let radius = 14;
+      let color = '#fff';
+
+      if (type === 'ball') {
+        radius = $currentPage.ballSize;
+        color = $currentPage.ballColor;
+      } else if (team === 'team1') {
+        radius = $currentPage.team1Size;
+        color = $currentPage.team1Color;
+      } else if (team === 'team2') {
+        radius = $currentPage.team2Size;
+        color = $currentPage.team2Color;
+      }
+
       addElement({
         type,
         team: team || 'none',
         position: { x, y },
         label: label,
-        radius: type === 'ball' ? 8 : 14,
+        radius,
         angle: team === 'team2' ? 180 : 0,
-        color: team === 'team1' ? '#5e6ad2' : team === 'team2' ? '#d25e5e' : '#fff'
+        color
       });
 
       // Increment numbering if it was a numbered field player
@@ -81,7 +95,11 @@
 
     <g clip-path="url(#zoom-clip)">
       {#if $currentPage}
-        <Pitch template={$currentPage.fieldTemplate} orientation="vertical" />
+        <Pitch 
+          template={$currentPage.fieldTemplate} 
+          orientation="vertical" 
+          showStripes={$currentPage.showFieldStripes} 
+        />
         
         <g class="elements">
           {#each $currentPage.elements as element (element.id)}

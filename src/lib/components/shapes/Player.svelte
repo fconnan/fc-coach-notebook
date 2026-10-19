@@ -102,7 +102,8 @@
 
   // Pre-calculate rotation and stance
   const angle = $derived(element.angle || 0);
-  const radius = $derived(element.radius || 14);
+  const radius = $derived(element.radius || (element.team === 'team1' ? $currentPage.team1Size : (element.team === 'team2' ? $currentPage.team2Size : 14)));
+  const playerColor = $derived(element.color || (element.team === 'team1' ? $currentPage.team1Color : (element.team === 'team2' ? $currentPage.team2Color : '#ffffff')));
   const leftLegH = $derived(element.leftLegLength || 10);
   const rightLegH = $derived(element.rightLegLength || 10);
 </script>
@@ -121,9 +122,9 @@
     {#if isSelected}
       {#if $currentPage.showPlayerDetails}
         <rect 
-          x="-30" 
+          x="-40" 
           y="-14" 
-          width="60" 
+          width="80" 
           height="46" 
           rx="6" 
           fill="none" 
@@ -150,46 +151,22 @@
     {#if $currentPage.showPlayerDetails}
       <!-- Player Stance (Action legs) -->
       <!-- Left Leg -->
-      <rect x="-11" y="6" width="8" height={leftLegH - 6} rx="0" fill={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} stroke="#000" stroke-width="0.5" />
+      <rect x="-11" y="6" width="8" height={leftLegH - 6} rx="0" fill={element.label === 'G' ? '#d4ff00' : playerColor} stroke="#000" stroke-width="0.5" />
       <rect x="-11" y={6 + leftLegH - 6} width="8" height="6" rx="3" fill="#111" />
       
       <!-- Right Leg -->
-      <rect x="3" y="6" width="8" height={rightLegH - 6} rx="0" fill={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} stroke="#000" stroke-width="0.5" />
+      <rect x="3" y="6" width="8" height={rightLegH - 6} rx="0" fill={element.label === 'G' ? '#d4ff00' : playerColor} stroke="#000" stroke-width="0.5" />
       <rect x="3" y={6 + rightLegH - 6} width="8" height="6" rx="3" fill="#111" />
+      
+      <!-- Player Anatomical Details -->
 
-      <!-- Player Arms (Curved from shoulders forward) -->
-      <!-- Left Arm -->
+      <!-- Schematic Arch (Back/Structure) -->
       <path 
-        d="M -13.5 -7 Q -26 -2 -22 6" 
-        fill="none" 
-        stroke={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} 
-        stroke-width="4" 
-        stroke-linecap="round" 
-      />
-      <path 
-        d="M -13.5 -7 Q -26 -2 -22 6" 
+        d="M -42 8 Q 0 -35 42 8" 
         fill="none" 
         stroke="#000" 
-        stroke-width="5" 
+        stroke-width={element.label === 'G' ? 2 : 1.5} 
         stroke-linecap="round" 
-        opacity="0.2"
-      />
-
-      <!-- Right Arm -->
-      <path 
-        d="M 13.5 -7 Q 26 -2 22 6" 
-        fill="none" 
-        stroke={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} 
-        stroke-width="4" 
-        stroke-linecap="round" 
-      />
-      <path 
-        d="M 13.5 -7 Q 26 -2 22 6" 
-        fill="none" 
-        stroke="#000" 
-        stroke-width="5" 
-        stroke-linecap="round" 
-        opacity="0.2"
       />
     {/if}
 
@@ -198,8 +175,8 @@
       cx="0" 
       cy="0" 
       r={radius} 
-      fill={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} 
-      stroke={element.label === 'G' ? (element.color || '#5e6ad2') : '#000'} 
+      fill={element.label === 'G' ? '#d4ff00' : playerColor} 
+      stroke={element.label === 'G' ? (element.color || playerColor) : '#000'} 
       stroke-width={element.label === 'G' ? 2 : 1.5} 
     />
   </g>
@@ -211,7 +188,7 @@
       y="0" 
       text-anchor="middle" 
       dominant-baseline="central"
-      fill={element.label === 'G' ? (element.color || '#5e6ad2') : '#fff'}
+      fill={element.label === 'G' ? (element.color || playerColor) : '#fff'}
       font-size={radius * 0.9}
       font-weight="bold"
       pointer-events="none"

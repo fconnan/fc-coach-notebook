@@ -37,6 +37,14 @@ export interface Page {
   markdownContent: string;
   elements: ComponentElement[];
   showPlayerDetails: boolean;
+  // Styles Globaux
+  team1Color: string;
+  team2Color: string;
+  team1Size: number;
+  team2Size: number;
+  ballColor: string;
+  ballSize: number;
+  showFieldStripes: boolean;
 }
 
 // ---------------------------------------------------------
@@ -53,7 +61,14 @@ export const pages = writable<Page[]>([
     elements: [],
     nextTeam1Number: 1,
     nextTeam2Number: 1,
-    showPlayerDetails: false
+    showPlayerDetails: false,
+    team1Color: '#5e6ad2',
+    team2Color: '#d25e5e',
+    team1Size: 14,
+    team2Size: 14,
+    ballColor: '#ffffff',
+    ballSize: 8,
+    showFieldStripes: true
   }
 ]);
 
@@ -183,6 +198,18 @@ export function setMarkdownContent(content: string) {
     return p.map(page => {
       if (page.id === activeId) {
         return { ...page, markdownContent: content };
+      }
+      return page;
+    });
+  });
+}
+
+export function updatePageSettings(updates: Partial<Page>) {
+  pages.update(p => {
+    const activeId = getCurrentPageId();
+    return p.map(page => {
+      if (page.id === activeId) {
+        return { ...page, ...updates };
       }
       return page;
     });

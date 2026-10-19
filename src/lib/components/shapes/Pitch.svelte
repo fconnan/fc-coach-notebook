@@ -1,5 +1,9 @@
 <script lang="ts">
-  let { template = 'Complet', orientation = 'horizontal' } = $props<{ template: 'Complet' | 'Demi' | 'DemiBas', orientation: 'horizontal' | 'vertical' }>();
+  let { template = 'Complet', orientation = 'horizontal', showStripes = true } = $props<{ 
+    template: 'Complet' | 'Demi' | 'DemiBas', 
+    orientation: 'horizontal' | 'vertical',
+    showStripes?: boolean
+  }>();
   
   // Dimensions 1m = 10px
   // Official Pitch: 105m x 68m -> 1050 x 680
@@ -35,6 +39,10 @@
   // Translate to reach target (340, 525): dx = -185, dy = 185.
   const dx = -185;
   const dy = 185;
+
+  // Stripe configuration
+  const stripeCount = 15;
+  const stripeWidth = pw / stripeCount;
 </script>
 
 <!-- We always render the full pitch lines to ensure 1:1 coordinate parity for zoom -->
@@ -47,6 +55,16 @@
 >
   <!-- Grass -->
   <rect width={pw} height={ph} fill="#2b6b39" fill-opacity="1" />
+  
+  {#if showStripes}
+    <g class="stripes">
+      {#each Array(stripeCount) as _, i}
+        {#if i % 2 === 1}
+          <rect x={i * stripeWidth} y="0" width={stripeWidth} height={ph} fill="#32753f" />
+        {/if}
+      {/each}
+    </g>
+  {/if}
   
   <!-- Main border -->
   <rect width={pw} height={ph} fill="none" class="line" />

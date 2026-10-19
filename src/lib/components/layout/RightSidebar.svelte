@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { currentPage, selectedElements, updateElement, removeElements, setFieldTemplate, setShowPlayerDetails, type ComponentElement } from '$lib/stores/workspace';
+  import { currentPage, selectedElements, updateElement, removeElements, setFieldTemplate, setShowPlayerDetails, updatePageSettings, type ComponentElement } from '$lib/stores/workspace';
   
   // Library Data
   const categories = $derived([
@@ -8,8 +8,8 @@
       type: 'player' as const, 
       team: 'team1' as const, 
       items: [
-        { label: $currentPage.nextTeam1Number.toString(), isGK: false, color: '#5e6ad2', icon: '' }, 
-        { label: 'G', isGK: true, color: '#5e6ad2', icon: '' }
+        { label: $currentPage.nextTeam1Number.toString(), isGK: false, color: $currentPage.team1Color, icon: '' }, 
+        { label: 'G', isGK: true, color: $currentPage.team1Color, icon: '' }
       ] 
     },
     { 
@@ -17,11 +17,11 @@
       type: 'player' as const, 
       team: 'team2' as const, 
       items: [
-        { label: $currentPage.nextTeam2Number.toString(), isGK: false, color: '#d25e5e', icon: '' }, 
-        { label: 'G', isGK: true, color: '#d25e5e', icon: '' }
+        { label: $currentPage.nextTeam2Number.toString(), isGK: false, color: $currentPage.team2Color, icon: '' }, 
+        { label: 'G', isGK: true, color: $currentPage.team2Color, icon: '' }
       ] 
     },
-    { title: 'Éléments', type: 'ball' as const, team: 'none' as const, items: [{ icon: '⚽', label: '', isGK: false, color: '' }, { icon: '🚩', label: '', isGK: false, color: '' }] },
+    { title: 'Éléments', type: 'ball' as const, team: 'none' as const, items: [{ icon: '⚽', label: '', isGK: false, color: $currentPage.ballColor }, { icon: '🚩', label: '', isGK: false, color: '' }] },
     { title: 'Tracés', type: 'arrow' as const, team: 'none' as const, items: [{ icon: '↗️', label: '', isGK: false, color: '' }, { icon: '➡️', label: '', isGK: false, color: '' }] }
   ]);
 
@@ -136,9 +136,31 @@
                   <rect x="31" y="34" width="8" height="6" rx="0" fill={item.color || '#5e6ad2'} stroke="#000" stroke-width="0.5" opacity="0.6" />
                   <rect x="31" y="40" width="8" height="6" rx="3" fill="#111" opacity="0.6" />
                   
-                  <!-- Arms in library (Lateral/Horizontal) -->
-                  <rect x="6" y="24" width="10" height="8" rx="4" fill={item.color || '#5e6ad2'} stroke="#000" stroke-width="1" opacity="0.6" />
-                  <rect x="40" y="24" width="10" height="8" rx="4" fill={item.color || '#5e6ad2'} stroke="#000" stroke-width="1" opacity="0.6" />
+                  <!-- Arched Arms in library (Schematic wing + Action arms) -->
+                  <path 
+                    d="M -14 52 Q 28 4 70 52" 
+                    fill="none" 
+                    stroke="#000" 
+                    stroke-width={item.isGK ? 2 : 1.5} 
+                    stroke-linecap="round" 
+                    transform="scale(0.8) translate(7, 0)"
+                  />
+                  <path 
+                    d="M 14.5 31 Q 2 36 6 44" 
+                    fill="none" 
+                    stroke="#000" 
+                    stroke-width={item.isGK ? 2 : 1.5} 
+                    stroke-linecap="round"
+                    transform="scale(0.8) translate(7, 0)"
+                  />
+                  <path 
+                    d="M 41.5 31 Q 54 36 50 44" 
+                    fill="none" 
+                    stroke="#000" 
+                    stroke-width={item.isGK ? 2 : 1.5} 
+                    stroke-linecap="round"
+                    transform="scale(0.8) translate(7, 0)"
+                  />
 
                   <circle cx="28" cy="28" r="24" fill={item.isGK ? '#d4ff00' : item.color} stroke={item.isGK ? item.color : 'white'} stroke-width="4" />
                   <text x="28" y="28" dy=".35em" text-anchor="middle" fill={item.isGK ? item.color : 'white'} font-size="20" font-weight="bold">
@@ -213,7 +235,7 @@
 
         {#if $selectedElements.length === 1 && $selectedElements[0].type === 'player'}
           <div class="prop-group">
-            <label>Posture (Appuis & Stance)</label>
+            <span class="label-text">Posture (Appuis & Stance)</span>
             <div class="stance-controls">
               <div class="side-label">Gauche</div>
               <div class="btn-group">
@@ -271,11 +293,20 @@
               onclick={() => setFieldTemplate('Demi')}
               title="Demi-terrain (Haut)"
             >
-              <svg width="40" height="32" viewBox="0 0 68 53.5">
-                <rect width="68" height="53.5" fill="#2b6b39" rx="2" />
-                <rect x="2" y="2" width="64" height="101" fill="none" stroke="white" stroke-width="2" />
-                <line x1="2" y1="52.5" x2="66" y2="52.5" stroke="white" stroke-width="2" />
-                <path d="M 24,52.5 A 10,10 0 0 1 44,52.5" fill="none" stroke="white" stroke-width="2" />
+              <svg width="40" height="60" viewBox="0 0 68 105">
+                <!-- Bottom Part (Inactive) -->
+                <g opacity="0.4">
+                  <path d="M 0,52.5 H 68 V 103 A 2,2 0 0 1 66,105 H 2 A 2,2 0 0 1 0,103 Z" fill="#2b6b39" />
+                  <path d="M 2,52.5 V 103 H 66 V 52.5" fill="none" stroke="white" stroke-width="2" />
+                  <path d="M 24,52.5 A 10,10 0 0 0 44,52.5" fill="none" stroke="white" stroke-width="2" />
+                </g>
+                <!-- Top Part (Active) -->
+                <g>
+                  <path d="M 0,2 A 2,2 0 0 1 2,0 H 66 A 2,2 0 0 1 68,2 V 52.5 H 0 Z" fill="#2b6b39" />
+                  <path d="M 2,52.5 V 2 H 66 V 52.5" fill="none" stroke="white" stroke-width="2" />
+                  <line x1="2" y1="52.5" x2="66" y2="52.5" stroke="white" stroke-width="2" />
+                  <path d="M 24,52.5 A 10,10 0 0 1 44,52.5" fill="none" stroke="white" stroke-width="2" />
+                </g>
               </svg>
               <span>Demi (Haut)</span>
             </button>
@@ -285,11 +316,20 @@
               onclick={() => setFieldTemplate('DemiBas')}
               title="Demi-terrain (Bas)"
             >
-              <svg width="40" height="32" viewBox="0 51.5 68 53.5">
-                <rect width="68" height="105" fill="#2b6b39" rx="2" />
-                <rect x="2" y="2" width="64" height="101" fill="none" stroke="white" stroke-width="2" />
-                <line x1="2" y1="52.5" x2="66" y2="52.5" stroke="white" stroke-width="2" />
-                <path d="M 24,52.5 A 10,10 0 0 0 44,52.5" fill="none" stroke="white" stroke-width="2" />
+              <svg width="40" height="60" viewBox="0 0 68 105">
+                <!-- Top Part (Inactive) -->
+                <g opacity="0.4">
+                  <path d="M 0,2 A 2,2 0 0 1 2,0 H 66 A 2,2 0 0 1 68,2 V 52.5 H 0 Z" fill="#2b6b39" />
+                  <path d="M 2,52.5 V 2 H 66 V 52.5" fill="none" stroke="white" stroke-width="2" />
+                  <path d="M 24,52.5 A 10,10 0 0 1 44,52.5" fill="none" stroke="white" stroke-width="2" />
+                </g>
+                <!-- Bottom Part (Active) -->
+                <g>
+                  <path d="M 0,52.5 H 68 V 103 A 2,2 0 0 1 66,105 H 2 A 2,2 0 0 1 0,103 Z" fill="#2b6b39" />
+                  <path d="M 2,52.5 V 103 H 66 V 52.5" fill="none" stroke="white" stroke-width="2" />
+                  <line x1="2" y1="52.5" x2="66" y2="52.5" stroke="white" stroke-width="2" />
+                  <path d="M 24,52.5 A 10,10 0 0 0 44,52.5" fill="none" stroke="white" stroke-width="2" />
+                </g>
               </svg>
               <span>Demi (Bas)</span>
             </button>
@@ -297,14 +337,56 @@
         </div>
 
         <div class="prop-group">
-          <label class="toggle-wrap">
+          <label class="toggle-wrap" for="globalDetailsCheck">
             <input 
+              id="globalDetailsCheck"
               type="checkbox" 
               checked={$currentPage.showPlayerDetails} 
               onchange={(e) => setShowPlayerDetails(e.currentTarget.checked)} 
             />
             <span class="label-text">Afficher bras/jambes (Globale)</span>
           </label>
+        </div>
+
+        <div class="prop-section">
+          <div class="section-title">Styles des équipes</div>
+          <div class="prop-group row">
+            <div class="field">
+              <label>Équipe 1</label>
+              <div class="color-size-row">
+                <input type="color" value={$currentPage.team1Color} oninput={(e) => updatePageSettings({ team1Color: e.currentTarget.value })} />
+                <input type="number" value={$currentPage.team1Size} oninput={(e) => updatePageSettings({ team1Size: parseInt(e.currentTarget.value) })} />
+              </div>
+            </div>
+            <div class="field">
+              <label>Équipe 2</label>
+              <div class="color-size-row">
+                <input type="color" value={$currentPage.team2Color} oninput={(e) => updatePageSettings({ team2Color: e.currentTarget.value })} />
+                <input type="number" value={$currentPage.team2Size} oninput={(e) => updatePageSettings({ team2Size: parseInt(e.currentTarget.value) })} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="prop-section">
+          <div class="section-title">Ballon & Terrain</div>
+          <div class="prop-group row">
+            <div class="field">
+              <label>Taille Ballon</label>
+              <input type="number" value={$currentPage.ballSize} oninput={(e) => updatePageSettings({ ballSize: parseInt(e.currentTarget.value) })} />
+            </div>
+            <div class="field">
+              <label class="toggle-wrap" for="stripesCheck">
+                <input 
+                  id="stripesCheck"
+                  type="checkbox" 
+                  checked={$currentPage.showFieldStripes} 
+                  onchange={(e) => updatePageSettings({ showFieldStripes: e.currentTarget.checked })} 
+                />
+                <span class="label-text">Bandes</span>
+              </label>
+            </div>
+          </div>
         </div>
         
         <p class="help-text">Sélectionnez un joueur pour modifier sa posture ou ses coordonnées.</p>
@@ -618,5 +700,30 @@
     width: 16px;
     height: 16px;
     accent-color: var(--accent-primary);
+  }
+
+  .prop-section {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+  }
+
+  .section-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    letter-spacing: 0.5px;
+  }
+
+  .color-size-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .color-size-row input[type="number"] {
+    width: 45px;
   }
 </style>
