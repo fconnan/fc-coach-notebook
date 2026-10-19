@@ -344,7 +344,7 @@
               checked={$currentPage.showPlayerDetails} 
               onchange={(e) => setShowPlayerDetails(e.currentTarget.checked)} 
             />
-            <span class="label-text">Afficher bras/jambes (Globale)</span>
+            <span class="label-text">Afficher l'orientation des joueurs</span>
           </label>
         </div>
 
