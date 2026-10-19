@@ -9,6 +9,8 @@
   let startX = 0;
   let startY = 0;
   let originalPoints: Position[] = [];
+  let svgElement: SVGSVGElement | null = null;
+  let capturedTarget: SVGElement | null = null;
 
   function onPointDown(e: PointerEvent, index: number) {
     e.stopPropagation();
@@ -16,12 +18,16 @@
     activePointIndex = index;
     startX = e.clientX;
     startY = e.clientY;
+    
+    const target = e.currentTarget as SVGElement;
+    svgElement = target.ownerSVGElement;
+    capturedTarget = target;
+
     originalPoints = JSON.parse(JSON.stringify(element.pathPoints || [{x: element.position.x, y: element.position.y}, element.endPosition || {x: element.position.x + 50, y: element.position.y}]));
     
     window.addEventListener('pointermove', onPointMove);
     window.addEventListener('pointerup', onPointUp);
     
-    const target = e.currentTarget as SVGElement;
     target.setPointerCapture(e.pointerId);
   }
 
@@ -35,14 +41,13 @@
     // But Player.svelte uses screen deltas which works because it's translation.
     // Here we're updating absolute coordinates.
     
-    // Better way: get the SVG root
-    const svg = (e.currentTarget as SVGElement).ownerSVGElement;
-    if (!svg) return;
+    // Better way: use the captured SVG root
+    if (!svgElement) return;
 
-    const pt = svg.createSVGPoint();
+    const pt = svgElement.createSVGPoint();
     pt.x = e.clientX;
     pt.y = e.clientY;
-    const svgPoint = pt.matrixTransform(svg.getScreenCTM()?.inverse());
+    const svgPoint = pt.matrixTransform(svgElement.getScreenCTM()?.inverse());
 
     const newPoints = [...originalPoints];
     newPoints[activePointIndex] = { x: svgPoint.x, y: svgPoint.y };
@@ -62,8 +67,10 @@
     activePointIndex = null;
     window.removeEventListener('pointermove', onPointMove);
     window.removeEventListener('pointerup', onPointUp);
-    const target = e.currentTarget as SVGElement;
-    if (target) target.releasePointerCapture(e.pointerId);
+    if (capturedTarget) {
+      capturedTarget.releasePointerCapture(e.pointerId);
+      capturedTarget = null;
+    }
   }
 
   // ENTIRE ARROW DRAG
@@ -75,26 +82,31 @@
     isDraggingAll = true;
     startX = e.clientX;
     startY = e.clientY;
+    
+    const target = e.currentTarget as SVGElement;
+    svgElement = target.ownerSVGElement;
+    capturedTarget = target;
+
     originalPoints = JSON.parse(JSON.stringify(element.pathPoints || [{x: element.position.x, y: element.position.y}, element.endPosition || {x: element.position.x + 50, y: element.position.y}]));
     
     window.addEventListener('pointermove', onArrowMove);
     window.addEventListener('pointerup', onArrowUp);
+    
+    target.setPointerCapture(e.pointerId);
   }
 
   function onArrowMove(e: PointerEvent) {
-    if (!isDraggingAll) return;
-    const svg = (e.currentTarget as SVGElement).ownerSVGElement;
-    if (!svg) return;
+    if (!isDraggingAll || !svgElement) return;
 
-    const ptStart = svg.createSVGPoint();
+    const ptStart = svgElement.createSVGPoint();
     ptStart.x = startX;
     ptStart.y = startY;
-    const svgStart = ptStart.matrixTransform(svg.getScreenCTM()?.inverse());
+    const svgStart = ptStart.matrixTransform(svgElement.getScreenCTM()?.inverse());
 
-    const ptCurrent = svg.createSVGPoint();
+    const ptCurrent = svgElement.createSVGPoint();
     ptCurrent.x = e.clientX;
     ptCurrent.y = e.clientY;
-    const svgCurrent = ptCurrent.matrixTransform(svg.getScreenCTM()?.inverse());
+    const svgCurrent = ptCurrent.matrixTransform(svgElement.getScreenCTM()?.inverse());
 
     const dx = svgCurrent.x - svgStart.x;
     const dy = svgCurrent.y - svgStart.y;
@@ -107,10 +119,14 @@
     });
   }
 
-  function onArrowUp() {
+  function onArrowUp(e: PointerEvent) {
     isDraggingAll = false;
     window.removeEventListener('pointermove', onArrowMove);
     window.removeEventListener('pointerup', onArrowUp);
+    if (capturedTarget) {
+      capturedTarget.releasePointerCapture(e.pointerId);
+      capturedTarget = null;
+    }
   }
 
   // PATH GENERATION
