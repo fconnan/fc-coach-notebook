@@ -29,18 +29,25 @@
   // Corner arc
   const cornerR = 10; // 1m
 
-  // Centering translations for the 1250x880 canvas
+  // Centering translations for the 1250x880 canvas (horizontal)
   const txFull = 100;
   const tyFull = 100;
   
   const txDemi = (1250 - hw) / 2; 
   const tyDemi = 100;
+
+  // For vertical orientation, we want to center 680x1050 pitch in 880x1250 canvas
+  // Center of 880x1250 is (440, 625)
+  // Center of unrotated pitch is (txFull + pw/2, tyFull + ph/2) = (100+525, 100+340) = (625, 440)
+  // Rotation around center keeps it at (625, 440)
+  // So we need additional translation: x += (440-625), y += (625-440)
+  const dxVert = 440 - 625;
+  const dyVert = 625 - 440;
 </script>
 
-<!-- If orientation is vertical, rotate 90deg -->
 <g class="pitch-container" 
   transform="
-    {orientation === 'vertical' ? `rotate(90, ${txFull + (template === 'Complet' ? pw/2 : hw/2)}, ${tyFull + ph/2})` : ''}
+    {orientation === 'vertical' ? `translate(${dxVert}, ${dyVert}) rotate(90, ${txFull + (template === 'Complet' ? pw/2 : hw/2)}, ${tyFull + ph/2})` : ''}
     translate({template === 'Complet' ? txFull : txDemi}, {tyFull})
   "
 >

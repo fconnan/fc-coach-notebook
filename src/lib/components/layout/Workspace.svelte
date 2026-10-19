@@ -1,7 +1,6 @@
 <script lang="ts">
   import TopMenu from './TopMenu.svelte';
   import Toolbar from './Toolbar.svelte';
-  import LeftSidebar from './LeftSidebar.svelte';
   import RightSidebar from './RightSidebar.svelte';
   import BottomTabs from './BottomTabs.svelte';
   import { currentPage } from '$lib/stores/workspace';
@@ -19,16 +18,12 @@
   </div>
   
   <div class="main-column">
-    <LeftSidebar />
+    <div class="editor-pane">
+      <MarkdownEditor content={$currentPage.markdownContent} />
+    </div>
     
-    <div class="content-split">
-      <div class="editor-pane">
-        <MarkdownEditor content={$currentPage.markdownContent} />
-      </div>
-      
-      <div class="canvas-pane">
-        <CanvasArea />
-      </div>
+    <div class="canvas-pane">
+      <CanvasArea />
     </div>
 
     {#if showProperties}
@@ -56,25 +51,17 @@
   }
   
   .main-column {
-    display: flex;
-    flex-direction: row;
-    height: 100%;
-    overflow: hidden;
-  }
-
-  .content-split {
-    flex: 1;
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1.2fr 280px; /* Text | Terrain (slightly larger) | Sidebar */
     height: 100%;
     overflow: hidden;
-    background-color: var(--bg-canvas);
   }
 
   .editor-pane {
     border-right: 1px solid var(--border-color);
     height: 100%;
     overflow: hidden;
+    background-color: #fff;
   }
 
   .canvas-pane {
@@ -85,7 +72,7 @@
   }
 
   @media print {
-    .top-row, :global(.bottom-tabs), :global(.left-sidebar), :global(.right-sidebar) {
+    .top-row, :global(.bottom-tabs), :global(.right-sidebar) {
       display: none !important;
     }
     .workspace {
@@ -94,16 +81,7 @@
       width: 100%;
     }
     .main-column {
-      display: block;
-    }
-    .content-split {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      width: 297mm;
-      height: 210mm;
-      position: absolute;
-      top: 0;
-      left: 0;
+      display: flex;
     }
   }
 </style>

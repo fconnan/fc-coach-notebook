@@ -58,7 +58,7 @@
   >
     <defs>
       <pattern id="grid-vertical" width="20" height="20" patternUnits="userSpaceOnUse">
-        <path d="M 20 0 L 0 0 0 20" fill="none" stroke="var(--border-color)" stroke-opacity="0.2" stroke-width="1"/>
+        <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#ddd" stroke-opacity="1" stroke-width="1"/>
       </pattern>
     </defs>
     
@@ -83,31 +83,28 @@
 <style>
   .canvas-container {
     flex: 1;
-    background-color: var(--bg-canvas);
+    background-color: #fff; /* White background around terrain */
     overflow: auto;
     display: flex;
     justify-content: center;
     align-items: center;
-    padding: 20px;
+    padding: 40px;
   }
   
   .drawing-surface-vertical {
     height: 100%;
     aspect-ratio: 880 / 1250;
     max-width: 100%;
-    background-color: #0f1a0f;
-    box-shadow: 0 0 40px rgba(0,0,0,0.6);
+    background-color: #f8f8f8; /* Light gray base for pitch */
+    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    border: 1px solid #eee;
   }
 
   @media print {
     .canvas-container {
       padding: 0;
-      background: none;
+      background: #fff;
       overflow: visible;
-    }
-    .drawing-surface-vertical {
-      box-shadow: none;
-      border: 1px solid #ccc;
     }
   }
 </style>
