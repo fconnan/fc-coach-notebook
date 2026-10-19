@@ -343,6 +343,40 @@
         </div>
         {#if $currentPage.view === 'perspective'}
           <p class="help-text" style="margin-top:6px">Mode présentation : repassez en 2D pour éditer.</p>
+          <div class="prop-group perspective-props">
+            <label for="persTilt">Inclinaison ({$currentPage.perspectiveTilt ?? 34}°)</label>
+            <input
+              id="persTilt"
+              type="range"
+              min="15"
+              max="55"
+              value={$currentPage.perspectiveTilt ?? 34}
+              oninput={(e) => updatePageSettings({ perspectiveTilt: parseInt(e.currentTarget.value) })}
+            />
+          </div>
+          <div class="prop-group perspective-props">
+            <label for="persInt">Intensité 3D ({$currentPage.perspectiveIntensity ?? 62}%)</label>
+            <input
+              id="persInt"
+              type="range"
+              min="0"
+              max="100"
+              value={$currentPage.perspectiveIntensity ?? 62}
+              oninput={(e) => updatePageSettings({ perspectiveIntensity: parseInt(e.currentTarget.value) })}
+            />
+            <p class="help-text">Plus élevé = effet de profondeur plus marqué.</p>
+          </div>
+          <div class="prop-group perspective-props">
+            <label for="persScale">Échelle ({Math.round(($currentPage.perspectiveScale ?? 0.86) * 100)}%)</label>
+            <input
+              id="persScale"
+              type="range"
+              min="70"
+              max="100"
+              value={Math.round(($currentPage.perspectiveScale ?? 0.86) * 100)}
+              oninput={(e) => updatePageSettings({ perspectiveScale: parseInt(e.currentTarget.value) / 100 })}
+            />
+          </div>
         {/if}
       </div>
 
@@ -480,6 +514,8 @@
     color: var(--text-main); padding: 6px 8px; border-radius: 4px; font-size: 13px; font-family: monospace;
   }
   .prop-group input[type="range"] { width: 100%; accent-color: var(--accent-primary); }
+  .perspective-props { margin-top: 10px; }
+  .perspective-props .help-text { margin-top: 4px; font-style: normal; }
 
   .rotation-control { display: flex; align-items: center; gap: 12px; }
   .rotation-control input[type="range"] { flex: 2; }

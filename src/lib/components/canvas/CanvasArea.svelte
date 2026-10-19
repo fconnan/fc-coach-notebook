@@ -11,6 +11,7 @@
   import Equipment from '../shapes/Equipment.svelte';
   import { EQUIPMENT_TYPES, isPlaying, playbackElements } from '$lib/stores/workspace';
   import { contentBox, fieldClipRect, FIELD_MARGIN } from '$lib/utils/fieldBounds';
+  import { resolvePerspective } from '$lib/utils/perspective';
 
   const displayElements = $derived($isPlaying ? $playbackElements : ($currentPage?.elements ?? []));
 
@@ -96,6 +97,17 @@
   }
 
   const isPerspective = $derived($currentPage?.view === 'perspective');
+  const persp = $derived(resolvePerspective($currentPage ?? {}));
+  const stageStyle = $derived(
+    isPerspective
+      ? `perspective: ${persp.distancePx}px; perspective-origin: center 58%;`
+      : undefined
+  );
+  const svgPerspStyle = $derived(
+    isPerspective
+      ? `transform: rotateX(${persp.tilt}deg) scale(${persp.scale}); transform-origin: center 58%;`
+      : undefined
+  );
 
   function onPointerDown(e: PointerEvent) {
     if (isPerspective) return; // presentation mode is read-only
@@ -175,21 +187,23 @@
     const z = $zoom || 1;
     const vbW = b.w / z;
     const vbH = b.h / z;
+    const vbX = b.x + (b.w - vbW) / 2 + $pan.x;
+    const vbY = b.y + (b.h - vbH) / 2 + $pan.y;
 
     // Ctrl + wheel → zoom toward cursor
     if (e.ctrlKey) {
-      const fx = (e.clientX - rect.left) / rect.width;
-      const fy = (e.clientY - rect.top) / rect.height;
-      const before = getSVGCoords(e);
       const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
       const nextZ = Math.max(0.3, Math.min(6, z * factor));
       const nextVbW = b.w / nextZ;
       const nextVbH = b.h / nextZ;
-      const vbX = before.x - fx * nextVbW;
-      const vbY = before.y - fy * nextVbH;
+      const anchor = getSVGCoords(e);
+      const u = (anchor.x - vbX) / vbW;
+      const v = (anchor.y - vbY) / vbH;
+      const nextVbX = anchor.x - u * nextVbW;
+      const nextVbY = anchor.y - v * nextVbH;
       pan.set({
-        x: vbX - b.x - (b.w - nextVbW) / 2,
-        y: vbY - b.y - (b.h - nextVbH) / 2
+        x: nextVbX - b.x - (b.w - nextVbW) / 2,
+        y: nextVbY - b.y - (b.h - nextVbH) / 2
       });
       zoom.set(nextZ);
       return;
@@ -197,12 +211,10 @@
 
     const scrollFactor = 0.9;
     if (e.shiftKey) {
-      // Shift + wheel → horizontal pan (deltaY on most browsers when shifted)
       const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
       const dx = (delta / rect.width) * vbW * scrollFactor;
       pan.update((p) => ({ ...p, x: p.x + dx }));
     } else {
-      // Wheel → vertical pan
       const dy = (e.deltaY / rect.height) * vbH * scrollFactor;
       pan.update((p) => ({ ...p, y: p.y + dy }));
     }
@@ -243,10 +255,11 @@
   aria-label="Drawing area"
   role="region"
 >
+  <div class="canvas-stage" class:perspective={isPerspective} style={stageStyle}>
   <svg
     bind:this={svgElement}
     class="drawing-surface-vertical"
-    class:perspective={isPerspective}
+    style={svgPerspStyle}
     {viewBox}
     xmlns="http://www.w3.org/2000/svg"
     onpointerdown={onPointerDown}
@@ -309,6 +322,7 @@
       {/if}
     </g>
   </svg>
+  </div>
 </div>
 
 <style>
@@ -325,13 +339,20 @@
     cursor: grab;
   }
 
-  .elements.playing { pointer-events: none; }
+  .canvas-stage {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+  }
 
-  .drawing-surface-vertical.perspective {
-    transform: perspective(1500px) rotateX(34deg) scale(0.86);
-    transform-origin: center 58%;
+  .canvas-stage.perspective .drawing-surface-vertical {
     transition: transform 0.35s ease;
   }
+
+  .elements.playing { pointer-events: none; }
 
   .drawing-surface-vertical {
     width: 100%;

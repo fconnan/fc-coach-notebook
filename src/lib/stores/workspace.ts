@@ -148,6 +148,10 @@ export interface Page {
   hideGoals: boolean;
   hidePitchLines: boolean;
   view: '2d' | 'perspective';
+  /** Perspective presentation (view === 'perspective') */
+  perspectiveTilt?: number;       // rotateX degrees (15–55)
+  perspectiveIntensity?: number;  // 0 = léger, 100 = prononcé
+  perspectiveScale?: number;      // fit scale (0.7–1)
   // Animation
   frames: Frame[];
   activeFrameIndex: number;
@@ -181,6 +185,9 @@ export const DEFAULT_PAGE: Page = {
   hideGoals: false,
   hidePitchLines: false,
   view: '2d',
+  perspectiveTilt: 34,
+  perspectiveIntensity: 62,
+  perspectiveScale: 0.86,
   frames: [],
   activeFrameIndex: 0,
   session: {}
@@ -200,6 +207,9 @@ export function migratePage(data: Partial<Page>): Page {
   if (!merged.grassType) merged.grassType = 'stripes';
   if (!merged.backgroundColor) merged.backgroundColor = '#2b6b39';
   if (!merged.view) merged.view = '2d';
+  if (typeof merged.perspectiveTilt !== 'number') merged.perspectiveTilt = DEFAULT_PAGE.perspectiveTilt;
+  if (typeof merged.perspectiveIntensity !== 'number') merged.perspectiveIntensity = DEFAULT_PAGE.perspectiveIntensity;
+  if (typeof merged.perspectiveScale !== 'number') merged.perspectiveScale = DEFAULT_PAGE.perspectiveScale;
   merged.schemaVersion = SCHEMA_VERSION;
   return merged;
 }
