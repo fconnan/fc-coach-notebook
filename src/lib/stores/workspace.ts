@@ -28,7 +28,7 @@ export interface ComponentElement {
 export interface Page {
   id: string;
   name: string;
-  fieldTemplate: 'Complet' | 'Demi';
+  fieldTemplate: 'Complet' | 'Demi' | 'DemiBas';
   markdownContent: string;
   elements: ComponentElement[];
 }
@@ -127,7 +127,7 @@ export function removeElements(ids: string[]) {
   selectedIds.update(current => current.filter(id => !ids.includes(id)));
 }
 
-export function setFieldTemplate(template: 'Complet' | 'Demi') {
+export function setFieldTemplate(template: 'Complet' | 'Demi' | 'DemiBas') {
   pages.update(p => {
     const activeId = getCurrentPageId();
     return p.map(page => {

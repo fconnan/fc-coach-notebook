@@ -7,7 +7,7 @@
     { title: 'Équipe 2', type: 'player', team: 'team2', items: [{ icon: '🔴', label: '1' }, { icon: '🧤', label: 'G' }] },
     { title: 'Éléments', type: 'ball', team: 'none', items: [{ icon: '⚽', label: '' }, { icon: '🚩', label: '' }] },
     { title: 'Tracés', type: 'arrow', team: 'none', items: [{ icon: '↗️', label: '' }, { icon: '➡️', label: '' }] },
-    { title: 'Terrains', type: 'field', team: 'none', items: [{ icon: '🟩', label: 'Complet' }, { icon: '🟢', label: 'Demi' }] }
+    { title: 'Terrains', type: 'field', team: 'none', items: [{ icon: '🟩', label: 'Complet' }, { icon: '🟢', label: 'Demi' }, { icon: '🔽', label: 'DemiBas' }] }
   ];
 
   // Drag & Click Handlers for Library
@@ -22,7 +22,8 @@
 
   function onItemClick(type: string, label: string) {
     if (type === 'field') {
-      setFieldTemplate(label === 'Demi' ? 'Demi' : 'Complet');
+      const template = label as 'Complet' | 'Demi' | 'DemiBas';
+      setFieldTemplate(template);
     }
   }
 
