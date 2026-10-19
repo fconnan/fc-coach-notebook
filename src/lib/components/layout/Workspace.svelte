@@ -3,38 +3,58 @@
   import Toolbar from './Toolbar.svelte';
   import RightSidebar from './RightSidebar.svelte';
   import BottomTabs from './BottomTabs.svelte';
-  import { currentPage } from '$lib/stores/workspace';
+  import { currentPage, setMarkdownContent, isTacticLoaded, activeDirectoryHandle } from '$lib/stores/workspace';
   import CanvasArea from '../canvas/CanvasArea.svelte';
   import MarkdownEditor from './MarkdownEditor.svelte';
+  import WelcomeScreen from './WelcomeScreen.svelte';
+  import { fade } from 'svelte/transition';
+  import { hasActiveDirectory } from '$lib/services/tacticFileService';
   
   // Right sidebar toggle state
   let showProperties = $state(true);
+
+  // Handle changes from the editor
+  function handleMarkdownChange(newVal: string) {
+    setMarkdownContent(newVal);
+  }
 </script>
 
-<div class="workspace">
-  <div class="top-row">
-    <TopMenu />
-    <Toolbar bind:showProperties />
-  </div>
-  
-  <div class="main-column">
-    <div class="editor-pane">
-      <MarkdownEditor />
+{#if $isTacticLoaded || $activeDirectoryHandle}
+  <div class="workspace">
+    <div class="top-row">
+      <TopMenu />
+      <Toolbar bind:showProperties />
     </div>
     
-    <div class="drawing-container">
-      <div class="canvas-pane" style:aspect-ratio={$currentPage?.fieldTemplate === 'Complet' ? '760 / 1130' : '760 / 566.25'}>
-        <CanvasArea />
-      </div>
+    {#key $currentPage.id}
+      <div class="main-column" in:fade={{ duration: 200, delay: 100 }}>
+        {#if $isTacticLoaded}
+          <div class="editor-pane">
+            <MarkdownEditor value={$currentPage?.markdownContent || ''} onchange={handleMarkdownChange} />
+          </div>
+          
+          <div class="drawing-container">
+            <div class="canvas-pane" style:aspect-ratio={$currentPage?.fieldTemplate === 'Complet' ? '760 / 1130' : '760 / 566.25'}>
+              <CanvasArea />
+            </div>
 
-      {#if showProperties}
-        <RightSidebar />
-      {/if}
-    </div>
+            {#if showProperties}
+              <RightSidebar />
+            {/if}
+          </div>
+        {:else}
+          <div class="empty-workspace-state">
+            <p>Sélectionnez une tactique dans l'explorateur ou cliquez sur le dossier dans la barre de menu.</p>
+          </div>
+        {/if}
+      </div>
+    {/key}
+    
+    <BottomTabs />
   </div>
-  
-  <BottomTabs />
-</div>
+{:else}
+  <WelcomeScreen />
+{/if}
 
 <style>
   .workspace {
@@ -101,5 +121,17 @@
       height: 100% !important;
       border: none !important;
     }
+  }
+
+  .empty-workspace-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
+    color: var(--text-muted);
+    font-style: italic;
+    background-color: var(--bg-app);
+    grid-column: span 2;
   }
 </style>

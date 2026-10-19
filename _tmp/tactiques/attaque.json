@@ -1,0 +1,30 @@
+{
+  "id": "1",
+  "name": "attaque",
+  "fieldTemplate": "Demi",
+  "elements": [
+    {
+      "type": "player",
+      "team": "team2",
+      "position": {
+        "x": 207.44210815429688,
+        "y": 285.497802734375
+      },
+      "label": "1",
+      "radius": 14,
+      "angle": 180,
+      "color": "#d25e5e",
+      "id": "2bf4e2b2-4232-4a7c-b581-b29892e6ecf2"
+    }
+  ],
+  "nextTeam1Number": 1,
+  "nextTeam2Number": 2,
+  "showPlayerDetails": false,
+  "team1Color": "#5e6ad2",
+  "team2Color": "#d25e5e",
+  "team1Size": 14,
+  "team2Size": 14,
+  "ballColor": "#ffffff",
+  "ballSize": 8,
+  "showFieldStripes": true
+}

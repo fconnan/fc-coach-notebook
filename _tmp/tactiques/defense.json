@@ -1,0 +1,30 @@
+{
+  "id": "1",
+  "name": "defense",
+  "fieldTemplate": "DemiBas",
+  "elements": [
+    {
+      "type": "player",
+      "team": "team1",
+      "position": {
+        "x": 197.38001251220703,
+        "y": 713.980224609375
+      },
+      "label": "1",
+      "radius": 14,
+      "angle": 0,
+      "color": "#5e6ad2",
+      "id": "b4941415-984c-4d59-9dc8-604784a02767"
+    }
+  ],
+  "nextTeam1Number": 2,
+  "nextTeam2Number": 1,
+  "showPlayerDetails": false,
+  "team1Color": "#5e6ad2",
+  "team2Color": "#d25e5e",
+  "team1Size": 14,
+  "team2Size": 14,
+  "ballColor": "#ffffff",
+  "ballSize": 8,
+  "showFieldStripes": true
+}

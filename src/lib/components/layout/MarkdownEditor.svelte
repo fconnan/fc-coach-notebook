@@ -8,15 +8,22 @@
   import '@milkdown/crepe/theme/frame.css';
 
   // Svelte 5 props
-  let { value = $bindable(''), placeholder = 'Start typing...' } = $props();
+  let { 
+    value = $bindable(''), 
+    placeholder = 'Start typing...',
+    onchange 
+  } = $props<{
+    value: string;
+    placeholder?: string;
+    onchange?: (markdown: string) => void;
+  }>();
 
-  let editor: any = null;
+  let editor: any = $state(null);
 
   const milkdown: Action = (node) => {
     const crepe = new Crepe({
       root: node,
       defaultValue: value,
-      placeholder,
       features: {
         [CrepeFeature.Table]: true, // Explicitly enable tables as requested
       },
@@ -26,8 +33,11 @@
     });
 
     crepe.on((listener) => {
-      listener.markdownUpdated((_ctx, markdown) => {
-        value = markdown;
+      listener.markdownUpdated((_ctx: any, markdown: string) => {
+        if (value !== markdown) {
+          value = markdown;
+          if (onchange) onchange(markdown);
+        }
       });
     });
 
@@ -43,6 +53,16 @@
       }
     };
   };
+
+  // Sync external changes to the editor
+  $effect(() => {
+    if (editor && value !== undefined) {
+      const currentMarkdown = editor.getMarkdown();
+      if (currentMarkdown !== value) {
+        editor.setMarkdown(value);
+      }
+    }
+  });
 </script>
 
 <div class="editor-container">

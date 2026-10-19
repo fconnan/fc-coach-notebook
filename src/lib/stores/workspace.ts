@@ -58,26 +58,27 @@ export interface Page {
 // Stores
 // ---------------------------------------------------------
 
+export const DEFAULT_PAGE: Page = { 
+  id: '1', 
+  name: '', 
+  fieldTemplate: 'Complet', 
+  markdownContent: '',
+  elements: [],
+  nextTeam1Number: 1,
+  nextTeam2Number: 1,
+  showPlayerDetails: false,
+  team1Color: '#5e6ad2',
+  team2Color: '#d25e5e',
+  team1Size: 14,
+  team2Size: 14,
+  ballColor: '#ffffff',
+  ballSize: 8,
+  showFieldStripes: true
+};
+
 // List of all pages
-export const pages = writable<Page[]>([
-  { 
-    id: '1', 
-    name: 'Schéma 1', 
-    fieldTemplate: 'Complet', 
-    markdownContent: '# Ma Fiche Tactique\n\n- Phase offensive\n- Occupation du terrain',
-    elements: [],
-    nextTeam1Number: 1,
-    nextTeam2Number: 1,
-    showPlayerDetails: false,
-    team1Color: '#5e6ad2',
-    team2Color: '#d25e5e',
-    team1Size: 14,
-    team2Size: 14,
-    ballColor: '#ffffff',
-    ballSize: 8,
-    showFieldStripes: true
-  }
-]);
+export const pages = writable<Page[]>([DEFAULT_PAGE]);
+
 
 // Currently focused page ID
 export const currentPageId = writable<string>('1');
@@ -87,6 +88,18 @@ export const selectedIds = writable<string[]>([]);
 
 // Currently active tool (e.g., 'arrow')
 export const activeTool = writable<ElementType | null>(null);
+
+// Unsaved changes flag
+export const isDirty = writable<boolean>(false);
+
+// Flag to track if a tactic (file set) is currently loaded and active
+export const isTacticLoaded = writable<boolean>(false);
+
+// Track the active directory handle reactively
+export const activeDirectoryHandle = writable<FileSystemDirectoryHandle | null>(null);
+
+// Global control for the Tactic Browser modal visibility
+export const showTacticBrowser = writable<boolean>(false);
 
 // Derived store to get the currently active page object easily
 export const currentPage = derived(
@@ -114,6 +127,7 @@ export function addElement(element: Omit<ComponentElement, 'id'>) {
     id: crypto.randomUUID()
   };
 
+  isDirty.set(true);
   pages.update(p => {
     const activeId = getCurrentPageId();
     return p.map(page => {
@@ -129,6 +143,7 @@ export function addElement(element: Omit<ComponentElement, 'id'>) {
 }
 
 export function updateElement(id: string, updates: Partial<ComponentElement>) {
+  isDirty.set(true);
   pages.update(p => {
     const activeId = getCurrentPageId();
     return p.map(page => {
@@ -169,6 +184,7 @@ export function updateElement(id: string, updates: Partial<ComponentElement>) {
 }
 
 export function removeElements(ids: string[]) {
+  isDirty.set(true);
   pages.update(p => {
     const activeId = getCurrentPageId();
     return p.map(page => {
@@ -187,6 +203,7 @@ export function removeElements(ids: string[]) {
 }
 
 export function setFieldTemplate(template: 'Complet' | 'Demi' | 'DemiBas') {
+  isDirty.set(true);
   pages.update(p => {
     const activeId = getCurrentPageId();
     return p.map(page => {
@@ -200,6 +217,7 @@ export function setFieldTemplate(template: 'Complet' | 'Demi' | 'DemiBas') {
 
 export function incrementTeamNumber(team: TeamType) {
   if (team === 'none') return;
+  isDirty.set(true);
   pages.update(p => {
     const activeId = getCurrentPageId();
     return p.map(page => {
@@ -216,6 +234,7 @@ export function incrementTeamNumber(team: TeamType) {
 }
 
 export function setShowPlayerDetails(visible: boolean) {
+  isDirty.set(true);
   pages.update(p => {
     const activeId = getCurrentPageId();
     return p.map(page => {
@@ -228,6 +247,7 @@ export function setShowPlayerDetails(visible: boolean) {
 }
 
 export function setMarkdownContent(content: string) {
+  isDirty.set(true);
   pages.update(p => {
     const activeId = getCurrentPageId();
     return p.map(page => {
@@ -240,6 +260,7 @@ export function setMarkdownContent(content: string) {
 }
 
 export function updatePageSettings(updates: Partial<Page>) {
+  isDirty.set(true);
   pages.update(p => {
     const activeId = getCurrentPageId();
     return p.map(page => {
@@ -249,6 +270,34 @@ export function updatePageSettings(updates: Partial<Page>) {
       return page;
     });
   });
+}
+
+/**
+ * Replaces the entire session content with external data.
+ * Always ensures a unique ID to trigger UI refreshes.
+ */
+export function importPage(data: Partial<Page>) {
+  const newId = data.id || `page-${Date.now()}`; 
+  const newPage: Page = {
+    ...DEFAULT_PAGE,
+    ...data,
+    id: newId
+  };
+  
+  pages.set([newPage]);
+  currentPageId.set(newId);
+  selectedIds.set([]);
+  isTacticLoaded.set(true);
+}
+
+/**
+ * Resets the session to the empty/welcome state.
+ */
+export function unloadTactic() {
+  pages.set([{ ...DEFAULT_PAGE }]);
+  isTacticLoaded.set(false);
+  isDirty.set(false);
+  selectedIds.set([]);
 }
 
 // History stack will be implemented later
