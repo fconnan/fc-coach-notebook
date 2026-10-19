@@ -47,6 +47,7 @@
 
 <!-- We always render the full pitch lines to ensure 1:1 coordinate parity for zoom -->
 <g class="pitch-container" 
+  pointer-events="none"
   transform="
     {orientation === 'vertical' 
       ? `translate(${dx}, ${dy}) rotate(90, ${hw}, ${hh})` 
