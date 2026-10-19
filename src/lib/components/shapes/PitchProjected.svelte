@@ -2,6 +2,7 @@
   import type { Projector } from '$lib/utils/projection';
   import type { FieldTemplate } from '$lib/utils/fieldBounds';
   import { contentBox } from '$lib/utils/fieldBounds';
+  import { PITCH, pitchDerived, lightenGrassColor, buildStripeRects } from '$lib/utils/pitchMarkings';
 
   let {
     template = 'Complet' as FieldTemplate,
@@ -19,35 +20,27 @@
     projector: Projector;
   }>();
 
-  function lighten(hex: string, amt = 18): string {
-    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    if (!m) return '#32753f';
-    const r = Math.min(255, parseInt(m[1], 16) + amt);
-    const g = Math.min(255, parseInt(m[2], 16) + amt);
-    const b = Math.min(255, parseInt(m[3], 16) + amt);
-    return `rgb(${r}, ${g}, ${b})`;
-  }
+  const d = pitchDerived();
+  const pw = PITCH.lengthPx;
+  const ph = PITCH.widthPx;
+  const hw = PITCH.halfLengthPx;
+  const band = PITCH.bandPx;
+  const stripeCount = PITCH.stripeCount;
+  const stripeWidth = d.stripeWidth;
 
-  const pw = 1050;
-  const ph = 680;
-  const hw = pw / 2;
-  const band = 28;
-  const stripeCount = 18;
-  const stripeWidth = pw / stripeCount;
-
-  const goalAreaW = 55;
-  const goalAreaH = 183.2;
-  const goalAreaY = (ph - goalAreaH) / 2;
-  const penAreaW = 165;
-  const penAreaH = 403.2;
-  const penAreaY = (ph - penAreaH) / 2;
-  const centerCircleR = 91.5;
-  const penSpotX = 110;
-  const penSpotRightX = pw - 110;
-  const goalW = 20;
-  const goalH = 73.2;
-  const goalY = (ph - goalH) / 2;
-  const cornerR = 10;
+  const goalAreaW = PITCH.goalAreaW;
+  const goalAreaH = PITCH.goalAreaH;
+  const goalAreaY = d.goalAreaY;
+  const penAreaW = PITCH.penAreaW;
+  const penAreaH = PITCH.penAreaH;
+  const penAreaY = d.penAreaY;
+  const centerCircleR = PITCH.centerCircleR;
+  const penSpotX = PITCH.penSpotX;
+  const penSpotRightX = d.penSpotRightX;
+  const goalW = PITCH.goalDepthPx;
+  const goalH = PITCH.goalMouthPx;
+  const goalY = d.goalY;
+  const cornerR = PITCH.cornerR;
 
   /** Pitch-local (horizontal layout) → display SVG coords. */
   function toDisplay(lx: number, ly: number) {
@@ -118,16 +111,13 @@
   const stripeStrips = $derived.by(() => {
     if (!showStripes) return [];
     const strips: { path: string; alt: boolean }[] = [];
-    for (let i = 0; i < stripeCount; i++) {
-      if (i % 2 !== 1) continue;
-      const x0 = i * stripeWidth;
-      const x1 = (i + 1) * stripeWidth;
+    for (const stripe of buildStripeRects()) {
       strips.push({
         path: quadPath([
-          { lx: x0, ly: 0 },
-          { lx: x1, ly: 0 },
-          { lx: x1, ly: ph },
-          { lx: x0, ly: ph }
+          { lx: stripe.x, ly: stripe.y },
+          { lx: stripe.x + stripe.w, ly: stripe.y },
+          { lx: stripe.x + stripe.w, ly: stripe.y + stripe.h },
+          { lx: stripe.x, ly: stripe.y + stripe.h }
         ]),
         alt: true
       });
@@ -142,7 +132,7 @@
   {/each}
 
   {#each stripeStrips as strip}
-    <path d={strip.path} fill={lighten(grassColor)} pointer-events="none" />
+    <path d={strip.path} fill={lightenGrassColor(grassColor)} pointer-events="none" />
   {/each}
 
   {#if !hideLines}

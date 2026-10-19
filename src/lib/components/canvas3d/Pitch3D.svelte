@@ -1,94 +1,92 @@
 <script lang="ts">
   import { T } from '@threlte/core';
   import * as THREE from 'three';
-  import { currentPage } from '$lib/stores/workspace';
-  import { pitchSizeM, pitchHalfClip, PITCH_M_W } from '$lib/utils/field3d';
+  import type { FieldTemplate } from '$lib/utils/fieldBounds';
+  import {
+    PX_PER_M,
+    lightenGrassColor,
+    grassBackgroundRect,
+    buildVisibleStripeRects,
+    stripeRectToWorld,
+    buildWorldLinePositions,
+    buildPenaltyArcWorldPositions,
+    buildSpotMarkers,
+    pitchPxToWorld,
+    buildGoal3DSpecs
+  } from '$lib/utils/pitchMarkings';
+  import Goal3D from './Goal3D.svelte';
 
   let {
+    template = 'Complet' as FieldTemplate,
     grassColor = '#2b6b39',
     showStripes = true,
     hideLines = false,
     hideGoals = false
   } = $props<{
+    template?: FieldTemplate;
     grassColor?: string;
     showStripes?: boolean;
     hideLines?: boolean;
     hideGoals?: boolean;
   }>();
 
-  const template = $derived($currentPage?.fieldTemplate ?? 'Complet');
-  const size = $derived(pitchSizeM(template));
-  const half = $derived(pitchHalfClip(template));
-  const hw = PITCH_M_W / 2;
-  const hl = $derived(size.length / 2);
-
-  function lighten(hex: string, amt: number): string {
-    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    if (!m) return hex;
-    return `rgb(${Math.min(255, parseInt(m[1], 16) + amt)},${Math.min(255, parseInt(m[2], 16) + amt)},${Math.min(255, parseInt(m[3], 16) + amt)})`;
-  }
-
-  const grassTex = $derived.by(() => {
-    if (typeof document === 'undefined') return undefined;
-    const c = document.createElement('canvas');
-    c.width = 256;
-    c.height = 256;
-    const ctx = c.getContext('2d')!;
-    ctx.fillStyle = grassColor;
-    ctx.fillRect(0, 0, 256, 256);
-    if (showStripes) {
-      for (let i = 0; i < 12; i++) {
-        if (i % 2 === 1) {
-          ctx.fillStyle = lighten(grassColor, 14);
-          ctx.fillRect((i / 12) * 256, 0, 256 / 12, 256);
-        }
-      }
-    }
-    const tex = new THREE.CanvasTexture(c);
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(1, size.length / PITCH_M_W);
-    return tex;
+  const grassRect = grassBackgroundRect();
+  const grassSizeM = $derived({
+    width: grassRect.h / PX_PER_M,
+    length: grassRect.w / PX_PER_M
   });
 
-  const outlineGeo = $derived.by(() => {
-    const zMin = half === 'bottom' ? 0 : -hl;
-    const zMax = half === 'top' ? 0 : hl;
-    const pts = new Float32Array([
-      -hw, 0.03, zMin, hw, 0.03, zMin,
-      hw, 0.03, zMin, hw, 0.03, zMax,
-      hw, 0.03, zMax, -hw, 0.03, zMax,
-      -hw, 0.03, zMax, -hw, 0.03, zMin
-    ]);
-    if (half === 'full') {
-      const mid = new Float32Array([0, 0.03, zMin, 0, 0.03, zMax]);
-      return [new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(pts, 3)), new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(mid, 3))];
-    }
-    return [new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(pts, 3))];
+  const stripes = $derived(showStripes ? buildVisibleStripeRects(template) : []);
+
+  const lineGeo = $derived.by(() => {
+    const positions = buildWorldLinePositions(template);
+    const penPositions = buildPenaltyArcWorldPositions(template);
+    const merged = new Float32Array(positions.length + penPositions.length);
+    merged.set(positions, 0);
+    merged.set(penPositions, positions.length);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(merged, 3));
+    return geo;
   });
+
+  const spotPositions = $derived.by(() => {
+    return buildSpotMarkers().map((s) => pitchPxToWorld(s.cx, s.cy, 0.04));
+  });
+
+  const goals = $derived(buildGoal3DSpecs(template));
+  const stripeColor = $derived(lightenGrassColor(grassColor));
 </script>
 
-<T.Mesh rotation.x={-Math.PI / 2} receiveShadow>
-  <T.PlaneGeometry args={[PITCH_M_W + 6, size.length + 6]} />
-  <T.MeshStandardMaterial map={grassTex} color={grassColor} />
+<!-- Base grass (same footprint as 2D: field + run-off band) -->
+<T.Mesh rotation.x={-Math.PI / 2} position.y={0.001} receiveShadow>
+  <T.PlaneGeometry args={[grassSizeM.width, grassSizeM.length]} />
+  <T.MeshStandardMaterial color={grassColor} />
 </T.Mesh>
 
+<!-- Mowing stripes: same rects as Pitch.svelte, placed as ground quads -->
+{#each stripes as stripe}
+  {@const w = stripeRectToWorld(stripe)}
+  <T.Mesh rotation.x={-Math.PI / 2} position={[w.cx, 0.002, w.cz]} receiveShadow>
+    <T.PlaneGeometry args={[w.w, w.d]} />
+    <T.MeshStandardMaterial color={stripeColor} />
+  </T.Mesh>
+{/each}
+
 {#if !hideLines}
-  {#each outlineGeo as geo}
-    <T.LineSegments geometry={geo}>
-      <T.LineBasicMaterial color="#ffffff" />
-    </T.LineSegments>
+  <T.LineSegments geometry={lineGeo}>
+    <T.LineBasicMaterial color="#ffffff" />
+  </T.LineSegments>
+
+  {#each spotPositions as pos}
+    <T.Mesh position={pos} rotation.x={-Math.PI / 2}>
+      <T.CircleGeometry args={[0.12, 16]} />
+      <T.MeshBasicMaterial color="#ffffff" />
+    </T.Mesh>
   {/each}
 {/if}
 
 {#if !hideGoals}
-  <T.Mesh position={[-hw + 3.66, 1.2, -hl - 1.1]} castShadow>
-    <T.BoxGeometry args={[7.32, 2.4, 2.2]} />
-    <T.MeshStandardMaterial color="#eeeeee" wireframe />
-  </T.Mesh>
-  {#if half !== 'top'}
-    <T.Mesh position={[-hw + 3.66, 1.2, hl + 1.1]} castShadow>
-      <T.BoxGeometry args={[7.32, 2.4, 2.2]} />
-      <T.MeshStandardMaterial color="#eeeeee" wireframe />
-    </T.Mesh>
-  {/if}
+  {#each goals as spec}
+    <Goal3D {spec} />
+  {/each}
 {/if}

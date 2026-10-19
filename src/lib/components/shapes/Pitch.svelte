@@ -1,4 +1,21 @@
 <script lang="ts">
+  import {
+    PITCH,
+    pitchDerived,
+    lightenGrassColor,
+    halfFieldClip,
+    grassBackgroundRect,
+    buildStripeRects,
+    buildOutlineSegments,
+    buildMarkingSegments,
+    buildCornerArcs,
+    buildCenterCircle,
+    buildSpotMarkers,
+    buildGoalRects,
+    cornerArcToSvgPath,
+    arcToSvgPath
+  } from '$lib/utils/pitchMarkings';
+
   let {
     template = 'Complet',
     orientation = 'horizontal',
@@ -7,179 +24,130 @@
     hideGoals = false,
     hideLines = false
   } = $props<{
-    template: 'Complet' | 'Demi' | 'DemiBas',
-    orientation: 'horizontal' | 'vertical',
-    showStripes?: boolean,
-    grassColor?: string,
-    hideGoals?: boolean,
-    hideLines?: boolean
+    template: 'Complet' | 'Demi' | 'DemiBas';
+    orientation: 'horizontal' | 'vertical';
+    showStripes?: boolean;
+    grassColor?: string;
+    hideGoals?: boolean;
+    hideLines?: boolean;
   }>();
 
-  // Slightly lighter stripe derived from the base grass colour
-  function lighten(hex: string, amt = 18): string {
-    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    if (!m) return '#32753f';
-    const r = Math.min(255, parseInt(m[1], 16) + amt);
-    const g = Math.min(255, parseInt(m[2], 16) + amt);
-    const b = Math.min(255, parseInt(m[3], 16) + amt);
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-  
-  // Dimensions 1m = 10px
-  // Official Pitch: 105m x 68m -> 1050 x 680
-  const pw = 1050; // pitch width
-  const ph = 680;  // pitch height
-  
-  const hw = pw / 2; // half width
-  const hh = ph / 2; // half height
-  
-  const goalAreaW = 55; // 5.5m
-  const goalAreaH = 183.2; // 18.32m
-  const goalAreaY = (ph - goalAreaH) / 2;
-  
-  const penAreaW = 165; // 16.5m
-  const penAreaH = 403.2; // 40.32m
-  const penAreaY = (ph - penAreaH) / 2;
-  
-  const centerCircleR = 91.5; // 9.15m
-  const penSpotX = 110; // 11m
-  const penSpotRightX = pw - 110;
+  const d = pitchDerived();
+  const { lengthPx: pw, widthPx: ph, halfLengthPx: hw, halfWidthPx: hh, penAreaW, centerCircleR, penSpotX } = PITCH;
 
-  // Goals
-  const goalW = 20; // 2m (depth)
-  const goalH = 73.2; // 7.32m (official width)
-  const goalY = (ph - goalH) / 2;
-
-  // Corner arc
-  const cornerR = 10; // 1m
-
-  // Grass run-off band around the field (sits behind the goals). The rest of the
-  // canvas stays on the light app background, keeping the green to a minimum.
-  const band = 28;
-
-  // Vertical Centering:
-  // We ALWAYS use the Full Pitch transformation now to enable "zoom" behavior.
-  // Rotation of horizontal (1050x680) around its center (525, 340) stays at center.
-  // Translate to reach target (340, 525): dx = -185, dy = 185.
   const dx = -185;
   const dy = 185;
 
-  // Stripe configuration
-  const stripeCount = 18;
-  const stripeWidth = pw / stripeCount;
-
-  // Half-field clips (horizontal pitch coords; display y = hx after rotation).
-  // halfClip: grass run-off included on the cut side.
-  // playingClip: lines & stripes strictly inside the playing half (not in the cut margin).
-  const halfClip = $derived.by(() => {
-    if (template === 'Demi') {
-      return { x: -band, y: -band, w: hw + band * 2, h: ph + band * 2 };
-    }
-    if (template === 'DemiBas') {
-      return { x: hw - band, y: -band, w: pw - hw + band * 2, h: ph + band * 2 };
-    }
-    return null;
-  });
+  const halfClip = $derived(halfFieldClip(template));
   const playingClipId = $derived(halfClip ? 'url(#playing-clip)' : undefined);
+
+  const grassRect = grassBackgroundRect();
+  const stripes = $derived(showStripes ? buildStripeRects() : []);
+  const outline = $derived(buildOutlineSegments(template));
+  const markings = $derived(buildMarkingSegments(template));
+  const corners = buildCornerArcs();
+  const centerCircle = buildCenterCircle();
+  const spots = buildSpotMarkers();
+  const goals = buildGoalRects();
 </script>
 
-<!-- We always render the full pitch lines to ensure 1:1 coordinate parity for zoom -->
 <g
   class="pitch-container"
   pointer-events="none"
   clip-path={halfClip ? 'url(#pitch-half-clip)' : undefined}
-  transform="
-    {orientation === 'vertical'
-      ? `translate(${dx}, ${dy}) rotate(90, ${hw}, ${hh})`
-      : ''}
-  "
+  transform={orientation === 'vertical' ? `translate(${dx}, ${dy}) rotate(90, ${hw}, ${hh})` : ''}
 >
   {#if halfClip}
     <defs>
       <clipPath id="pitch-half-clip">
-        <rect x={halfClip.x} y={halfClip.y} width={halfClip.w} height={halfClip.h} />
+        <rect x={halfClip.grass.x} y={halfClip.grass.y} width={halfClip.grass.w} height={halfClip.grass.h} />
       </clipPath>
       {#if template === 'Demi'}
         <clipPath id="playing-clip">
-          <rect x={-9999} y={-9999} width={hw + 9999} height={19999} />
+          <rect x={halfClip.playing.x} y={halfClip.playing.y} width={halfClip.playing.w} height={halfClip.playing.h} />
         </clipPath>
       {:else}
         <clipPath id="playing-clip">
-          <rect x={hw} y={-9999} width={19999} height={19999} />
+          <rect x={halfClip.playing.x} y={halfClip.playing.y} width={halfClip.playing.w} height={halfClip.playing.h} />
         </clipPath>
       {/if}
     </defs>
   {/if}
-  <!-- Grass: field + a run-off band (behind the goals). Everything outside stays light. -->
-  <rect class="bg-rect" x={-band} y={-band} width={pw + band * 2} height={ph + band * 2} rx="10" fill={grassColor} fill-opacity="1" />
+
+  <rect
+    class="bg-rect"
+    x={grassRect.x}
+    y={grassRect.y}
+    width={grassRect.w}
+    height={grassRect.h}
+    rx="10"
+    fill={grassColor}
+  />
 
   {#if showStripes}
     <g class="stripes" pointer-events="none" clip-path={playingClipId}>
-      {#each Array(stripeCount) as _, i}
-        {#if i % 2 === 1}
-          <rect x={i * stripeWidth} y="0" width={stripeWidth} height={ph} fill={lighten(grassColor)} />
-        {/if}
+      {#each stripes as stripe}
+        <rect
+          x={stripe.x}
+          y={stripe.y}
+          width={stripe.w}
+          height={stripe.h}
+          fill={lightenGrassColor(grassColor)}
+        />
       {/each}
     </g>
   {/if}
 
   {#if !hideLines}
-  <!-- Pitch outline: closed path on half-field views so cut-edge corners are crisp -->
-  {#if template === 'Demi'}
-    <path class="line" fill="none" d="M 0,0 L {hw},0 L {hw},{ph} L 0,{ph} Z" />
-  {:else if template === 'DemiBas'}
-    <path class="line" fill="none" d="M {hw},0 L {pw},0 L {pw},{ph} L {hw},{ph} Z" />
-  {:else}
-    <rect width={pw} height={ph} fill="none" class="line" />
-    <line x1={hw} y1="0" x2={hw} y2={ph} class="line" />
-  {/if}
+    {#each outline as seg}
+      <line x1={seg.x1} y1={seg.y1} x2={seg.x2} y2={seg.y2} class="line" />
+    {/each}
 
-  <g class="field-lines" clip-path={playingClipId}>
-  <!-- Center circle and spot -->
-  <circle
-    cx={hw}
-    cy={hh}
-    r={centerCircleR}
-    fill="none"
-    class="line"
-  />
-  <circle cx={hw} cy={hh} r="3" fill="#ffffff" />
+    <g class="field-lines" clip-path={playingClipId}>
+      {#each markings as seg}
+        <line x1={seg.x1} y1={seg.y1} x2={seg.x2} y2={seg.y2} class="line" />
+      {/each}
 
-  <!-- Corner Arcs -->
-  <path d="M 0,{cornerR} A {cornerR},{cornerR} 0 0 0 {cornerR},0" fill="none" class="line" />
-  <path d="M {pw-cornerR},0 A {cornerR},{cornerR} 0 0 0 {pw},{cornerR}" fill="none" class="line" />
-  <path d="M {pw},{ph-cornerR} A {cornerR},{cornerR} 0 0 0 {pw-cornerR},{ph}" fill="none" class="line" />
-  <path d="M {cornerR},{ph} A {cornerR},{cornerR} 0 0 0 0,{ph-cornerR}" fill="none" class="line" />
+      <path d={arcToSvgPath(centerCircle)} fill="none" class="line" />
+      <circle cx={hw} cy={hh} r="3" fill="#ffffff" />
 
-  <!-- Left Penalty Area -->
-  <rect x="0" y={penAreaY} width={penAreaW} height={penAreaH} fill="none" class="line" />
-  <rect x="0" y={goalAreaY} width={goalAreaW} height={goalAreaH} fill="none" class="line" />
-  <circle cx={penSpotX} cy={hh} r="3" fill="#ffffff" />
-  <g>
-    <clipPath id="left-pen-clip">
-      <rect x={penAreaW} y="0" width={pw} height={ph} />
-    </clipPath>
-    <circle cx={penSpotX} cy={hh} r={centerCircleR} fill="none" class="line" clip-path="url(#left-pen-clip)" />
-  </g>
+      {#each corners as arc}
+        <path d={cornerArcToSvgPath(arc)} fill="none" class="line" />
+      {/each}
 
-  <!-- Right Penalty Area -->
-  <rect x={pw - penAreaW} y={penAreaY} width={penAreaW} height={penAreaH} fill="none" class="line" />
-  <rect x={pw - goalAreaW} y={goalAreaY} width={goalAreaW} height={goalAreaH} fill="none" class="line" />
-  <circle cx={penSpotRightX} cy={hh} r="3" fill="#ffffff" />
-  <g>
-    <clipPath id="right-pen-clip">
-      <rect x="0" y="0" width={pw - penAreaW} height={ph} />
-    </clipPath>
-    <circle cx={penSpotRightX} cy={hh} r={centerCircleR} fill="none" class="line" clip-path="url(#right-pen-clip)" />
-  </g>
-  </g>
+      {#each spots as spot, i}
+        {#if i > 0}
+          <circle cx={spot.cx} cy={spot.cy} r="3" fill="#ffffff" />
+        {/if}
+      {/each}
+
+      <g>
+        <clipPath id="left-pen-clip">
+          <rect x={penAreaW} y="0" width={pw} height={ph} />
+        </clipPath>
+        <circle cx={penSpotX} cy={hh} r={centerCircleR} fill="none" class="line" clip-path="url(#left-pen-clip)" />
+      </g>
+      <g>
+        <clipPath id="right-pen-clip">
+          <rect x="0" y="0" width={pw - penAreaW} height={ph} />
+        </clipPath>
+        <circle cx={d.penSpotRightX} cy={hh} r={centerCircleR} fill="none" class="line" clip-path="url(#right-pen-clip)" />
+      </g>
+    </g>
   {/if}
 
   {#if !hideGoals}
-  <!-- Left Goal -->
-  <rect x={-goalW} y={goalY} width={goalW} height={goalH} fill="none" class="line" stroke-opacity="0.5" />
-  <!-- Right Goal -->
-  <rect x={pw} y={goalY} width={goalW} height={goalH} fill="none" class="line" stroke-opacity="0.5" />
+    {#each goals as g}
+      <rect
+        x={g.rect.x}
+        y={g.rect.y}
+        width={g.rect.w}
+        height={g.rect.h}
+        fill="none"
+        class="line"
+        stroke-opacity="0.5"
+      />
+    {/each}
   {/if}
 </g>
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { T, useThrelte } from '@threlte/core';
+  import { Color } from 'three';
   import { OrbitControls, interactivity } from '@threlte/extras';
   import {
     currentPage,
@@ -24,6 +25,15 @@
   interactivity();
 
   const { camera, dom, renderer } = useThrelte();
+
+  $effect(() => {
+    if (!renderer) return;
+    const css =
+      typeof document !== 'undefined'
+        ? getComputedStyle(document.documentElement).getPropertyValue('--bg-canvas').trim()
+        : '';
+    renderer.setClearColor(new Color(css || '#eef0f4'));
+  });
 
   $effect(() => {
     if (renderer) view3dRenderer.set(renderer);
@@ -103,6 +113,7 @@
 />
 
 <Pitch3D
+  template={$currentPage?.fieldTemplate ?? 'Complet'}
   grassColor={$currentPage?.backgroundColor}
   showStripes={$currentPage?.showFieldStripes}
   hideLines={$currentPage?.hidePitchLines}

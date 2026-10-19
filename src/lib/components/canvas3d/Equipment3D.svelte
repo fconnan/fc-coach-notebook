@@ -1,9 +1,12 @@
 <script lang="ts">
   import { T } from '@threlte/core';
+  import * as THREE from 'three';
   import type { ComponentElement } from '$lib/stores/workspace';
   import { displayToWorld } from '$lib/utils/field3d';
   import { currentPage } from '$lib/stores/workspace';
+  import { EQUIPMENT_3D, equipmentScaleFactor } from '$lib/utils/pitchMarkings';
   import { beginElementDrag3d } from '$lib/utils/interactions3d';
+  import Goal3D from './Goal3D.svelte';
 
   let { element, isSelected = false } = $props<{ element: ComponentElement; isSelected?: boolean }>();
 
@@ -11,7 +14,7 @@
   const world = $derived(displayToWorld(element.position.x, element.position.y, template));
   const angle = $derived(element.angle || 0);
   const col = $derived(element.color || defaultColor(element.type));
-  const sc = $derived((element.radius || 14) / 14);
+  const sc = $derived(equipmentScaleFactor(element.radius));
 
   function defaultColor(type: string): string {
     switch (type) {
@@ -30,6 +33,7 @@
   }
 
   const selMat = $derived(isSelected ? '#5e6ad2' : undefined);
+  const e = EQUIPMENT_3D;
 </script>
 
 <T.Group
@@ -42,39 +46,62 @@
   onpointerdown={onPointerDown}
 >
   {#if element.type === 'cone'}
-    <T.Mesh position={[0, 0.25, 0]} castShadow>
-      <T.ConeGeometry args={[0.35, 0.5, 12]} />
+    {@const s = e.cone}
+    <T.Mesh position={[0, s.height / 2, 0]} castShadow>
+      <T.ConeGeometry args={[s.radius, s.height, 12]} />
       <T.MeshStandardMaterial color={col} emissive={selMat} emissiveIntensity={selMat ? 0.3 : 0} />
     </T.Mesh>
   {:else if element.type === 'coneTall'}
-    <T.Mesh position={[0, 0.45, 0]} castShadow>
-      <T.ConeGeometry args={[0.22, 0.9, 12]} />
+    {@const s = e.coneTall}
+    <T.Mesh position={[0, s.height / 2, 0]} castShadow>
+      <T.ConeGeometry args={[s.radius, s.height, 12]} />
       <T.MeshStandardMaterial color={col} emissive={selMat} emissiveIntensity={selMat ? 0.3 : 0} />
     </T.Mesh>
   {:else if element.type === 'pole'}
-    <T.Mesh position={[0, 1.1, 0]} castShadow>
-      <T.CylinderGeometry args={[0.04, 0.04, 2.2, 8]} />
+    {@const s = e.pole}
+    <T.Mesh position={[0, s.height / 2, 0]} castShadow>
+      <T.CylinderGeometry args={[s.radius, s.radius, s.height, 8]} />
       <T.MeshStandardMaterial color={col} emissive={selMat} emissiveIntensity={selMat ? 0.3 : 0} />
     </T.Mesh>
   {:else if element.type === 'hurdle'}
-    <T.Mesh position={[0, 0.35, 0]} castShadow>
-      <T.BoxGeometry args={[1.2, 0.7, 0.08]} />
+    {@const s = e.hurdle}
+    <T.Mesh position={[0, s.height / 2, 0]} castShadow>
+      <T.BoxGeometry args={[s.width, s.height, s.depth]} />
       <T.MeshStandardMaterial color={col} emissive={selMat} emissiveIntensity={selMat ? 0.3 : 0} />
     </T.Mesh>
   {:else if element.type === 'mannequin'}
-    <T.Mesh position={[0, 0.9, 0]} castShadow>
-      <T.CapsuleGeometry args={[0.2, 1.2, 4, 8]} />
+    {@const s = e.mannequin}
+    <T.Mesh position={[0, s.height / 2, 0]} castShadow>
+      <T.CapsuleGeometry args={[s.radius, s.height - s.radius * 2, 4, 8]} />
       <T.MeshStandardMaterial color={col} emissive={selMat} emissiveIntensity={selMat ? 0.3 : 0} />
     </T.Mesh>
   {:else if element.type === 'miniGoal'}
-    <T.Mesh position={[0, 0.4, 0]} castShadow>
-      <T.BoxGeometry args={[1.8, 0.8, 0.6]} />
-      <T.MeshStandardMaterial color="#ffffff" wireframe emissive={selMat} emissiveIntensity={selMat ? 0.5 : 0} />
+    {@const s = e.miniGoal}
+    {@const hw = s.width / 2}
+    {@const post = 0.04}
+    <T.Mesh position={[-hw, s.height / 2, 0]} castShadow>
+      <T.CylinderGeometry args={[post, post, s.height, 8]} />
+      <T.MeshStandardMaterial color="#ffffff" emissive={selMat} emissiveIntensity={selMat ? 0.3 : 0} />
+    </T.Mesh>
+    <T.Mesh position={[hw, s.height / 2, 0]} castShadow>
+      <T.CylinderGeometry args={[post, post, s.height, 8]} />
+      <T.MeshStandardMaterial color="#ffffff" emissive={selMat} emissiveIntensity={selMat ? 0.3 : 0} />
+    </T.Mesh>
+    <T.Mesh position={[0, s.height, 0]} castShadow>
+      <T.BoxGeometry args={[s.width + post * 2, post * 2, post * 2]} />
+      <T.MeshStandardMaterial color="#ffffff" emissive={selMat} emissiveIntensity={selMat ? 0.3 : 0} />
+    </T.Mesh>
+    <T.Mesh position={[0, s.height / 2, s.depth / 2]}>
+      <T.BoxGeometry args={[s.width, s.height, s.depth]} />
+      <T.MeshStandardMaterial color="#ffffff" transparent opacity={0.2} wireframe side={THREE.DoubleSide} />
     </T.Mesh>
   {:else if element.type === 'fullGoal'}
-    <T.Mesh position={[0, 1.2, 0]} castShadow>
-      <T.BoxGeometry args={[7.32, 2.4, 2.2]} />
-      <T.MeshStandardMaterial color="#ffffff" wireframe emissive={selMat} emissiveIntensity={selMat ? 0.5 : 0} />
-    </T.Mesh>
+    <Goal3D
+      spec={{
+        side: 'left',
+        mouthCenter: { x: 0, y: 0, z: 0 },
+        intoGoal: { x: 0, z: 1 }
+      }}
+    />
   {/if}
 </T.Group>

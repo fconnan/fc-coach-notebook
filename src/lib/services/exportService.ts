@@ -56,7 +56,11 @@ async function renderToCanvas(opts: { resolution: string; crop: boolean }): Prom
     out.width = targetW;
     out.height = targetH;
     const ctx = out.getContext('2d')!;
-    ctx.fillStyle = page.backgroundColor || '#2b6b39';
+    const bg =
+      typeof document !== 'undefined'
+        ? getComputedStyle(document.documentElement).getPropertyValue('--bg-canvas').trim()
+        : '#eef0f4';
+    ctx.fillStyle = bg || '#eef0f4';
     ctx.fillRect(0, 0, targetW, targetH);
     ctx.drawImage(canvas, 0, 0, targetW, targetH);
     return out;
