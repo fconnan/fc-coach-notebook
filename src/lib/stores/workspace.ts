@@ -7,6 +7,7 @@ import {
 } from '$lib/utils/placement';
 import type { PlayerPostureId } from '$lib/utils/playerPostures';
 import { PLAYER_POSTURES } from '$lib/utils/playerPostures';
+import { CAM3D_DEFAULTS, clampCam3dAngles, migrateCam3dDistance } from '$lib/utils/camera3d';
 
 // ---------------------------------------------------------
 // Schema versioning
@@ -160,7 +161,10 @@ export interface Page {
   /** 3D camera (view === '3d'), persisted per page */
   cam3dYaw?: number;
   cam3dPitch?: number;
+  /** Longitudinal offset along the pitch from centre (−60…+60 m). */
   cam3dDistance?: number;
+  /** Orbit radius (zoom), adjusted with mouse wheel. */
+  cam3dRadius?: number;
   cam3dTarget?: Position;
   // Animation
   frames: Frame[];
@@ -198,9 +202,10 @@ export const DEFAULT_PAGE: Page = {
   perspectiveTilt: 34,
   perspectiveIntensity: 62,
   perspectiveScale: 0.86,
-  cam3dYaw: 45,
-  cam3dPitch: 55,
-  cam3dDistance: 95,
+  cam3dYaw: CAM3D_DEFAULTS.yaw,
+  cam3dPitch: CAM3D_DEFAULTS.pitch,
+  cam3dDistance: CAM3D_DEFAULTS.offsetZ,
+  cam3dRadius: CAM3D_DEFAULTS.radius,
   cam3dTarget: { x: 0, y: 0 },
   frames: [],
   activeFrameIndex: 0,
@@ -237,7 +242,14 @@ export function migratePage(data: Partial<Page>): Page {
   if (typeof merged.cam3dYaw !== 'number') merged.cam3dYaw = DEFAULT_PAGE.cam3dYaw;
   if (typeof merged.cam3dPitch !== 'number') merged.cam3dPitch = DEFAULT_PAGE.cam3dPitch;
   if (typeof merged.cam3dDistance !== 'number') merged.cam3dDistance = DEFAULT_PAGE.cam3dDistance;
+  if (typeof merged.cam3dRadius !== 'number') merged.cam3dRadius = DEFAULT_PAGE.cam3dRadius;
   if (!merged.cam3dTarget) merged.cam3dTarget = { ...DEFAULT_PAGE.cam3dTarget! };
+  const angles = clampCam3dAngles({ yaw: merged.cam3dYaw, pitch: merged.cam3dPitch });
+  merged.cam3dYaw = angles.yaw;
+  merged.cam3dPitch = angles.pitch;
+  const migrated = migrateCam3dDistance(merged.cam3dDistance, merged.cam3dRadius);
+  merged.cam3dDistance = migrated.offsetZ;
+  merged.cam3dRadius = migrated.radius;
   merged.schemaVersion = SCHEMA_VERSION;
   return merged;
 }

@@ -14,7 +14,16 @@
   } from '$lib/stores/workspace';
   import { isStandingElement } from '$lib/utils/projection';
   import { view3dRenderer, view3dCamera } from '$lib/stores/view3d';
-  import { sphericalCameraPosition, cameraToSpherical } from '$lib/utils/camera3d';
+  import {
+    sphericalCameraPosition,
+    cameraToSpherical,
+    ORBIT_RADIUS,
+    ORBIT_POLAR,
+    ORBIT_AZIMUTH,
+    clampCam3dAngles,
+    clampOffsetZ,
+    clampOrbitRadius
+  } from '$lib/utils/camera3d';
   import { register3dDragContext } from '$lib/utils/interactions3d';
   import Pitch3D from './Pitch3D.svelte';
   import Player3D from './Player3D.svelte';
@@ -56,30 +65,30 @@
     displayElements.filter((el) => isStandingElement(el.type))
   );
 
-  const target = $derived({
-    x: $currentPage?.cam3dTarget?.x ?? 0,
-    z: $currentPage?.cam3dTarget?.y ?? 0
-  });
+  const offsetZ = $derived(clampOffsetZ($currentPage?.cam3dDistance ?? 0));
+  const target = $derived({ x: 0, z: offsetZ });
 
-  const camPos = $derived(
-    sphericalCameraPosition(
-      $currentPage?.cam3dYaw ?? 45,
-      $currentPage?.cam3dPitch ?? 55,
-      $currentPage?.cam3dDistance ?? 95,
-      target
-    )
+  const angles = $derived(
+    clampCam3dAngles({
+      yaw: $currentPage?.cam3dYaw,
+      pitch: $currentPage?.cam3dPitch
+    })
   );
 
-  let persistingCam = false;
+  const radius = $derived(clampOrbitRadius($currentPage?.cam3dRadius ?? ORBIT_RADIUS.default));
+
+  const camPos = $derived(
+    sphericalCameraPosition(angles.yaw, angles.pitch, radius, target)
+  );
 
   function onControlsChange() {
-    if (!$camera || persistingCam) return;
+    if (!$camera) return;
     const c = $camera.position;
     const sph = cameraToSpherical({ x: c.x, y: c.y, z: c.z }, target);
     updatePageSettings({
-      cam3dYaw: Math.round(sph.yaw),
-      cam3dPitch: Math.round(sph.pitch),
-      cam3dDistance: Math.round(sph.distance)
+      cam3dYaw: sph.yaw,
+      cam3dPitch: sph.pitch,
+      cam3dRadius: sph.radius
     });
   }
 
@@ -94,9 +103,12 @@
   target={[target.x, 0, target.z]}
   enableDamping
   dampingFactor={0.08}
-  maxPolarAngle={Math.PI / 2.1}
-  minDistance={20}
-  maxDistance={180}
+  minAzimuthAngle={ORBIT_AZIMUTH.min}
+  maxAzimuthAngle={ORBIT_AZIMUTH.max}
+  minPolarAngle={ORBIT_POLAR.min}
+  maxPolarAngle={ORBIT_POLAR.max}
+  minDistance={ORBIT_RADIUS.min}
+  maxDistance={ORBIT_RADIUS.max}
   onchange={onControlsChange}
 />
 
