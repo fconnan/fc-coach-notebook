@@ -117,9 +117,33 @@
 >
   <!-- Main Orientation Group -->
   <g transform="rotate({angle})">
-    <!-- Selection Aura -->
+    <!-- Selection Box (Enveloping Rectangle) -->
     {#if isSelected}
-      <circle cx="0" cy="0" r={radius + 4} fill="none" stroke="var(--accent-primary)" stroke-width="2" opacity="0.4" />
+      {#if $currentPage.showPlayerDetails}
+        <rect 
+          x="-30" 
+          y="-14" 
+          width="60" 
+          height="46" 
+          rx="6" 
+          fill="none" 
+          stroke="#fff" 
+          stroke-width="2" 
+          stroke-dasharray="4,2"
+        />
+      {:else}
+        <rect 
+          x="-18" 
+          y="-18" 
+          width="36" 
+          height="36" 
+          rx="6" 
+          fill="none" 
+          stroke="#fff" 
+          stroke-width="2" 
+          stroke-dasharray="4,2"
+        />
+      {/if}
     {/if}
     
     <!-- Conditional Player Details -->
