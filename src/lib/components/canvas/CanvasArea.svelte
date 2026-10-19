@@ -34,6 +34,7 @@
         position: { x, y },
         label: label,
         radius: type === 'ball' ? 8 : 14,
+        angle: team === 'team2' ? 180 : 0,
         color: team === 'team1' ? '#5e6ad2' : team === 'team2' ? '#d25e5e' : '#fff'
       });
 

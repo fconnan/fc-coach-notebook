@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { currentPage, selectedElements, updateElement, removeElements, setFieldTemplate } from '$lib/stores/workspace';
+  import { currentPage, selectedElements, updateElement, removeElements, setFieldTemplate, setShowPlayerDetails, type ComponentElement } from '$lib/stores/workspace';
   
   // Library Data
   const categories = $derived([
@@ -22,17 +22,7 @@
       ] 
     },
     { title: 'Éléments', type: 'ball' as const, team: 'none' as const, items: [{ icon: '⚽', label: '', isGK: false, color: '' }, { icon: '🚩', label: '', isGK: false, color: '' }] },
-    { title: 'Tracés', type: 'arrow' as const, team: 'none' as const, items: [{ icon: '↗️', label: '', isGK: false, color: '' }, { icon: '➡️', label: '', isGK: false, color: '' }] },
-    { 
-      title: 'Terrains', 
-      type: 'field' as const, 
-      team: 'none' as const, 
-      items: [
-        { icon: '', label: 'Complet', isGK: false, color: '' }, 
-        { icon: '', label: 'Demi', isGK: false, color: '' }, 
-        { icon: '', label: 'DemiBas', isGK: false, color: '' }
-      ] 
-    }
+    { title: 'Tracés', type: 'arrow' as const, team: 'none' as const, items: [{ icon: '↗️', label: '', isGK: false, color: '' }, { icon: '➡️', label: '', isGK: false, color: '' }] }
   ]);
 
   // Drag & Click Handlers for Library
@@ -155,29 +145,8 @@
                     {item.label}
                   </text>
                 </svg>
-              {:else if category.type === 'field'}
-                <svg 
-                  width="46" 
-                  height={item.label === 'Complet' ? "64" : "33"} 
-                  viewBox={
-                    item.label === 'Complet' ? "0 0 68 105" : 
-                    item.label === 'Demi' ? "0 0 68 53.5" : 
-                    "0 51.5 68 53.5"
-                  }
-                >
-                  <rect width="68" height="105" fill="#2b6b39" rx="2" />
-                  <rect x="2" y="2" width="64" height="101" fill="none" stroke="white" stroke-width="2" />
-                  <line x1="2" y1="52.5" x2="66" y2="52.5" stroke="white" stroke-width="2" />
-                  {#if item.label === 'Complet'}
-                    <circle cx="34" cy="52.5" r="10" fill="none" stroke="white" stroke-width="2" />
-                  {:else if item.label === 'Demi'}
-                    <path d="M 24,52.5 A 10,10 0 0 1 44,52.5" fill="none" stroke="white" stroke-width="2" />
-                  {:else if item.label === 'DemiBas'}
-                    <path d="M 24,52.5 A 10,10 0 0 0 44,52.5" fill="none" stroke="white" stroke-width="2" />
-                  {/if}
-                </svg>
-              {:else}
-                <span class="icon">{item.icon}</span>
+              {:else if category.type === 'ball' || category.type === 'arrow'}
+                <div class="emoji-item">{item.icon}</div>
               {/if}
             </div>
           {/each}
@@ -185,17 +154,15 @@
       </div>
     </div>
   </div>
-
-  <!-- Bottom Section: Properties -->
+  
+  <!-- Bottom Section: Contextual Properties -->
   <div class="properties">
-    <div class="header">Propriétés</div>
+    <div class="header">
+      {$selectedElements.length > 0 ? "Propriétés de l'objet" : "Propriétés de la page"}
+    </div>
     <div class="properties-content">
-      {#if $selectedElements.length === 0}
-        <div class="empty-state">
-          Aucun élément sélectionné
-        </div>
-      {:else}
-        <div class="selected-info">
+      {#if $selectedElements.length > 0}
+        <div class="selection-count">
           {$selectedElements.length} élément(s) sélectionné(s)
         </div>
         
@@ -217,28 +184,31 @@
             <label for="labelInput">Numéro / Label</label>
             <input id="labelInput" type="text" value={$selectedElements[0].label || ''} oninput={updateLabel} />
           </div>
-          <div class="prop-group">
-            <label for="rotationInput">Rotation (Boussole)</label>
-            <div class="rotation-control">
-              <input 
-                id="rotationInput" 
-                type="range" 
-                min="0" 
-                max="360" 
-                value={$selectedElements[0].angle || 0} 
-                oninput={updateRotation} 
-              />
-              <input 
-                class="angle-num" 
-                type="number" 
-                min="0" 
-                max="360" 
-                value={$selectedElements[0].angle || 0} 
-                oninput={updateRotation} 
-              />
-              <span class="unit">°</span>
+          
+          {#if $currentPage.showPlayerDetails}
+            <div class="prop-group">
+              <label for="rotationInput">Rotation (Boussole)</label>
+              <div class="rotation-control">
+                <input 
+                  id="rotationInput" 
+                  type="range" 
+                  min="0" 
+                  max="360" 
+                  value={$selectedElements[0].angle || 0} 
+                  oninput={updateRotation} 
+                />
+                <input 
+                  class="angle-num" 
+                  type="number" 
+                  min="0" 
+                  max="360" 
+                  value={$selectedElements[0].angle || 0} 
+                  oninput={updateRotation} 
+                />
+                <span class="unit">°</span>
+              </div>
             </div>
-          </div>
+          {/if}
         {/if}
 
         {#if $selectedElements.length === 1 && $selectedElements[0].type === 'player'}
@@ -273,10 +243,71 @@
             />
           </div>
         </div>
-        
-        <div class="actions">
-          <button class="delete-btn" onclick={deleteSelection}>🗑️ Supprimer</button>
+
+        <button class="delete-btn" onclick={deleteSelection}>
+          Supprimer la sélection
+        </button>
+      {:else}
+        <!-- Page Settings (when nothing is selected) -->
+        <div class="prop-group">
+          <label>Vue du terrain</label>
+          <div class="field-selector">
+            <button 
+              class:active={$currentPage.fieldTemplate === 'Complet'} 
+              onclick={() => setFieldTemplate('Complet')}
+              title="Terrain complet"
+            >
+              <svg width="40" height="60" viewBox="0 0 68 105">
+                <rect width="68" height="105" fill="#2b6b39" rx="2" />
+                <rect x="2" y="2" width="64" height="101" fill="none" stroke="white" stroke-width="2" />
+                <line x1="2" y1="52.5" x2="66" y2="52.5" stroke="white" stroke-width="2" />
+                <circle cx="34" cy="52.5" r="10" fill="none" stroke="white" stroke-width="2" />
+              </svg>
+              <span>Complet</span>
+            </button>
+            
+            <button 
+              class:active={$currentPage.fieldTemplate === 'Demi'} 
+              onclick={() => setFieldTemplate('Demi')}
+              title="Demi-terrain (Haut)"
+            >
+              <svg width="40" height="32" viewBox="0 0 68 53.5">
+                <rect width="68" height="53.5" fill="#2b6b39" rx="2" />
+                <rect x="2" y="2" width="64" height="101" fill="none" stroke="white" stroke-width="2" />
+                <line x1="2" y1="52.5" x2="66" y2="52.5" stroke="white" stroke-width="2" />
+                <path d="M 24,52.5 A 10,10 0 0 1 44,52.5" fill="none" stroke="white" stroke-width="2" />
+              </svg>
+              <span>Demi (Haut)</span>
+            </button>
+            
+            <button 
+              class:active={$currentPage.fieldTemplate === 'DemiBas'} 
+              onclick={() => setFieldTemplate('DemiBas')}
+              title="Demi-terrain (Bas)"
+            >
+              <svg width="40" height="32" viewBox="0 51.5 68 53.5">
+                <rect width="68" height="105" fill="#2b6b39" rx="2" />
+                <rect x="2" y="2" width="64" height="101" fill="none" stroke="white" stroke-width="2" />
+                <line x1="2" y1="52.5" x2="66" y2="52.5" stroke="white" stroke-width="2" />
+                <path d="M 24,52.5 A 10,10 0 0 0 44,52.5" fill="none" stroke="white" stroke-width="2" />
+              </svg>
+              <span>Demi (Bas)</span>
+            </button>
+          </div>
         </div>
+
+        <div class="prop-group">
+          <label class="toggle-wrap">
+            <input 
+              type="checkbox" 
+              checked={$currentPage.showPlayerDetails} 
+              onchange={(e) => setShowPlayerDetails(e.currentTarget.checked)} 
+            />
+            <span class="label-text">Afficher bras/jambes (Globale)</span>
+          </label>
+        </div>
+        
+        <p class="help-text">Sélectionnez un joueur pour modifier sa posture ou ses coordonnées.</p>
       {/if}
     </div>
   </div>
@@ -307,7 +338,7 @@
     background-color: rgba(255, 255, 255, 0.02);
     display: flex;
     flex-direction: column;
-    max-height: 40%; /* Save space for properties */
+    max-height: 40%; 
   }
 
   .library-content {
@@ -341,14 +372,27 @@
     transform: translateY(-1px);
     box-shadow: 0 3px 8px rgba(0,0,0,0.2);
   }
-
+  
   .item:active {
     cursor: grabbing;
     transform: scale(0.95);
   }
 
-  .icon {
+  .emoji-item {
     font-size: 36px;
+  }
+
+  .label-text {
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .help-text {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
+    margin-top: 20px;
+    line-height: 1.4;
   }
 
   /* Properties Styles */
@@ -365,18 +409,11 @@
     overflow-y: auto;
   }
   
-  .empty-state {
-    color: var(--text-muted);
-    font-size: 12px;
-    text-align: center;
-    margin-top: 20px;
-  }
-
-  .selected-info {
+  .selection-count {
     font-size: 11px;
     color: var(--text-muted);
     margin-bottom: 16px;
-    padding-bottom: 8px;
+    padding: 12px;
     border-bottom: 1px solid var(--border-color);
   }
 
@@ -406,20 +443,51 @@
     gap: 12px;
   }
   
-  .prop-row {
-    display: flex;
-    gap: 10px;
-  }
-  
-  .prop-row .field {
-    flex: 1;
-  }
-
   .stance-controls {
     display: grid;
     grid-template-columns: 60px 1fr;
     gap: 8px;
     align-items: center;
+  }
+
+  .field-selector {
+    display: flex;
+    gap: 8px;
+  }
+
+  .field-selector button {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-canvas);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .field-selector button span {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .field-selector button svg {
+    border-radius: 2px;
+    border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  }
+
+  .field-selector button.active {
+    border-color: var(--accent-primary);
+    background-color: rgba(94, 106, 210, 0.1);
+  }
+
+  .field-selector button.active span {
+    color: var(--accent-primary);
+    font-weight: 600;
   }
 
   .side-label {
@@ -524,12 +592,6 @@
     border-radius: 4px;
   }
 
-  .actions {
-    margin-top: 24px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border-color);
-  }
-
   .delete-btn {
     width: 100%;
     background-color: rgba(210, 94, 94, 0.1);
@@ -539,5 +601,22 @@
     border: 1px solid rgba(210, 94, 94, 0.2);
     font-size: 13px;
     transition: all 0.2s;
+    margin-top: 24px;
+  }
+
+  .toggle-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-main);
+    width: 100%;
+  }
+
+  .toggle-wrap input {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent-primary);
   }
 </style>

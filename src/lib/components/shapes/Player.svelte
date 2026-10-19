@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ComponentElement } from '$lib/stores/workspace';
-  import { updateElement, selectedIds } from '$lib/stores/workspace';
+  import { updateElement, selectedIds, currentPage } from '$lib/stores/workspace';
  
   let { element, isSelected } = $props<{ element: ComponentElement, isSelected: boolean }>();
   
@@ -105,7 +105,6 @@
   const radius = $derived(element.radius || 14);
   const leftLegH = $derived(element.leftLegLength || 10);
   const rightLegH = $derived(element.rightLegLength || 10);
-  const armW = 12;
 </script>
  
 <g 
@@ -123,49 +122,52 @@
       <circle cx="0" cy="0" r={radius + 4} fill="none" stroke="var(--accent-primary)" stroke-width="2" opacity="0.4" />
     {/if}
     
-    <!-- Player Stance (Action legs) -->
-    <!-- Left Leg -->
-    <rect x="-11" y="6" width="8" height={leftLegH - 6} rx="0" fill={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} stroke="#000" stroke-width="0.5" />
-    <rect x="-11" y={6 + leftLegH - 6} width="8" height="6" rx="3" fill="#111" />
-    
-    <!-- Right Leg -->
-    <rect x="3" y="6" width="8" height={rightLegH - 6} rx="0" fill={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} stroke="#000" stroke-width="0.5" />
-    <rect x="3" y={6 + rightLegH - 6} width="8" height="6" rx="3" fill="#111" />
+    <!-- Conditional Player Details -->
+    {#if $currentPage.showPlayerDetails}
+      <!-- Player Stance (Action legs) -->
+      <!-- Left Leg -->
+      <rect x="-11" y="6" width="8" height={leftLegH - 6} rx="0" fill={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} stroke="#000" stroke-width="0.5" />
+      <rect x="-11" y={6 + leftLegH - 6} width="8" height="6" rx="3" fill="#111" />
+      
+      <!-- Right Leg -->
+      <rect x="3" y="6" width="8" height={rightLegH - 6} rx="0" fill={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} stroke="#000" stroke-width="0.5" />
+      <rect x="3" y={6 + rightLegH - 6} width="8" height="6" rx="3" fill="#111" />
 
-    <!-- Player Arms (Curved from shoulders forward) -->
-    <!-- Left Arm -->
-    <path 
-      d="M -13.5 -7 Q -26 -2 -22 6" 
-      fill="none" 
-      stroke={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} 
-      stroke-width="4" 
-      stroke-linecap="round" 
-    />
-    <path 
-      d="M -13.5 -7 Q -26 -2 -22 6" 
-      fill="none" 
-      stroke="#000" 
-      stroke-width="5" 
-      stroke-linecap="round" 
-      opacity="0.2"
-    />
+      <!-- Player Arms (Curved from shoulders forward) -->
+      <!-- Left Arm -->
+      <path 
+        d="M -13.5 -7 Q -26 -2 -22 6" 
+        fill="none" 
+        stroke={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} 
+        stroke-width="4" 
+        stroke-linecap="round" 
+      />
+      <path 
+        d="M -13.5 -7 Q -26 -2 -22 6" 
+        fill="none" 
+        stroke="#000" 
+        stroke-width="5" 
+        stroke-linecap="round" 
+        opacity="0.2"
+      />
 
-    <!-- Right Arm -->
-    <path 
-      d="M 13.5 -7 Q 26 -2 22 6" 
-      fill="none" 
-      stroke={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} 
-      stroke-width="4" 
-      stroke-linecap="round" 
-    />
-    <path 
-      d="M 13.5 -7 Q 26 -2 22 6" 
-      fill="none" 
-      stroke="#000" 
-      stroke-width="5" 
-      stroke-linecap="round" 
-      opacity="0.2"
-    />
+      <!-- Right Arm -->
+      <path 
+        d="M 13.5 -7 Q 26 -2 22 6" 
+        fill="none" 
+        stroke={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} 
+        stroke-width="4" 
+        stroke-linecap="round" 
+      />
+      <path 
+        d="M 13.5 -7 Q 26 -2 22 6" 
+        fill="none" 
+        stroke="#000" 
+        stroke-width="5" 
+        stroke-linecap="round" 
+        opacity="0.2"
+      />
+    {/if}
 
     <!-- Player Body -->
     <circle 
@@ -176,31 +178,33 @@
       stroke={element.label === 'G' ? (element.color || '#5e6ad2') : '#000'} 
       stroke-width={element.label === 'G' ? 2 : 1.5} 
     />
-    
-    <!-- Label / Number -->
-    {#if element.label}
-      <text 
-        x="0" 
-        y="0" 
-        text-anchor="middle" 
-        dominant-baseline="central"
-        fill={element.label === 'G' ? (element.color || '#5e6ad2') : '#fff'}
-        font-size={radius * 0.9}
-        font-weight="bold"
-        pointer-events="none"
-      >
-        {element.label}
-      </text>
-    {/if}
+  </g>
 
-    <!-- Rotation Handle (Only when selected) -->
-    {#if isSelected}
+  <!-- Label / Number (Always horizontal for readability) -->
+  {#if element.label}
+    <text 
+      x="0" 
+      y="0" 
+      text-anchor="middle" 
+      dominant-baseline="central"
+      fill={element.label === 'G' ? (element.color || '#5e6ad2') : '#fff'}
+      font-size={radius * 0.9}
+      font-weight="bold"
+      pointer-events="none"
+    >
+      {element.label}
+    </text>
+  {/if}
+
+  <!-- Rotation Handle (Only when selected and details are enabled) -->
+  {#if isSelected && $currentPage.showPlayerDetails}
+    <g transform="rotate({angle})">
       <g class="rotation-handle-group" onpointerdown={onRotateDown} role="button" aria-label="Rotate player" tabindex="0">
         <line x1="0" y1={-radius} x2="0" y2="-45" stroke="var(--accent-primary)" stroke-width="1.5" stroke-dasharray="2,2" />
         <circle cx="0" cy="-45" r="6" fill="var(--bg-panel)" stroke="var(--accent-primary)" stroke-width="2" class="handle-dot" />
       </g>
-    {/if}
-  </g>
+    </g>
+  {/if}
 </g>
  
 <style>

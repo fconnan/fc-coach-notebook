@@ -36,6 +36,7 @@ export interface Page {
   nextTeam2Number: number;
   markdownContent: string;
   elements: ComponentElement[];
+  showPlayerDetails: boolean;
 }
 
 // ---------------------------------------------------------
@@ -51,7 +52,8 @@ export const pages = writable<Page[]>([
     markdownContent: '# Ma Fiche Tactique\n\n- Phase offensive\n- Occupation du terrain',
     elements: [],
     nextTeam1Number: 1,
-    nextTeam2Number: 1
+    nextTeam2Number: 1,
+    showPlayerDetails: false
   }
 ]);
 
@@ -157,6 +159,18 @@ export function incrementTeamNumber(team: TeamType) {
           nextTeam1Number: team === 'team1' ? page.nextTeam1Number + 1 : page.nextTeam1Number,
           nextTeam2Number: team === 'team2' ? page.nextTeam2Number + 1 : page.nextTeam2Number
         };
+      }
+      return page;
+    });
+  });
+}
+
+export function setShowPlayerDetails(visible: boolean) {
+  pages.update(p => {
+    const activeId = getCurrentPageId();
+    return p.map(page => {
+      if (page.id === activeId) {
+        return { ...page, showPlayerDetails: visible };
       }
       return page;
     });
