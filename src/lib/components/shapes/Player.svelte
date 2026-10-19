@@ -69,7 +69,7 @@
     cx="0" 
     cy="0" 
     r={element.radius || 14} 
-    fill={element.label === 'G' ? '#fff' : (element.color || '#5e6ad2')} 
+    fill={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} 
     stroke={element.label === 'G' ? (element.color || '#5e6ad2') : '#000'} 
     stroke-width={element.label === 'G' ? 2 : 1.5} 
   />
