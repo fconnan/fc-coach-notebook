@@ -102,11 +102,15 @@
                   </text>
                 </svg>
               {:else if category.type === 'field'}
-                <svg width="46" height="64" viewBox={
-                  item.label === 'Complet' ? "0 0 68 105" : 
-                  item.label === 'Demi' ? "0 0 68 53.5" : 
-                  "0 51.5 68 53.5"
-                }>
+                <svg 
+                  width="46" 
+                  height={item.label === 'Complet' ? "64" : "33"} 
+                  viewBox={
+                    item.label === 'Complet' ? "0 0 68 105" : 
+                    item.label === 'Demi' ? "0 0 68 53.5" : 
+                    "0 51.5 68 53.5"
+                  }
+                >
                   <rect width="68" height="105" fill="#2b6b39" rx="2" />
                   <rect x="2" y="2" width="64" height="101" fill="none" stroke="white" stroke-width="2" />
                   <line x1="2" y1="52.5" x2="66" y2="52.5" stroke="white" stroke-width="2" />
