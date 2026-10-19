@@ -23,6 +23,9 @@ export interface ComponentElement {
   color?: string;
   strokeWidth?: number;
   endPosition?: Position; // For arrows/lines
+  angle?: number; // Rotation in degrees (0-359)
+  leftLegLength?: number; 
+  rightLegLength?: number;
 }
 
 export interface Page {

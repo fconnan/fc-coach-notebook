@@ -62,10 +62,52 @@
     }
   }
 
+  function updatePosition(axis: 'x' | 'y', e: Event) {
+    const input = e.target as HTMLInputElement;
+    const value = parseInt(input.value);
+    if ($selectedElements.length === 1 && !isNaN(value)) {
+      const el = $selectedElements[0];
+      updateElement(el.id, {
+        position: {
+          ...el.position,
+          [axis]: value
+        }
+      });
+    }
+  }
+
   function updateLabel(e: Event) {
     const input = e.target as HTMLInputElement;
     if ($selectedElements.length === 1) {
       updateElement($selectedElements[0].id, { label: input.value });
+    }
+  }
+
+  function updateRotation(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const angle = parseInt(input.value);
+    if ($selectedElements.length > 0) {
+      $selectedElements.forEach(el => {
+        updateElement(el.id, { angle });
+      });
+    }
+  }
+
+  function updateLegStance(side: 'left' | 'right', length: number) {
+    if ($selectedElements.length > 0) {
+      $selectedElements.forEach(el => {
+        if (side === 'left') {
+          // If advancing left, right must be in support (10)
+          const updates: Partial<ComponentElement> = { leftLegLength: length };
+          if (length > 10) updates.rightLegLength = 10;
+          updateElement(el.id, updates);
+        } else {
+          // If advancing right, left must be in support (10)
+          const updates: Partial<ComponentElement> = { rightLegLength: length };
+          if (length > 10) updates.leftLegLength = 10;
+          updateElement(el.id, updates);
+        }
+      });
     }
   }
 
@@ -96,6 +138,18 @@
             >
               {#if category.type === 'player'}
                 <svg width="56" height="56" viewBox="0 0 56 56">
+                  <!-- Feet in library (Leg + Shoe) -->
+                  <!-- Left -->
+                  <rect x="17" y="34" width="8" height="6" rx="0" fill={item.color || '#5e6ad2'} stroke="#000" stroke-width="0.5" opacity="0.6" />
+                  <rect x="17" y="40" width="8" height="6" rx="3" fill="#111" opacity="0.6" />
+                  <!-- Right -->
+                  <rect x="31" y="34" width="8" height="6" rx="0" fill={item.color || '#5e6ad2'} stroke="#000" stroke-width="0.5" opacity="0.6" />
+                  <rect x="31" y="40" width="8" height="6" rx="3" fill="#111" opacity="0.6" />
+                  
+                  <!-- Arms in library (Lateral/Horizontal) -->
+                  <rect x="6" y="24" width="10" height="8" rx="4" fill={item.color || '#5e6ad2'} stroke="#000" stroke-width="1" opacity="0.6" />
+                  <rect x="40" y="24" width="10" height="8" rx="4" fill={item.color || '#5e6ad2'} stroke="#000" stroke-width="1" opacity="0.6" />
+
                   <circle cx="28" cy="28" r="24" fill={item.isGK ? '#d4ff00' : item.color} stroke={item.isGK ? item.color : 'white'} stroke-width="4" />
                   <text x="28" y="28" dy=".35em" text-anchor="middle" fill={item.isGK ? item.color : 'white'} font-size="20" font-weight="bold">
                     {item.label}
@@ -145,10 +199,66 @@
           {$selectedElements.length} élément(s) sélectionné(s)
         </div>
         
+        {#if $selectedElements.length === 1}
+          <div class="prop-group row">
+            <div class="field">
+              <label for="posXInput">Position X</label>
+              <input id="posXInput" type="number" value={Math.round($selectedElements[0].position.x)} oninput={(e) => updatePosition('x', e)} />
+            </div>
+            <div class="field">
+              <label for="posYInput">Position Y</label>
+              <input id="posYInput" type="number" value={Math.round($selectedElements[0].position.y)} oninput={(e) => updatePosition('y', e)} />
+            </div>
+          </div>
+        {/if}
+
         {#if $selectedElements.length === 1 && $selectedElements[0].type === 'player'}
           <div class="prop-group">
             <label for="labelInput">Numéro / Label</label>
             <input id="labelInput" type="text" value={$selectedElements[0].label || ''} oninput={updateLabel} />
+          </div>
+          <div class="prop-group">
+            <label for="rotationInput">Rotation (Boussole)</label>
+            <div class="rotation-control">
+              <input 
+                id="rotationInput" 
+                type="range" 
+                min="0" 
+                max="360" 
+                value={$selectedElements[0].angle || 0} 
+                oninput={updateRotation} 
+              />
+              <input 
+                class="angle-num" 
+                type="number" 
+                min="0" 
+                max="360" 
+                value={$selectedElements[0].angle || 0} 
+                oninput={updateRotation} 
+              />
+              <span class="unit">°</span>
+            </div>
+          </div>
+        {/if}
+
+        {#if $selectedElements.length === 1 && $selectedElements[0].type === 'player'}
+          <div class="prop-group">
+            <label>Posture (Appuis & Stance)</label>
+            <div class="stance-controls">
+              <div class="side-label">Gauche</div>
+              <div class="btn-group">
+                <button class:active={$selectedElements[0].leftLegLength === 10 || !$selectedElements[0].leftLegLength} onclick={() => updateLegStance('left', 10)}>Appui</button>
+                <button class:active={$selectedElements[0].leftLegLength === 16} onclick={() => updateLegStance('left', 16)}>Avancé</button>
+                <button class:active={$selectedElements[0].leftLegLength === 24} onclick={() => updateLegStance('left', 24)}>Allongé</button>
+              </div>
+              
+              <div class="side-label">Droite</div>
+              <div class="btn-group">
+                <button class:active={$selectedElements[0].rightLegLength === 10 || !$selectedElements[0].rightLegLength} onclick={() => updateLegStance('right', 10)}>Appui</button>
+                <button class:active={$selectedElements[0].rightLegLength === 16} onclick={() => updateLegStance('right', 16)}>Avancé</button>
+                <button class:active={$selectedElements[0].rightLegLength === 24} onclick={() => updateLegStance('right', 24)}>Allongé</button>
+              </div>
+            </div>
           </div>
         {/if}
         
@@ -291,6 +401,107 @@
     font-size: 13px;
   }
   
+  .prop-group.row {
+    display: flex;
+    gap: 12px;
+  }
+  
+  .prop-row {
+    display: flex;
+    gap: 10px;
+  }
+  
+  .prop-row .field {
+    flex: 1;
+  }
+
+  .stance-controls {
+    display: grid;
+    grid-template-columns: 60px 1fr;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .side-label {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .btn-group {
+    display: flex;
+    background: var(--bg-canvas);
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+  }
+
+  .btn-group button {
+    flex: 1;
+    background: transparent;
+    border: none;
+    padding: 4px 2px;
+    font-size: 10px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+    border-right: 1px solid var(--border-color);
+  }
+  
+  .btn-group button:last-child {
+    border-right: none;
+  }
+
+  .btn-group button.active {
+    background: var(--accent-primary);
+    color: white;
+  }
+
+  .btn-group button:hover:not(.active) {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .prop-group.row .field {
+    flex: 1;
+  }
+
+  .prop-group input[type="number"] {
+    width: 100%;
+    background: var(--bg-canvas);
+    border: 1px solid var(--border-color);
+    color: var(--text-main);
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: monospace;
+  }
+  
+  .rotation-control {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .rotation-control input[type="range"] {
+    flex: 2;
+    accent-color: var(--accent-primary);
+  }
+
+  .rotation-control .angle-num {
+    flex: 1;
+    text-align: center;
+    background: var(--bg-canvas);
+    border: 1px solid var(--border-color);
+    color: var(--text-main);
+    padding: 4px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+
+  .rotation-control .unit {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
   .color-picker-wrap {
     display: flex;
     align-items: center;
