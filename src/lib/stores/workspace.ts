@@ -152,6 +152,8 @@ export interface Page {
   grassType: string;
   backgroundColor: string;
   hideGoals: boolean;
+  /** Semi-transparency of pitch goal net faces (0–1). */
+  goalNetOpacity?: number;
   hidePitchLines: boolean;
   view: '2d' | 'perspective' | '3d';
   /** Perspective presentation (view === 'perspective') */
@@ -197,6 +199,7 @@ export const DEFAULT_PAGE: Page = {
   grassType: 'stripes',
   backgroundColor: '#2b6b39',
   hideGoals: false,
+  goalNetOpacity: 0.25,
   hidePitchLines: false,
   view: '2d',
   perspectiveTilt: 34,

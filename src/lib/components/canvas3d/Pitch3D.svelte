@@ -15,19 +15,22 @@
     buildGoal3DSpecs
   } from '$lib/utils/pitchMarkings';
   import Goal3D from './Goal3D.svelte';
+  import { DEFAULT_GOAL_NET_OPACITY } from '$lib/utils/goalVisual';
 
   let {
     template = 'Complet' as FieldTemplate,
     grassColor = '#2b6b39',
     showStripes = true,
     hideLines = false,
-    hideGoals = false
+    hideGoals = false,
+    goalNetOpacity = DEFAULT_GOAL_NET_OPACITY
   } = $props<{
     template?: FieldTemplate;
     grassColor?: string;
     showStripes?: boolean;
     hideLines?: boolean;
     hideGoals?: boolean;
+    goalNetOpacity?: number;
   }>();
 
   const grassRect = grassBackgroundRect();
@@ -87,6 +90,6 @@
 
 {#if !hideGoals}
   {#each goals as spec}
-    <Goal3D {spec} />
+    <Goal3D {spec} netOpacity={goalNetOpacity} />
   {/each}
 {/if}

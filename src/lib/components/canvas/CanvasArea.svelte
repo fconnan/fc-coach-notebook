@@ -317,6 +317,7 @@
               grassColor={$currentPage.backgroundColor}
               hideGoals={$currentPage.hideGoals}
               hideLines={$currentPage.hidePitchLines}
+              goalNetOpacity={$currentPage.goalNetOpacity ?? 0.25}
               {projector}
             />
           {:else}
@@ -327,6 +328,7 @@
               grassColor={$currentPage.backgroundColor}
               hideGoals={$currentPage.hideGoals}
               hideLines={$currentPage.hidePitchLines}
+              goalNetOpacity={$currentPage.goalNetOpacity ?? 0.25}
             />
           {/if}
 

@@ -15,6 +15,11 @@
     cornerArcToSvgPath,
     arcToSvgPath
   } from '$lib/utils/pitchMarkings';
+  import {
+    DEFAULT_GOAL_NET_OPACITY,
+    goalPlanFrameSegments,
+    goalPlanNetBands
+  } from '$lib/utils/goalVisual';
 
   let {
     template = 'Complet',
@@ -22,7 +27,8 @@
     showStripes = true,
     grassColor = '#2b6b39',
     hideGoals = false,
-    hideLines = false
+    hideLines = false,
+    goalNetOpacity = DEFAULT_GOAL_NET_OPACITY
   } = $props<{
     template: 'Complet' | 'Demi' | 'DemiBas';
     orientation: 'horizontal' | 'vertical';
@@ -30,6 +36,7 @@
     grassColor?: string;
     hideGoals?: boolean;
     hideLines?: boolean;
+    goalNetOpacity?: number;
   }>();
 
   const d = pitchDerived();
@@ -138,15 +145,20 @@
 
   {#if !hideGoals}
     {#each goals as g}
-      <rect
-        x={g.rect.x}
-        y={g.rect.y}
-        width={g.rect.w}
-        height={g.rect.h}
-        fill="none"
-        class="line"
-        stroke-opacity="0.5"
-      />
+      {#each goalPlanNetBands(g.side, g.rect) as band}
+        <rect
+          x={band.x}
+          y={band.y}
+          width={band.w}
+          height={band.h}
+          fill="#ffffff"
+          fill-opacity={goalNetOpacity}
+          stroke="none"
+        />
+      {/each}
+      {#each goalPlanFrameSegments(g.side, g.rect) as seg}
+        <line x1={seg.x1} y1={seg.y1} x2={seg.x2} y2={seg.y2} class="line" />
+      {/each}
     {/each}
   {/if}
 </g>

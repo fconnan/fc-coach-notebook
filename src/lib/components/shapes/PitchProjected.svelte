@@ -2,7 +2,12 @@
   import type { Projector } from '$lib/utils/projection';
   import type { FieldTemplate } from '$lib/utils/fieldBounds';
   import { contentBox } from '$lib/utils/fieldBounds';
-  import { PITCH, pitchDerived, lightenGrassColor, buildStripeRects } from '$lib/utils/pitchMarkings';
+  import { PITCH, pitchDerived, lightenGrassColor, buildStripeRects, buildGoalRects } from '$lib/utils/pitchMarkings';
+  import {
+    DEFAULT_GOAL_NET_OPACITY,
+    goalPlanFrameSegments,
+    goalPlanNetBands
+  } from '$lib/utils/goalVisual';
 
   let {
     template = 'Complet' as FieldTemplate,
@@ -10,6 +15,7 @@
     grassColor = '#2b6b39',
     hideGoals = false,
     hideLines = false,
+    goalNetOpacity = DEFAULT_GOAL_NET_OPACITY,
     projector
   } = $props<{
     template: FieldTemplate;
@@ -17,6 +23,7 @@
     grassColor?: string;
     hideGoals?: boolean;
     hideLines?: boolean;
+    goalNetOpacity?: number;
     projector: Projector;
   }>();
 
@@ -37,9 +44,7 @@
   const centerCircleR = PITCH.centerCircleR;
   const penSpotX = PITCH.penSpotX;
   const penSpotRightX = d.penSpotRightX;
-  const goalW = PITCH.goalDepthPx;
-  const goalH = PITCH.goalMouthPx;
-  const goalY = d.goalY;
+  const pitchGoals = $derived(buildGoalRects());
   const cornerR = PITCH.cornerR;
 
   /** Pitch-local (horizontal layout) → display SVG coords. */
@@ -197,18 +202,25 @@
   {/if}
 
   {#if !hideGoals}
-    <path class="line" d={quadPath([
-      { lx: -goalW, ly: goalY },
-      { lx: 0, ly: goalY },
-      { lx: 0, ly: goalY + goalH },
-      { lx: -goalW, ly: goalY + goalH }
-    ])} fill="none" stroke-opacity="0.5" />
-    <path class="line" d={quadPath([
-      { lx: pw, ly: goalY },
-      { lx: pw + goalW, ly: goalY },
-      { lx: pw + goalW, ly: goalY + goalH },
-      { lx: pw, ly: goalY + goalH }
-    ])} fill="none" stroke-opacity="0.5" />
+    {#each pitchGoals as g}
+      {#each goalPlanNetBands(g.side, g.rect) as band}
+        <path
+          class="goal-net"
+          d={quadPath([
+            { lx: band.x, ly: band.y },
+            { lx: band.x + band.w, ly: band.y },
+            { lx: band.x + band.w, ly: band.y + band.h },
+            { lx: band.x, ly: band.y + band.h }
+          ])}
+          fill="#ffffff"
+          fill-opacity={goalNetOpacity}
+          stroke="none"
+        />
+      {/each}
+      {#each goalPlanFrameSegments(g.side, g.rect) as seg}
+        <path class="line" d={linePath(seg.x1, seg.y1, seg.x2, seg.y2)} />
+      {/each}
+    {/each}
   {/if}
 </g>
 

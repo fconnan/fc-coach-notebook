@@ -3,64 +3,68 @@
   import * as THREE from 'three';
   import type { Goal3DSpec } from '$lib/utils/pitchMarkings';
   import { GOAL_M } from '$lib/utils/pitchMarkings';
+  import { DEFAULT_GOAL_NET_OPACITY } from '$lib/utils/goalVisual';
 
-  let { spec } = $props<{ spec: Goal3DSpec }>();
+  let {
+    spec,
+    width = GOAL_M.width,
+    height = GOAL_M.height,
+    depth = GOAL_M.depth,
+    netOpacity = DEFAULT_GOAL_NET_OPACITY,
+    postColor = '#ffffff'
+  } = $props<{
+    spec: Goal3DSpec;
+    width?: number;
+    height?: number;
+    depth?: number;
+    netOpacity?: number;
+    postColor?: string;
+  }>();
 
-  const hw = GOAL_M.width / 2;
-  const post = GOAL_M.postRadius;
-  const mouthY = GOAL_M.height / 2;
+  const hw = $derived(width / 2);
+  const post = $derived(Math.max(0.025, Math.min(GOAL_M.postRadius, width * 0.025)));
+  const mouthY = $derived(height / 2);
   const dz = $derived(spec.intoGoal.z);
+  const backZ = $derived(dz * depth);
+  const netMat = $derived({
+    color: postColor,
+    transparent: true,
+    opacity: netOpacity,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  });
 </script>
 
 <T.Group position.x={spec.mouthCenter.x} position.y={0} position.z={spec.mouthCenter.z}>
+  <!-- Front frame: two posts + crossbar -->
   <T.Mesh position={[-hw, mouthY, 0]} castShadow>
-    <T.CylinderGeometry args={[post, post, GOAL_M.height, 12]} />
-    <T.MeshStandardMaterial color="#ffffff" metalness={0.25} roughness={0.4} />
+    <T.CylinderGeometry args={[post, post, height, 12]} />
+    <T.MeshStandardMaterial color={postColor} metalness={0.25} roughness={0.4} />
   </T.Mesh>
   <T.Mesh position={[hw, mouthY, 0]} castShadow>
-    <T.CylinderGeometry args={[post, post, GOAL_M.height, 12]} />
-    <T.MeshStandardMaterial color="#ffffff" metalness={0.25} roughness={0.4} />
+    <T.CylinderGeometry args={[post, post, height, 12]} />
+    <T.MeshStandardMaterial color={postColor} metalness={0.25} roughness={0.4} />
   </T.Mesh>
-  <T.Mesh position={[0, GOAL_M.height, 0]} castShadow>
-    <T.BoxGeometry args={[GOAL_M.width + post * 2, post * 2, post * 2]} />
-    <T.MeshStandardMaterial color="#ffffff" metalness={0.25} roughness={0.4} />
+  <T.Mesh position={[0, height, 0]} castShadow>
+    <T.BoxGeometry args={[width + post * 2, post * 2, post * 2]} />
+    <T.MeshStandardMaterial color={postColor} metalness={0.25} roughness={0.4} />
   </T.Mesh>
-  <T.Mesh position={[-hw, mouthY, dz * GOAL_M.depth]} castShadow>
-    <T.CylinderGeometry args={[post * 0.85, post * 0.85, GOAL_M.height, 12]} />
-    <T.MeshStandardMaterial color="#f0f0f0" metalness={0.2} roughness={0.45} />
+
+  <!-- Net faces: top, left, right, back (solid transparent — no wireframe) -->
+  <T.Mesh position={[-hw, mouthY, backZ / 2]} rotation.y={Math.PI / 2}>
+    <T.PlaneGeometry args={[depth, height]} />
+    <T.MeshStandardMaterial {...netMat} />
   </T.Mesh>
-  <T.Mesh position={[hw, mouthY, dz * GOAL_M.depth]} castShadow>
-    <T.CylinderGeometry args={[post * 0.85, post * 0.85, GOAL_M.height, 12]} />
-    <T.MeshStandardMaterial color="#f0f0f0" metalness={0.2} roughness={0.45} />
+  <T.Mesh position={[hw, mouthY, backZ / 2]} rotation.y={-Math.PI / 2}>
+    <T.PlaneGeometry args={[depth, height]} />
+    <T.MeshStandardMaterial {...netMat} />
   </T.Mesh>
-  <T.Mesh position={[0, GOAL_M.height, dz * GOAL_M.depth]} castShadow>
-    <T.BoxGeometry args={[GOAL_M.width + post * 2, post * 2, post * 2]} />
-    <T.MeshStandardMaterial color="#f0f0f0" metalness={0.2} roughness={0.45} />
+  <T.Mesh position={[0, height, backZ / 2]} rotation.x={-Math.PI / 2}>
+    <T.PlaneGeometry args={[width, depth]} />
+    <T.MeshStandardMaterial {...netMat} />
   </T.Mesh>
-  <T.Mesh position={[-hw, post, dz * (GOAL_M.depth / 2)]} castShadow>
-    <T.BoxGeometry args={[post * 2, post * 2, GOAL_M.depth]} />
-    <T.MeshStandardMaterial color="#ffffff" metalness={0.2} roughness={0.45} />
-  </T.Mesh>
-  <T.Mesh position={[hw, post, dz * (GOAL_M.depth / 2)]} castShadow>
-    <T.BoxGeometry args={[post * 2, post * 2, GOAL_M.depth]} />
-    <T.MeshStandardMaterial color="#ffffff" metalness={0.2} roughness={0.45} />
-  </T.Mesh>
-  <T.Mesh position={[0, mouthY, dz * (GOAL_M.depth / 2)]}>
-    <T.BoxGeometry args={[GOAL_M.width, GOAL_M.height, GOAL_M.depth]} />
-    <T.MeshStandardMaterial
-      color="#ffffff"
-      transparent
-      opacity={0.18}
-      wireframe
-      side={THREE.DoubleSide}
-    />
-  </T.Mesh>
-  <T.Mesh position={[0, GOAL_M.height, dz * (GOAL_M.depth / 2)]} rotation.x={Math.PI / 2}>
-    <T.PlaneGeometry args={[GOAL_M.width, GOAL_M.depth]} />
-    <T.MeshStandardMaterial color="#ffffff" transparent opacity={0.12} wireframe side={THREE.DoubleSide} />
-  </T.Mesh>
-  <T.Mesh position={[0, mouthY, dz * GOAL_M.depth]} rotation.y={Math.PI / 2}>
-    <T.PlaneGeometry args={[GOAL_M.depth, GOAL_M.height]} />
-    <T.MeshStandardMaterial color="#ffffff" transparent opacity={0.14} wireframe side={THREE.DoubleSide} />
+  <T.Mesh position={[0, mouthY, backZ]} rotation.y={dz > 0 ? Math.PI : 0}>
+    <T.PlaneGeometry args={[width, height]} />
+    <T.MeshStandardMaterial {...netMat} />
   </T.Mesh>
 </T.Group>

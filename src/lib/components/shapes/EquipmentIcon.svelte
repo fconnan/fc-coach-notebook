@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { goalEquipmentFrontLayout } from '$lib/utils/goalVisual';
+  import GoalEquipmentFront from './GoalEquipmentFront.svelte';
+
   let { type } = $props<{ type: string }>();
 </script>
 
@@ -27,14 +30,7 @@
     <line x1="0" y1="18" x2="0" y2="-4" stroke="#f5b000" stroke-width="3.5" />
     <circle cx="0" cy="-11" r="7" fill="#f5b000" />
     <path d="M -8 -4 Q 0 5 8 -4" fill="#f5b000" />
-  {:else if type === 'miniGoal'}
-    <path d="M -16 9 L -16 -7 L 16 -7 L 16 9" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round" />
-  {:else if type === 'fullGoal'}
-    <rect x="-18" y="-9" width="36" height="18" fill="none" stroke="#fff" stroke-width="2.6" />
-    <g stroke="#fff" stroke-width="0.6" opacity="0.6">
-      {#each Array(6) as _, i}
-        <line x1={-18 + i * 7.2} y1="-9" x2={-18 + i * 7.2} y2="9" />
-      {/each}
-    </g>
+  {:else if type === 'miniGoal' || type === 'fullGoal'}
+    <GoalEquipmentFront layout={goalEquipmentFrontLayout(type as 'miniGoal' | 'fullGoal')} />
   {/if}
 </svg>

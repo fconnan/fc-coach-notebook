@@ -79,6 +79,7 @@
 
   const isShape = $derived(one && (one.type === 'rect' || one.type === 'ellipse' || one.type === 'zone'));
   const isEquip = $derived(one && ['cone','coneTall','pole','hurdle','ladder','ring','mannequin','miniGoal','fullGoal'].includes(one.type));
+  const isGoalEquip = $derived(one && (one.type === 'miniGoal' || one.type === 'fullGoal'));
   const playerIsGK = $derived(one?.role === 'goalkeeper' || one?.label === 'G');
   const playerPostures = $derived(posturesForPlayer(!!playerIsGK));
   const currentPosture = $derived(one ? resolvePosture(one) : 'standing');
@@ -345,6 +346,19 @@
           <label for="eqsize">Taille ({Math.round(((one.radius || 14) / 14) * 100)}%)</label>
           <input id="eqsize" type="range" min="7" max="42" value={one.radius || 14} oninput={(e) => updateElement(one.id, { radius: parseInt(e.currentTarget.value) })} />
         </div>
+        {#if isGoalEquip}
+          <div class="prop-group">
+            <label for="goalNetOp">Transparence filet ({Math.round((one.fillOpacity ?? 0.25) * 100)}%)</label>
+            <input
+              id="goalNetOp"
+              type="range"
+              min="0"
+              max="100"
+              value={Math.round((one.fillOpacity ?? 0.25) * 100)}
+              oninput={(e) => updateElement(one.id, { fillOpacity: parseInt(e.currentTarget.value) / 100 })}
+            />
+          </div>
+        {/if}
       {/if}
 
       <!-- Generic color (only for elements without dedicated colour controls) -->
@@ -513,6 +527,17 @@
             <input id="hideGoals" type="checkbox" checked={$currentPage.hideGoals} onchange={(e) => updatePageSettings({ hideGoals: e.currentTarget.checked })} />
             <span class="label-text">Masquer les buts</span>
           </label>
+        </div>
+        <div class="prop-group">
+          <label for="pageGoalNetOp">Transparence filet buts ({Math.round(($currentPage.goalNetOpacity ?? 0.25) * 100)}%)</label>
+          <input
+            id="pageGoalNetOp"
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(($currentPage.goalNetOpacity ?? 0.25) * 100)}
+            oninput={(e) => updatePageSettings({ goalNetOpacity: parseInt(e.currentTarget.value) / 100 })}
+          />
         </div>
         <div class="prop-group">
           <label class="toggle-wrap" for="hideLines">

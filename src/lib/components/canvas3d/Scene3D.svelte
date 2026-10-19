@@ -130,6 +130,7 @@
   showStripes={$currentPage?.showFieldStripes}
   hideLines={$currentPage?.hidePitchLines}
   hideGoals={$currentPage?.hideGoals}
+  goalNetOpacity={$currentPage?.goalNetOpacity ?? 0.25}
 />
 
 <!-- Invisible ground for background clicks -->

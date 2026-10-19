@@ -3,6 +3,11 @@
   import { beginElementDrag } from '$lib/utils/interactions';
   import { getPerspectiveContext } from '$lib/utils/perspectiveContext';
   import { isStandingElement } from '$lib/utils/projection';
+  import {
+    DEFAULT_GOAL_NET_OPACITY,
+    goalEquipmentFrontLayout
+  } from '$lib/utils/goalVisual';
+  import GoalEquipmentFront from './GoalEquipmentFront.svelte';
 
   let { element, isSelected } = $props<{ element: ComponentElement, isSelected: boolean }>();
 
@@ -44,8 +49,8 @@
   // Approximate selection box half-extent per type
   const box = $derived.by(() => {
     switch (element.type) {
-      case 'fullGoal': return { w: 73, h: 22 };
-      case 'miniGoal': return { w: 36, h: 16 };
+      case 'fullGoal': return goalEquipmentFrontLayout('fullGoal').box;
+      case 'miniGoal': return goalEquipmentFrontLayout('miniGoal').box;
       case 'ladder': return { w: 22, h: 70 };
       case 'hurdle': return { w: 26, h: 18 };
       case 'pole': return { w: 8, h: 44 };
@@ -62,8 +67,8 @@
     : element.type === 'pole' ? 22
     : element.type === 'hurdle' ? 8
     : element.type === 'mannequin' ? 22
-    : element.type === 'miniGoal' ? 8
-    : element.type === 'fullGoal' ? 10
+    : element.type === 'miniGoal' ? goalEquipmentFrontLayout('miniGoal').footY
+    : element.type === 'fullGoal' ? goalEquipmentFrontLayout('fullGoal').footY
     : 6
   );
 </script>
@@ -110,19 +115,12 @@
     <line x1="0" y1="22" x2="0" y2="-2" stroke={c} stroke-width="3" />
     <circle cx="0" cy="-12" r="7" fill={c} />
     <path d="M -8 -2 Q 0 6 8 -2" fill={c} />
-  {:else if element.type === 'miniGoal'}
-    <path d="M -18 8 L -18 -8 L 18 -8 L 18 8" fill="none" stroke={c} stroke-width="3" stroke-linejoin="round" />
-    <line x1="-18" y1="8" x2="18" y2="8" stroke={c} stroke-width="2" opacity="0.5" />
-  {:else if element.type === 'fullGoal'}
-    <rect x="-36" y="-10" width="72" height="20" fill="none" stroke={c} stroke-width="3" />
-    <g stroke={c} stroke-width="0.7" opacity="0.6">
-      {#each Array(11) as _, i}
-        <line x1={-36 + i * 7.2} y1="-10" x2={-36 + i * 7.2} y2="10" />
-      {/each}
-      {#each Array(3) as _, i}
-        <line x1="-36" y1={-10 + (i + 1) * 5} x2="36" y2={-10 + (i + 1) * 5} />
-      {/each}
-    </g>
+  {:else if element.type === 'miniGoal' || element.type === 'fullGoal'}
+    <GoalEquipmentFront
+      layout={goalEquipmentFrontLayout(element.type)}
+      color={c}
+      netOpacity={element.fillOpacity ?? DEFAULT_GOAL_NET_OPACITY}
+    />
   {/if}
   </g>
 

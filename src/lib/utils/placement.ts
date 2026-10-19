@@ -64,7 +64,11 @@ export function buildElementAt(
   }
 
   if (EQUIPMENT_TYPES.includes(type)) {
-    return { ...base, radius: 14, angle: 0 };
+    const equip = { ...base, radius: 14, angle: 0 };
+    if (type === 'miniGoal' || type === 'fullGoal') {
+      return { ...equip, fillOpacity: 0.25 };
+    }
+    return equip;
   }
 
   if (type === 'arrow') {

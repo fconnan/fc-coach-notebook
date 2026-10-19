@@ -1,12 +1,12 @@
 <script lang="ts">
   import { T } from '@threlte/core';
-  import * as THREE from 'three';
   import type { ComponentElement } from '$lib/stores/workspace';
   import { displayToWorld } from '$lib/utils/field3d';
   import { currentPage } from '$lib/stores/workspace';
   import { EQUIPMENT_3D, equipmentScaleFactor } from '$lib/utils/pitchMarkings';
   import { beginElementDrag3d } from '$lib/utils/interactions3d';
   import Goal3D from './Goal3D.svelte';
+  import { DEFAULT_GOAL_NET_OPACITY } from '$lib/utils/goalVisual';
 
   let { element, isSelected = false } = $props<{ element: ComponentElement; isSelected?: boolean }>();
 
@@ -34,6 +34,8 @@
 
   const selMat = $derived(isSelected ? '#5e6ad2' : undefined);
   const e = EQUIPMENT_3D;
+  const netOp = $derived(element.fillOpacity ?? DEFAULT_GOAL_NET_OPACITY);
+  const postCol = $derived(element.color || '#ffffff');
 </script>
 
 <T.Group
@@ -76,25 +78,14 @@
       <T.MeshStandardMaterial color={col} emissive={selMat} emissiveIntensity={selMat ? 0.3 : 0} />
     </T.Mesh>
   {:else if element.type === 'miniGoal'}
-    {@const s = e.miniGoal}
-    {@const hw = s.width / 2}
-    {@const post = 0.04}
-    <T.Mesh position={[-hw, s.height / 2, 0]} castShadow>
-      <T.CylinderGeometry args={[post, post, s.height, 8]} />
-      <T.MeshStandardMaterial color="#ffffff" emissive={selMat} emissiveIntensity={selMat ? 0.3 : 0} />
-    </T.Mesh>
-    <T.Mesh position={[hw, s.height / 2, 0]} castShadow>
-      <T.CylinderGeometry args={[post, post, s.height, 8]} />
-      <T.MeshStandardMaterial color="#ffffff" emissive={selMat} emissiveIntensity={selMat ? 0.3 : 0} />
-    </T.Mesh>
-    <T.Mesh position={[0, s.height, 0]} castShadow>
-      <T.BoxGeometry args={[s.width + post * 2, post * 2, post * 2]} />
-      <T.MeshStandardMaterial color="#ffffff" emissive={selMat} emissiveIntensity={selMat ? 0.3 : 0} />
-    </T.Mesh>
-    <T.Mesh position={[0, s.height / 2, s.depth / 2]}>
-      <T.BoxGeometry args={[s.width, s.height, s.depth]} />
-      <T.MeshStandardMaterial color="#ffffff" transparent opacity={0.2} wireframe side={THREE.DoubleSide} />
-    </T.Mesh>
+    <Goal3D
+      spec={{ side: 'left', mouthCenter: { x: 0, y: 0, z: 0 }, intoGoal: { x: 0, z: 1 } }}
+      width={e.miniGoal.width}
+      height={e.miniGoal.height}
+      depth={e.miniGoal.depth}
+      netOpacity={netOp}
+      postColor={postCol}
+    />
   {:else if element.type === 'fullGoal'}
     <Goal3D
       spec={{
@@ -102,6 +93,8 @@
         mouthCenter: { x: 0, y: 0, z: 0 },
         intoGoal: { x: 0, z: 1 }
       }}
+      netOpacity={netOp}
+      postColor={postCol}
     />
   {/if}
 </T.Group>
