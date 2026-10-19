@@ -29,26 +29,28 @@
   // Corner arc
   const cornerR = 10; // 1m
 
-  // Centering translations for the 1250x880 canvas (horizontal)
-  const txFull = 100;
-  const tyFull = 100;
+  // Vertical Centering:
+  // Center of 760x1130 (with margins) or tight space.
+  // We want to reach [0,0] to [680, 1050] for the vertical pitch.
+  // Center of rotated pitch should be (340, 525) for Full.
+  // Rotation of horizontal (1050x680) around its center (525, 340) lands at (525, 340).
+  // Translation needed to reach target (340, 525): dx = -185, dy = 185.
+  const dxFull = -185;
+  const dyFull = 185;
   
-  const txDemi = (1250 - hw) / 2; 
-  const tyDemi = 100;
-
-  // For vertical orientation, we want to center 680x1050 pitch in 880x1250 canvas
-  // Center of 880x1250 is (440, 625)
-  // Center of unrotated pitch is (txFull + pw/2, tyFull + ph/2) = (100+525, 100+340) = (625, 440)
-  // Rotation around center keeps it at (625, 440)
-  // So we need additional translation: x += (440-625), y += (625-440)
-  const dxVert = 440 - 625;
-  const dyVert = 625 - 440;
+  // For Demi (525x680):
+  // Target center (340, 262.5)
+  // Current center (262.5, 340)
+  // Translation: dx = 340 - 262.5 = 77.5, dy = 262.5 - 340 = -77.5
+  const dxDemi = 77.5;
+  const dyDemi = -77.5;
 </script>
 
 <g class="pitch-container" 
   transform="
-    {orientation === 'vertical' ? `translate(${dxVert}, ${dyVert}) rotate(90, ${txFull + (template === 'Complet' ? pw/2 : hw/2)}, ${tyFull + ph/2})` : ''}
-    translate({template === 'Complet' ? txFull : txDemi}, {tyFull})
+    {orientation === 'vertical' 
+      ? `translate(${template === 'Complet' ? dxFull : dxDemi}, ${template === 'Complet' ? dyFull : dyDemi}) rotate(90, ${template === 'Complet' ? hw : hw/2}, ${hh})` 
+      : ''}
   "
 >
   <!-- Grass -->

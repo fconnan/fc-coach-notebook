@@ -52,7 +52,7 @@
   
   .main-column {
     display: grid;
-    grid-template-columns: 1fr 1.2fr 280px; /* Text | Terrain (slightly larger) | Sidebar */
+    grid-template-columns: 1fr 1.5fr 280px; /* Give more space to Terrain */
     height: 100%;
     overflow: hidden;
   }
@@ -77,11 +77,19 @@
     }
     .workspace {
       display: block;
-      height: auto;
-      width: 100%;
+      height: 210mm;
+      width: 297mm;
     }
     .main-column {
-      display: flex;
+      display: grid !important;
+      grid-template-columns: 1fr 1fr !important;
+      height: 210mm;
+      width: 297mm;
+    }
+    .editor-pane, .canvas-pane {
+      width: 100% !important;
+      height: 100% !important;
+      border: none !important;
     }
   }
 </style>

@@ -50,20 +50,13 @@
   <svg 
     bind:this={svgElement}
     class="drawing-surface-vertical" 
-    viewBox="0 0 880 1250" 
+    viewBox={$currentPage?.fieldTemplate === 'Complet' ? "-40 -40 760 1130" : "-40 -40 760 605"} 
     xmlns="http://www.w3.org/2000/svg"
     onmousedown={onBackgroundClick}
-    role="img"
+    role="application"
+    tabindex="0"
     aria-label="Tactical drawing board"
   >
-    <defs>
-      <pattern id="grid-vertical" width="20" height="20" patternUnits="userSpaceOnUse">
-        <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#ddd" stroke-opacity="1" stroke-width="1"/>
-      </pattern>
-    </defs>
-    
-    <rect width="100%" height="100%" fill="url(#grid-vertical)" />
-    
     {#if $currentPage}
       <!-- Vertical Pitch -->
       <Pitch template={$currentPage.fieldTemplate} orientation="vertical" />
@@ -83,27 +76,27 @@
 <style>
   .canvas-container {
     flex: 1;
-    background-color: #fff; /* White background around terrain */
-    overflow: auto;
+    background-color: #2b6b39; /* Same green as the terrain */
+    overflow: hidden;
     display: flex;
     justify-content: center;
     align-items: center;
-    padding: 40px;
+    padding: 10px;
   }
   
   .drawing-surface-vertical {
     height: 100%;
-    aspect-ratio: 880 / 1250;
+    width: auto;
     max-width: 100%;
-    background-color: #f8f8f8; /* Light gray base for pitch */
-    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-    border: 1px solid #eee;
+    max-height: 100%;
+    background-color: transparent;
+    filter: drop-shadow(0 4px 12px rgba(0,0,0,0.1));
   }
 
   @media print {
     .canvas-container {
       padding: 0;
-      background: #fff;
+      background: #2b6b39;
       overflow: visible;
     }
   }
