@@ -132,28 +132,39 @@
     <rect x="3" y="6" width="8" height={rightLegH - 6} rx="0" fill={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} stroke="#000" stroke-width="0.5" />
     <rect x="3" y={6 + rightLegH - 6} width="8" height="6" rx="3" fill="#111" />
 
-    <!-- Player Arms (Fixed lateral reach) -->
+    <!-- Player Arms (Curved from shoulders forward) -->
     <!-- Left Arm -->
-    <rect 
-      x={-radius - armW + 2} 
-      y="-4" 
-      width={armW} 
-      height="8" 
-      rx="4" 
-      fill={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} 
-      stroke="#000" 
-      stroke-width="1" 
+    <path 
+      d="M -13.5 -7 Q -26 -2 -22 6" 
+      fill="none" 
+      stroke={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} 
+      stroke-width="4" 
+      stroke-linecap="round" 
     />
-    <!-- Right Arm -->
-    <rect 
-      x={radius - 2} 
-      y="-4" 
-      width={armW} 
-      height="8" 
-      rx="4" 
-      fill={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} 
+    <path 
+      d="M -13.5 -7 Q -26 -2 -22 6" 
+      fill="none" 
       stroke="#000" 
-      stroke-width="1" 
+      stroke-width="5" 
+      stroke-linecap="round" 
+      opacity="0.2"
+    />
+
+    <!-- Right Arm -->
+    <path 
+      d="M 13.5 -7 Q 26 -2 22 6" 
+      fill="none" 
+      stroke={element.label === 'G' ? '#d4ff00' : (element.color || '#5e6ad2')} 
+      stroke-width="4" 
+      stroke-linecap="round" 
+    />
+    <path 
+      d="M 13.5 -7 Q 26 -2 22 6" 
+      fill="none" 
+      stroke="#000" 
+      stroke-width="5" 
+      stroke-linecap="round" 
+      opacity="0.2"
     />
 
     <!-- Player Body -->
