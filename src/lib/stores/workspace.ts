@@ -1,4 +1,4 @@
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 
 // ---------------------------------------------------------
 // Types
@@ -97,6 +97,9 @@ export const isTacticLoaded = writable<boolean>(false);
 
 // Track the active directory handle reactively
 export const activeDirectoryHandle = writable<FileSystemDirectoryHandle | null>(null);
+
+// Pulse to trigger component re-mounts on data load
+export const refreshCounter = writable<number>(0);
 
 // Global control for the Tactic Browser modal visibility
 export const showTacticBrowser = writable<boolean>(false);
@@ -202,6 +205,13 @@ export function removeElements(ids: string[]) {
   selectedIds.update(current => current.filter(id => !ids.includes(id)));
 }
 
+export function deleteSelected() {
+  const ids = get(selectedIds);
+  if (ids.length > 0) {
+    removeElements(ids);
+  }
+}
+
 export function setFieldTemplate(template: 'Complet' | 'Demi' | 'DemiBas') {
   isDirty.set(true);
   pages.update(p => {
@@ -286,6 +296,7 @@ export function importPage(data: Partial<Page>) {
   
   pages.set([newPage]);
   currentPageId.set(newId);
+  refreshCounter.update(n => n + 1);
   selectedIds.set([]);
   isTacticLoaded.set(true);
 }

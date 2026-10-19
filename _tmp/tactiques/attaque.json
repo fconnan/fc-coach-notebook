@@ -7,18 +7,239 @@
       "type": "player",
       "team": "team2",
       "position": {
-        "x": 207.44210815429688,
-        "y": 285.497802734375
+        "x": 207.84213256835938,
+        "y": 231.69781494140625
       },
       "label": "1",
       "radius": 14,
+      "angle": 274,
+      "color": "#d25e5e",
+      "id": "2bf4e2b2-4232-4a7c-b581-b29892e6ecf2",
+      "rightLegLength": 10,
+      "leftLegLength": 16
+    },
+    {
+      "type": "player",
+      "team": "team1",
+      "position": {
+        "x": 319.5483703613281,
+        "y": 18.94070053100586
+      },
+      "label": "G",
+      "radius": 14,
+      "angle": 0,
+      "color": "#5e6ad2",
+      "id": "f30aac20-bb43-4f08-93e6-d13e67ec583f"
+    },
+    {
+      "type": "arrow",
+      "team": "none",
+      "position": {
+        "x": 231.1310577392578,
+        "y": 212.72470092773438
+      },
+      "pathPoints": [
+        {
+          "x": 231.1310577392578,
+          "y": 212.72470092773438
+        },
+        {
+          "x": 411.8818664550781,
+          "y": 188.2784423828125
+        },
+        {
+          "x": 366.4234619140625,
+          "y": 0.02135205641388893
+        }
+      ],
+      "curveType": "Q",
+      "arrowEnd": true,
+      "strokeWidth": 3,
+      "color": "#fbacac",
+      "id": "ccf47afe-591b-4ef1-88e3-8b751e1e78e0",
+      "linkedStartId": "b0adb1f2-4c1d-4b7d-908d-7c1217ce530c"
+    },
+    {
+      "type": "player",
+      "team": "team1",
+      "position": {
+        "x": 336.6466979980469,
+        "y": 53.58710479736328
+      },
+      "label": "1",
+      "radius": 14,
+      "angle": 0,
+      "color": "#5e6ad2",
+      "id": "bcf7ae03-e390-4edc-beed-8ab039b4afa6"
+    },
+    {
+      "type": "player",
+      "team": "team1",
+      "position": {
+        "x": 368.2813720703125,
+        "y": 53.50244140625
+      },
+      "label": "2",
+      "radius": 14,
+      "angle": 0,
+      "color": "#5e6ad2",
+      "id": "0949472b-8ac7-4df6-854d-58ffdbacb268"
+    },
+    {
+      "type": "player",
+      "team": "team1",
+      "position": {
+        "x": 398.03985595703125,
+        "y": 53.447181701660156
+      },
+      "label": "3",
+      "radius": 14,
+      "angle": 0,
+      "color": "#5e6ad2",
+      "id": "c901e0da-46c6-43d4-b0a5-e15c99445f91"
+    },
+    {
+      "type": "player",
+      "team": "team2",
+      "position": {
+        "x": 355.01849365234375,
+        "y": 1015.2885131835938
+      },
+      "label": "G",
+      "radius": 14,
       "angle": 180,
       "color": "#d25e5e",
-      "id": "2bf4e2b2-4232-4a7c-b581-b29892e6ecf2"
+      "id": "029d3e0c-167f-4a1e-a78e-bde325c5330a"
+    },
+    {
+      "type": "player",
+      "team": "team1",
+      "position": {
+        "x": 194.9040069580078,
+        "y": 905.8934936523438
+      },
+      "label": "4",
+      "radius": 14,
+      "angle": 0,
+      "color": "#5e6ad2",
+      "id": "2c102ebd-d3bf-4bc9-9513-96edb214c706"
+    },
+    {
+      "type": "player",
+      "team": "team1",
+      "position": {
+        "x": 345.0735168457031,
+        "y": 949.6514892578125
+      },
+      "label": "5",
+      "radius": 14,
+      "angle": 0,
+      "color": "#5e6ad2",
+      "id": "42e4fcdf-d543-4daf-a3be-a56e56c47d13"
+    },
+    {
+      "type": "player",
+      "team": "team2",
+      "position": {
+        "x": 102.4155044555664,
+        "y": 724.8944702148438
+      },
+      "label": "2",
+      "radius": 14,
+      "angle": 180,
+      "color": "#d25e5e",
+      "id": "83533b6e-3f2d-445d-a8a5-82aeb29f53a5"
+    },
+    {
+      "type": "player",
+      "team": "team1",
+      "position": {
+        "x": 492.76300048828125,
+        "y": 403.1610870361328
+      },
+      "label": "6",
+      "radius": 14,
+      "angle": 0,
+      "color": "#5e6ad2",
+      "id": "d0b28afa-d837-4c7f-97e9-e73aa047d03b"
+    },
+    {
+      "type": "ball",
+      "team": "none",
+      "position": {
+        "x": 231.1310577392578,
+        "y": 212.72470092773438
+      },
+      "label": "",
+      "radius": 8,
+      "angle": 0,
+      "color": "#ffffff",
+      "id": "b0adb1f2-4c1d-4b7d-908d-7c1217ce530c"
+    },
+    {
+      "type": "arrow",
+      "team": "none",
+      "position": {
+        "x": 492.76300048828125,
+        "y": 403.1610870361328
+      },
+      "pathPoints": [
+        {
+          "x": 492.76300048828125,
+          "y": 403.1610870361328
+        },
+        {
+          "x": 587.2920532226562,
+          "y": 293.5245361328125
+        }
+      ],
+      "curveType": "L",
+      "arrowEnd": true,
+      "strokeWidth": 3,
+      "color": "#ffffff",
+      "id": "620e4206-55e7-415b-88bf-e09f637c1f27",
+      "linkedEndId": "12ed5e26-4c44-4eed-bf88-335cf6291186",
+      "linkedStartId": "d0b28afa-d837-4c7f-97e9-e73aa047d03b"
+    },
+    {
+      "type": "arrow",
+      "team": "none",
+      "position": {
+        "x": 587.2920532226562,
+        "y": 293.5245361328125
+      },
+      "pathPoints": [
+        {
+          "x": 587.2920532226562,
+          "y": 293.5245361328125
+        },
+        {
+          "x": 587.2920532226562,
+          "y": 215.9487762451172
+        }
+      ],
+      "curveType": "L",
+      "arrowEnd": true,
+      "strokeWidth": 3,
+      "color": "#ffffff",
+      "id": "12ed5e26-4c44-4eed-bf88-335cf6291186"
+    },
+    {
+      "type": "player",
+      "team": "team2",
+      "position": {
+        "x": 520.1162109375,
+        "y": 193.72623443603516
+      },
+      "label": "3",
+      "radius": 14,
+      "angle": 180,
+      "color": "#d25e5e",
+      "id": "478e8fa4-c640-4d72-bcd7-a156f9726988"
     }
   ],
-  "nextTeam1Number": 1,
-  "nextTeam2Number": 2,
+  "nextTeam1Number": 7,
+  "nextTeam2Number": 4,
   "showPlayerDetails": false,
   "team1Color": "#5e6ad2",
   "team2Color": "#d25e5e",

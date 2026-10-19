@@ -3,12 +3,12 @@
   import Toolbar from './Toolbar.svelte';
   import RightSidebar from './RightSidebar.svelte';
   import BottomTabs from './BottomTabs.svelte';
-  import { currentPage, setMarkdownContent, isTacticLoaded, activeDirectoryHandle } from '$lib/stores/workspace';
+  import { currentPage, setMarkdownContent, isTacticLoaded, activeDirectoryHandle, refreshCounter, deleteSelected } from '$lib/stores/workspace';
   import CanvasArea from '../canvas/CanvasArea.svelte';
   import MarkdownEditor from './MarkdownEditor.svelte';
   import WelcomeScreen from './WelcomeScreen.svelte';
   import { fade } from 'svelte/transition';
-  import { hasActiveDirectory } from '$lib/services/tacticFileService';
+  import { hasActiveDirectory, saveTactic } from '$lib/services/tacticFileService';
   
   // Right sidebar toggle state
   let showProperties = $state(true);
@@ -17,7 +17,33 @@
   function handleMarkdownChange(newVal: string) {
     setMarkdownContent(newVal);
   }
+
+  // Keyboard Shortcuts
+  function handleGlobalKeydown(e: KeyboardEvent) {
+    // 1. CTRL+S -> Save
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      saveTactic($currentPage);
+      return;
+    }
+
+    // 2. DELETE / SUPPR -> Delete selected objects
+    // Only if not typing in a text field
+    if (e.key === 'Delete' || e.key === 'Suppr') {
+      const target = e.target as HTMLElement;
+      const isInput = target.tagName === 'INPUT' || 
+                      target.tagName === 'TEXTAREA' || 
+                      target.isContentEditable;
+      
+      if (!isInput) {
+        e.preventDefault();
+        deleteSelected();
+      }
+    }
+  }
 </script>
+
+<svelte:window onkeydown={handleGlobalKeydown} />
 
 {#if $isTacticLoaded || $activeDirectoryHandle}
   <div class="workspace">
@@ -26,7 +52,7 @@
       <Toolbar bind:showProperties />
     </div>
     
-    {#key $currentPage.id}
+    {#key $refreshCounter}
       <div class="main-column" in:fade={{ duration: 200, delay: 100 }}>
         {#if $isTacticLoaded}
           <div class="editor-pane">
