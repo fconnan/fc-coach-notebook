@@ -22,13 +22,15 @@
       <MarkdownEditor />
     </div>
     
-    <div class="canvas-pane">
-      <CanvasArea />
-    </div>
+    <div class="drawing-container">
+      <div class="canvas-pane" style:aspect-ratio={$currentPage?.fieldTemplate === 'Complet' ? '760 / 1130' : '760 / 566.25'}>
+        <CanvasArea />
+      </div>
 
-    {#if showProperties}
-      <RightSidebar />
-    {/if}
+      {#if showProperties}
+        <RightSidebar />
+      {/if}
+    </div>
   </div>
   
   <BottomTabs />
@@ -52,9 +54,16 @@
   
   .main-column {
     display: grid;
-    grid-template-columns: 1fr 1.5fr 280px; /* Give more space to Terrain */
+    grid-template-columns: 1fr auto; 
     height: 100%;
     overflow: hidden;
+  }
+
+  .drawing-container {
+    display: flex;
+    height: 100%;
+    overflow: hidden;
+    background-color: #2b6b39; /* Matches pitch background */
   }
 
   .editor-pane {
@@ -69,6 +78,7 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    /* Width will be determined by SVG aspect ratio */
   }
 
   @media print {

@@ -70,6 +70,7 @@
   <svg 
     bind:this={svgElement}
     class="drawing-surface-vertical" 
+    style:aspect-ratio={$currentPage?.fieldTemplate === 'Complet' ? '760 / 1130' : '760 / 566.25'}
     viewBox={
       $currentPage?.fieldTemplate === 'Complet' ? "-40 -40 760 1130" : 
       $currentPage?.fieldTemplate === 'Demi' ? "-40 -40 760 566.25" : 

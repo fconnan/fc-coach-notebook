@@ -308,7 +308,7 @@
                   <path d="M 24,52.5 A 10,10 0 0 1 44,52.5" fill="none" stroke="white" stroke-width="2" />
                 </g>
               </svg>
-              <span>Demi (Haut)</span>
+              <span>Attaque</span>
             </button>
             
             <button 
@@ -331,7 +331,7 @@
                   <path d="M 24,52.5 A 10,10 0 0 0 44,52.5" fill="none" stroke="white" stroke-width="2" />
                 </g>
               </svg>
-              <span>Demi (Bas)</span>
+              <span>Défense</span>
             </button>
           </div>
         </div>
