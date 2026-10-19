@@ -3,10 +3,11 @@
   import Toolbar from './Toolbar.svelte';
   import RightSidebar from './RightSidebar.svelte';
   import BottomTabs from './BottomTabs.svelte';
-  import { currentPage, setMarkdownContent, isTacticLoaded, activeDirectoryHandle, refreshCounter, deleteSelected } from '$lib/stores/workspace';
+  import { currentPage, setMarkdownContent, isTacticLoaded, activeDirectoryHandle, refreshCounter, deleteSelected, undo, redo, copySelection, cutSelection, pasteClipboard, duplicateSelection, showExportDialog } from '$lib/stores/workspace';
   import CanvasArea from '../canvas/CanvasArea.svelte';
   import MarkdownEditor from './MarkdownEditor.svelte';
   import WelcomeScreen from './WelcomeScreen.svelte';
+  import ExportDialog from './ExportDialog.svelte';
   import { fade } from 'svelte/transition';
   import { hasActiveDirectory, saveTactic } from '$lib/services/tacticFileService';
   
@@ -20,25 +21,43 @@
 
   // Keyboard Shortcuts
   function handleGlobalKeydown(e: KeyboardEvent) {
-    // 1. CTRL+S -> Save
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    const target = e.target as HTMLElement;
+    const isInput = target.tagName === 'INPUT' ||
+                    target.tagName === 'TEXTAREA' ||
+                    target.isContentEditable;
+    const mod = e.ctrlKey || e.metaKey;
+
+    // CTRL+S -> Save
+    if (mod && e.key.toLowerCase() === 's') {
       e.preventDefault();
       saveTactic($currentPage);
       return;
     }
 
-    // 2. DELETE / SUPPR -> Delete selected objects
-    // Only if not typing in a text field
-    if (e.key === 'Delete' || e.key === 'Suppr') {
-      const target = e.target as HTMLElement;
-      const isInput = target.tagName === 'INPUT' || 
-                      target.tagName === 'TEXTAREA' || 
-                      target.isContentEditable;
-      
-      if (!isInput) {
-        e.preventDefault();
-        deleteSelected();
-      }
+    if (isInput) return;
+
+    // Undo / Redo
+    if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      undo();
+      return;
+    }
+    if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
+      e.preventDefault();
+      redo();
+      return;
+    }
+
+    // Clipboard
+    if (mod && e.key.toLowerCase() === 'c') { e.preventDefault(); copySelection(); return; }
+    if (mod && e.key.toLowerCase() === 'x') { e.preventDefault(); cutSelection(); return; }
+    if (mod && e.key.toLowerCase() === 'v') { e.preventDefault(); pasteClipboard(); return; }
+    if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateSelection(); return; }
+
+    // Delete
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      deleteSelected();
     }
   }
 </script>
@@ -78,6 +97,10 @@
     
     <BottomTabs />
   </div>
+
+  {#if $showExportDialog}
+    <ExportDialog />
+  {/if}
 {:else}
   <WelcomeScreen />
 {/if}

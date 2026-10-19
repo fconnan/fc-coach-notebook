@@ -1,56 +1,16 @@
 <script lang="ts">
   import type { ComponentElement } from '$lib/stores/workspace';
-  import { updateElement, selectedIds, currentPage } from '$lib/stores/workspace';
+  import { updateElement, currentPage } from '$lib/stores/workspace';
+  import { beginElementDrag } from '$lib/utils/interactions';
  
   let { element, isSelected } = $props<{ element: ComponentElement, isSelected: boolean }>();
   
-  let isDragging = false;
   let isRotating = false;
-  let startX = 0;
-  let startY = 0;
-  let originalX = 0;
-  let originalY = 0;
   let svgElement: SVGSVGElement | null = null;
  
   function onPointerDown(e: PointerEvent) {
     if (isRotating) return;
-    e.stopPropagation(); 
-    selectedIds.set([element.id]);
-    
-    isDragging = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    originalX = element.position.x;
-    originalY = element.position.y;
-    
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-    
-    const target = e.currentTarget as SVGElement;
-    target.setPointerCapture(e.pointerId);
-  }
-  
-  function onPointerMove(e: PointerEvent) {
-    if (!isDragging) return;
-    
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
-    
-    updateElement(element.id, {
-      position: {
-        x: originalX + dx,
-        y: originalY + dy
-      }
-    });
-  }
-  
-  function onPointerUp(e: PointerEvent) {
-    isDragging = false;
-    window.removeEventListener('pointermove', onPointerMove);
-    window.removeEventListener('pointerup', onPointerUp);
-    
-    const target = e.currentTarget as SVGElement;
-    if (target) target.releasePointerCapture(e.pointerId);
+    beginElementDrag(e, element);
   }
 
   // --- Rotation Logic ---
@@ -103,9 +63,24 @@
   // Pre-calculate rotation and stance
   const angle = $derived(element.angle || 0);
   const radius = $derived(element.radius || (element.team === 'team1' ? $currentPage.team1Size : (element.team === 'team2' ? $currentPage.team2Size : 14)));
-  const playerColor = $derived(element.color || (element.team === 'team1' ? $currentPage.team1Color : (element.team === 'team2' ? $currentPage.team2Color : '#ffffff')));
+  const isGK = $derived(element.role === 'goalkeeper' || element.label === 'G');
+  const teamColor = $derived(element.team === 'team1' ? $currentPage.team1Color : (element.team === 'team2' ? $currentPage.team2Color : '#ffffff'));
+  const shirtColor = $derived(isGK ? '#d4ff00' : (element.shirtColor || element.color || teamColor));
+  const shortColor = $derived(element.shortColor || '#1c1c1c');
+  const skinColor = $derived(element.skinColor || '#e8b58c');
+  const pattern = $derived(element.shirtPattern || 'solid');
+  const strokeCol = $derived(isGK ? (element.color || teamColor) : '#000');
+  const playerColor = $derived(shirtColor);
   const leftLegH = $derived(element.leftLegLength || 10);
   const rightLegH = $derived(element.rightLegLength || 10);
+  // A readable contrasting colour for shirt patterns
+  function contrast(hex: string): string {
+    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    if (!m) return '#ffffff';
+    const lum = (parseInt(m[1], 16) * 0.299 + parseInt(m[2], 16) * 0.587 + parseInt(m[3], 16) * 0.114);
+    return lum > 150 ? '#1a1a1a' : '#ffffff';
+  }
+  const patternColor = $derived(contrast(shirtColor));
 </script>
  
 <g 
@@ -149,36 +124,53 @@
     
     <!-- Conditional Player Details -->
     {#if $currentPage.showPlayerDetails}
-      <!-- Player Stance (Action legs) -->
+      <!-- Player Stance (Action legs use the short colour) -->
       <!-- Left Leg -->
-      <rect x="-11" y="6" width="8" height={leftLegH - 6} rx="0" fill={element.label === 'G' ? '#d4ff00' : playerColor} stroke="#000" stroke-width="0.5" />
+      <rect x="-11" y="6" width="8" height={leftLegH - 6} rx="0" fill={shortColor} stroke="#000" stroke-width="0.5" />
       <rect x="-11" y={6 + leftLegH - 6} width="8" height="6" rx="3" fill="#111" />
       
       <!-- Right Leg -->
-      <rect x="3" y="6" width="8" height={rightLegH - 6} rx="0" fill={element.label === 'G' ? '#d4ff00' : playerColor} stroke="#000" stroke-width="0.5" />
+      <rect x="3" y="6" width="8" height={rightLegH - 6} rx="0" fill={shortColor} stroke="#000" stroke-width="0.5" />
       <rect x="3" y={6 + rightLegH - 6} width="8" height="6" rx="3" fill="#111" />
       
-      <!-- Player Anatomical Details -->
-
       <!-- Schematic Arch (Back/Structure) -->
       <path 
         d="M -42 8 Q 0 -35 42 8" 
         fill="none" 
         stroke="#000" 
-        stroke-width={element.label === 'G' ? 2 : 1.5} 
+        stroke-width={isGK ? 2 : 1.5} 
         stroke-linecap="round" 
       />
     {/if}
 
-    <!-- Player Body -->
+    <!-- Player Body (shirt) -->
+    <defs>
+      <clipPath id="pclip-{element.id}">
+        <circle cx="0" cy="0" r={radius} />
+      </clipPath>
+    </defs>
     <circle 
       cx="0" 
       cy="0" 
       r={radius} 
-      fill={element.label === 'G' ? '#d4ff00' : playerColor} 
-      stroke={element.label === 'G' ? (element.color || playerColor) : '#000'} 
-      stroke-width={element.label === 'G' ? 2 : 1.5} 
+      fill={shirtColor} 
+      stroke={strokeCol} 
+      stroke-width={isGK ? 2 : 1.5} 
     />
+
+    <!-- Shirt pattern -->
+    {#if !isGK && pattern === 'stripes'}
+      <g clip-path="url(#pclip-{element.id})" pointer-events="none">
+        {#each [-radius + radius * 0.5, -radius + radius * 1.17, -radius + radius * 1.83] as sx}
+          <rect x={sx} y={-radius} width={radius * 0.33} height={radius * 2} fill={patternColor} opacity="0.85" />
+        {/each}
+      </g>
+    {:else if !isGK && pattern === 'hoops'}
+      <g clip-path="url(#pclip-{element.id})" pointer-events="none">
+        <rect x={-radius} y={-radius * 0.55} width={radius * 2} height={radius * 0.5} fill={patternColor} opacity="0.85" />
+        <rect x={-radius} y={radius * 0.1} width={radius * 2} height={radius * 0.5} fill={patternColor} opacity="0.85" />
+      </g>
+    {/if}
   </g>
 
   <!-- Label / Number (Always horizontal for readability) -->
@@ -188,12 +180,28 @@
       y="0" 
       text-anchor="middle" 
       dominant-baseline="central"
-      fill={element.label === 'G' ? (element.color || playerColor) : '#fff'}
+      fill={isGK ? (element.color || teamColor) : patternColor}
       font-size={radius * 0.9}
       font-weight="bold"
       pointer-events="none"
     >
       {element.label}
+    </text>
+  {/if}
+
+  <!-- Player name (below token) -->
+  {#if element.name}
+    <text
+      x="0"
+      y={radius + 11}
+      text-anchor="middle"
+      fill="#ffffff"
+      font-size="11"
+      font-weight="600"
+      style="paint-order: stroke; stroke: rgba(0,0,0,0.6); stroke-width: 2px;"
+      pointer-events="none"
+    >
+      {element.name}
     </text>
   {/if}
 

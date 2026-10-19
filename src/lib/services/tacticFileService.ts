@@ -1,4 +1,4 @@
-import { importPage, isDirty, DEFAULT_PAGE, showTacticBrowser, activeDirectoryHandle } from '$lib/stores/workspace';
+import { importPage, isDirty, DEFAULT_PAGE, showTacticBrowser, activeDirectoryHandle, commitToActiveFrame, currentPage } from '$lib/stores/workspace';
 import type { Page } from '$lib/stores/workspace';
 import { get } from 'svelte/store';
 
@@ -54,6 +54,9 @@ activeDirectoryHandle.subscribe(h => _activeDirHandle = h);
  */
 export async function saveTactic(page: Page, forceNewDir = false) {
   try {
+    // Ensure the live canvas is persisted into the active animation frame
+    commitToActiveFrame();
+    page = get(currentPage) || page;
     let dirHandle = _activeDirHandle;
     
     if (!dirHandle || forceNewDir) {

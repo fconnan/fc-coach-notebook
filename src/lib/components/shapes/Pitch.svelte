@@ -1,9 +1,29 @@
 <script lang="ts">
-  let { template = 'Complet', orientation = 'horizontal', showStripes = true } = $props<{ 
-    template: 'Complet' | 'Demi' | 'DemiBas', 
+  let {
+    template = 'Complet',
+    orientation = 'horizontal',
+    showStripes = true,
+    grassColor = '#2b6b39',
+    hideGoals = false,
+    hideLines = false
+  } = $props<{
+    template: 'Complet' | 'Demi' | 'DemiBas',
     orientation: 'horizontal' | 'vertical',
-    showStripes?: boolean
+    showStripes?: boolean,
+    grassColor?: string,
+    hideGoals?: boolean,
+    hideLines?: boolean
   }>();
+
+  // Slightly lighter stripe derived from the base grass colour
+  function lighten(hex: string, amt = 18): string {
+    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    if (!m) return '#32753f';
+    const r = Math.min(255, parseInt(m[1], 16) + amt);
+    const g = Math.min(255, parseInt(m[2], 16) + amt);
+    const b = Math.min(255, parseInt(m[3], 16) + amt);
+    return `rgb(${r}, ${g}, ${b})`;
+  }
   
   // Dimensions 1m = 10px
   // Official Pitch: 105m x 68m -> 1050 x 680
@@ -55,18 +75,19 @@
   "
 >
   <!-- Grass -->
-  <rect width={pw} height={ph} fill="#2b6b39" fill-opacity="1" />
+  <rect class="bg-rect" width={pw} height={ph} fill={grassColor} fill-opacity="1" />
   
   {#if showStripes}
-    <g class="stripes">
+    <g class="stripes" pointer-events="none">
       {#each Array(stripeCount) as _, i}
         {#if i % 2 === 1}
-          <rect x={i * stripeWidth} y="0" width={stripeWidth} height={ph} fill="#32753f" />
+          <rect x={i * stripeWidth} y="0" width={stripeWidth} height={ph} fill={lighten(grassColor)} />
         {/if}
       {/each}
     </g>
   {/if}
-  
+
+  {#if !hideLines}
   <!-- Main border -->
   <rect width={pw} height={ph} fill="none" class="line" />
 
@@ -83,8 +104,6 @@
   <path d="M {pw},{ph-cornerR} A {cornerR},{cornerR} 0 0 0 {pw-cornerR},{ph}" fill="none" class="line" />
   <path d="M {cornerR},{ph} A {cornerR},{cornerR} 0 0 0 0,{ph-cornerR}" fill="none" class="line" />
 
-  <!-- Left Goal -->
-  <rect x={-goalW} y={goalY} width={goalW} height={goalH} fill="none" class="line" stroke-opacity="0.5" />
   <!-- Left Penalty Area -->
   <rect x="0" y={penAreaY} width={penAreaW} height={penAreaH} fill="none" class="line" />
   <rect x="0" y={goalAreaY} width={goalAreaW} height={goalAreaH} fill="none" class="line" />
@@ -96,8 +115,6 @@
     <circle cx={penSpotX} cy={hh} r={centerCircleR} fill="none" class="line" clip-path="url(#left-pen-clip)" />
   </g>
 
-  <!-- Right Goal -->
-  <rect x={pw} y={goalY} width={goalW} height={goalH} fill="none" class="line" stroke-opacity="0.5" />
   <!-- Right Penalty Area -->
   <rect x={pw - penAreaW} y={penAreaY} width={penAreaW} height={penAreaH} fill="none" class="line" />
   <rect x={pw - goalAreaW} y={goalAreaY} width={goalAreaW} height={goalAreaH} fill="none" class="line" />
@@ -108,6 +125,14 @@
     </clipPath>
     <circle cx={penSpotRightX} cy={hh} r={centerCircleR} fill="none" class="line" clip-path="url(#right-pen-clip)" />
   </g>
+  {/if}
+
+  {#if !hideGoals}
+  <!-- Left Goal -->
+  <rect x={-goalW} y={goalY} width={goalW} height={goalH} fill="none" class="line" stroke-opacity="0.5" />
+  <!-- Right Goal -->
+  <rect x={pw} y={goalY} width={goalW} height={goalH} fill="none" class="line" stroke-opacity="0.5" />
+  {/if}
 </g>
 
 <style>

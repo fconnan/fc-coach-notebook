@@ -1,0 +1,16 @@
+{
+  "name": "test",
+  "fieldTemplate": "Complet",
+  "markdownContent": "# test",
+  "elements": [],
+  "nextTeam1Number": 1,
+  "nextTeam2Number": 1,
+  "showPlayerDetails": false,
+  "team1Color": "#5e6ad2",
+  "team2Color": "#d25e5e",
+  "team1Size": 14,
+  "team2Size": 14,
+  "ballColor": "#ffffff",
+  "ballSize": 8,
+  "showFieldStripes": true
+}

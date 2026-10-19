@@ -1,42 +1,71 @@
 <script lang="ts">
-  import { activeTool, currentPage, selectedIds, updateElement, addElement, incrementTeamNumber, type Position } from '$lib/stores/workspace';
+  import { activeTool, currentPage, selectedIds, updateElement, addElement, incrementTeamNumber, zoom, pan, clearSelection, type Position, type ComponentElement } from '$lib/stores/workspace';
+  import { svgPoint } from '$lib/utils/interactions';
   import Player from '../shapes/Player.svelte';
   import Ball from '../shapes/Ball.svelte';
   import Pitch from '../shapes/Pitch.svelte';
   import Arrow from '../shapes/Arrow.svelte';
+  import ShapeElement from '../shapes/ShapeElement.svelte';
+  import TextLabel from '../shapes/TextLabel.svelte';
+  import Callout from '../shapes/Callout.svelte';
+  import Equipment from '../shapes/Equipment.svelte';
+  import { EQUIPMENT_TYPES, isPlaying, playbackElements } from '$lib/stores/workspace';
+
+  const displayElements = $derived($isPlaying ? $playbackElements : ($currentPage?.elements ?? []));
 
   let svgElement: SVGSVGElement | undefined = $state();
-  
+
   // Drawing State
   let drawingPoint1: Position | null = $state(null);
   let mousePos: Position | null = $state(null);
 
-  function getSVGCoords(e: MouseEvent | PointerEvent) {
+  // Marquee / pan state
+  let marquee: { x: number; y: number; w: number; h: number } | null = $state(null);
+  let marqueeStart: Position | null = null;
+  let isPanning = false;
+  let panStart: Position | null = null;
+  let panOrigin: Position = { x: 0, y: 0 };
+
+  // --- ViewBox (base depends on field template, then zoom & pan) ---
+  const baseVB = $derived.by(() => {
+    const tpl = $currentPage?.fieldTemplate;
+    if (tpl === 'Complet') return { x: -40, y: -40, w: 760, h: 1130 };
+    if (tpl === 'Demi') return { x: -40, y: -40, w: 760, h: 566.25 };
+    return { x: -40, y: 523.75, w: 760, h: 566.25 }; // DemiBas
+  });
+
+  const viewBox = $derived.by(() => {
+    const b = baseVB;
+    const z = $zoom || 1;
+    const vbW = b.w / z;
+    const vbH = b.h / z;
+    const vbX = b.x + (b.w - vbW) / 2 + $pan.x;
+    const vbY = b.y + (b.h - vbH) / 2 + $pan.y;
+    return `${vbX} ${vbY} ${vbW} ${vbH}`;
+  });
+
+  function getSVGCoords(e: MouseEvent | PointerEvent): Position {
     if (!svgElement) return { x: 0, y: 0 };
-    const pt = svgElement.createSVGPoint();
-    pt.x = e.clientX;
-    pt.y = e.clientY;
-    const svgPoint = pt.matrixTransform(svgElement.getScreenCTM()?.inverse());
-    return { x: svgPoint.x, y: svgPoint.y };
+    return svgPoint(svgElement, e.clientX, e.clientY);
   }
 
   function onDragOver(e: DragEvent) {
-    e.preventDefault(); 
+    e.preventDefault();
   }
-  
+
   function onDrop(e: DragEvent) {
     e.preventDefault();
     if (!svgElement) return;
-    
+
     const { x, y } = getSVGCoords(e);
-    
+
     const type = e.dataTransfer?.getData('type') as any;
     const team = e.dataTransfer?.getData('team') as any;
     const label = e.dataTransfer?.getData('label') || '';
-    
+
     if (type && type !== 'field') {
       let radius = 14;
-      let color = '#fff';
+      let color: string | undefined = '#fff';
 
       if (type === 'ball') {
         radius = $currentPage.ballSize;
@@ -47,6 +76,8 @@
       } else if (team === 'team2') {
         radius = $currentPage.team2Size;
         color = $currentPage.team2Color;
+      } else if (EQUIPMENT_TYPES.includes(type)) {
+        color = undefined; // let the Equipment component pick its default colour
       }
 
       const elementData: any = {
@@ -68,21 +99,33 @@
 
       addElement(elementData);
 
-      // Increment numbering if it was a numbered field player
       if (type === 'player' && label !== 'G') {
         incrementTeamNumber(team);
       }
     }
   }
 
+  function isBackground(target: EventTarget | null): boolean {
+    const el = target as Element;
+    return el === svgElement || el?.classList?.contains('pitch-surface') || el?.classList?.contains('bg-rect');
+  }
+
+  // Shape (rect/ellipse/zone) drag-create state
+  let shapeStart: Position | null = null;
+  let shapePreview: { x: number; y: number; w: number; h: number } | null = $state(null);
+
+  const isPerspective = $derived($currentPage?.view === 'perspective');
+
   function onPointerDown(e: PointerEvent) {
+    if (isPerspective) return; // presentation mode is read-only
+
+    // Arrow drawing tool (two-click)
     if ($activeTool === 'arrow') {
       const coords = getSVGCoords(e);
       if (!drawingPoint1) {
         drawingPoint1 = coords;
         mousePos = coords;
       } else {
-        // Finalize arrow
         addElement({
           type: 'arrow',
           team: 'none',
@@ -100,9 +143,128 @@
       return;
     }
 
-    if (e.target === svgElement || (e.target as Element).classList.contains('pitch-surface')) {
-      selectedIds.set([]);
+    // Click-to-place tools: text & callout
+    if ($activeTool === 'text' || $activeTool === 'callout') {
+      const { x, y } = getSVGCoords(e);
+      const tool = $activeTool;
+      addElement(tool === 'text'
+        ? { type: 'text', team: 'none', position: { x, y }, text: 'Texte', fontSize: 24, color: '#ffffff', fontWeight: 'bold' }
+        : { type: 'callout', team: 'none', position: { x, y }, text: 'Annotation', width: 180, fillColor: '#fdf7d0', color: '#1a1a1a', fontSize: 13 });
+      activeTool.set(null);
+      return;
     }
+
+    // Drag-create tools: rect / ellipse / zone
+    if ($activeTool === 'rect' || $activeTool === 'ellipse' || $activeTool === 'zone') {
+      shapeStart = getSVGCoords(e);
+      shapePreview = { x: shapeStart.x, y: shapeStart.y, w: 0, h: 0 };
+      window.addEventListener('pointermove', onShapeMove);
+      window.addEventListener('pointerup', onShapeUp);
+      return;
+    }
+
+    if (!isBackground(e.target)) return;
+
+    // Middle mouse or Space-pan → pan; otherwise marquee select
+    if (e.button === 1 || spaceHeld) {
+      isPanning = true;
+      panStart = { x: e.clientX, y: e.clientY };
+      panOrigin = { ...$pan };
+      svgElement?.setPointerCapture(e.pointerId);
+      window.addEventListener('pointermove', onPanMove);
+      window.addEventListener('pointerup', onPanUp);
+    } else {
+      const start = getSVGCoords(e);
+      marqueeStart = start;
+      marquee = { x: start.x, y: start.y, w: 0, h: 0 };
+      window.addEventListener('pointermove', onMarqueeMove);
+      window.addEventListener('pointerup', onMarqueeUp);
+    }
+  }
+
+  function onPanMove(e: PointerEvent) {
+    if (!isPanning || !panStart || !svgElement) return;
+    const rect = svgElement.getBoundingClientRect();
+    const b = baseVB;
+    const z = $zoom || 1;
+    const vbW = b.w / z;
+    const vbH = b.h / z;
+    const dxScreen = e.clientX - panStart.x;
+    const dyScreen = e.clientY - panStart.y;
+    // Convert screen delta to SVG units (pan moves opposite to drag)
+    pan.set({
+      x: panOrigin.x - (dxScreen / rect.width) * vbW,
+      y: panOrigin.y - (dyScreen / rect.height) * vbH
+    });
+  }
+  function onPanUp() {
+    isPanning = false;
+    window.removeEventListener('pointermove', onPanMove);
+    window.removeEventListener('pointerup', onPanUp);
+  }
+
+  function onMarqueeMove(e: PointerEvent) {
+    if (!marqueeStart) return;
+    const cur = getSVGCoords(e);
+    marquee = {
+      x: Math.min(marqueeStart.x, cur.x),
+      y: Math.min(marqueeStart.y, cur.y),
+      w: Math.abs(cur.x - marqueeStart.x),
+      h: Math.abs(cur.y - marqueeStart.y)
+    };
+  }
+  function onMarqueeUp(e: PointerEvent) {
+    window.removeEventListener('pointermove', onMarqueeMove);
+    window.removeEventListener('pointerup', onMarqueeUp);
+    if (marquee && (marquee.w > 4 || marquee.h > 4)) {
+      const inside = $currentPage.elements.filter((el: ComponentElement) => {
+        const p = el.position;
+        return p.x >= marquee!.x && p.x <= marquee!.x + marquee!.w &&
+               p.y >= marquee!.y && p.y <= marquee!.y + marquee!.h;
+      }).map((el: ComponentElement) => el.id);
+      selectedIds.set(inside);
+    } else {
+      clearSelection();
+    }
+    marquee = null;
+    marqueeStart = null;
+  }
+
+  function onShapeMove(e: PointerEvent) {
+    if (!shapeStart) return;
+    const cur = getSVGCoords(e);
+    shapePreview = {
+      x: Math.min(shapeStart.x, cur.x),
+      y: Math.min(shapeStart.y, cur.y),
+      w: Math.abs(cur.x - shapeStart.x),
+      h: Math.abs(cur.y - shapeStart.y)
+    };
+  }
+  function onShapeUp(e: PointerEvent) {
+    window.removeEventListener('pointermove', onShapeMove);
+    window.removeEventListener('pointerup', onShapeUp);
+    const cur = getSVGCoords(e);
+    const w = Math.max(24, Math.abs(cur.x - (shapeStart?.x ?? cur.x)));
+    const h = Math.max(24, Math.abs(cur.y - (shapeStart?.y ?? cur.y)));
+    const cx = ((shapeStart?.x ?? cur.x) + cur.x) / 2;
+    const cy = ((shapeStart?.y ?? cur.y) + cur.y) / 2;
+    const tool = $activeTool;
+    if (tool === 'rect' || tool === 'ellipse' || tool === 'zone') {
+      addElement({
+        type: tool,
+        team: 'none',
+        position: { x: cx, y: cy },
+        width: w,
+        height: h,
+        color: tool === 'zone' ? '#9bd64a' : '#ffffff',
+        strokeWidth: 2,
+        fillColor: tool === 'zone' ? '#9bd64a' : 'none',
+        fillOpacity: tool === 'zone' ? 0.25 : 0
+      });
+    }
+    shapeStart = null;
+    shapePreview = null;
+    activeTool.set(null);
   }
 
   function onPointerMove(e: PointerEvent) {
@@ -111,106 +273,156 @@
     }
   }
 
+  function onWheel(e: WheelEvent) {
+    if (!svgElement) return;
+    e.preventDefault();
+    const rect = svgElement.getBoundingClientRect();
+    const fx = (e.clientX - rect.left) / rect.width;
+    const fy = (e.clientY - rect.top) / rect.height;
+    const before = getSVGCoords(e);
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const z = Math.max(0.3, Math.min(6, ($zoom || 1) * factor));
+    const b = baseVB;
+    const vbW = b.w / z;
+    const vbH = b.h / z;
+    // Keep the point under the cursor fixed
+    const vbX = before.x - fx * vbW;
+    const vbY = before.y - fy * vbH;
+    pan.set({
+      x: vbX - b.x - (b.w - vbW) / 2,
+      y: vbY - b.y - (b.h - vbH) / 2
+    });
+    zoom.set(z);
+  }
+
+  // Space-to-pan tracking
+  let spaceHeld = $state(false);
+  function onKeyDown(e: KeyboardEvent) {
+    const t = e.target as HTMLElement;
+    if (e.code === 'Space' && !(t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+      spaceHeld = true;
+    }
+  }
+  function onKeyUp(e: KeyboardEvent) {
+    if (e.code === 'Space') spaceHeld = false;
+  }
 </script>
 
-<div 
-  class="canvas-container" 
+<svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} />
+
+<div
+  class="canvas-container"
   class:drawing-mode={$activeTool !== null}
-  ondragover={onDragOver} 
-  ondrop={onDrop} 
-  aria-label="Drawing area" 
+  class:pan-mode={spaceHeld}
+  style:background-color={$currentPage?.backgroundColor || '#2b6b39'}
+  ondragover={onDragOver}
+  ondrop={onDrop}
+  aria-label="Drawing area"
   role="region"
 >
-  <svg 
+  <svg
     bind:this={svgElement}
-    class="drawing-surface-vertical" 
+    class="drawing-surface-vertical"
+    class:perspective={isPerspective}
     style:aspect-ratio={$currentPage?.fieldTemplate === 'Complet' ? '760 / 1130' : '760 / 566.25'}
-    viewBox={
-      $currentPage?.fieldTemplate === 'Complet' ? "-40 -40 760 1130" : 
-      $currentPage?.fieldTemplate === 'Demi' ? "-40 -40 760 566.25" : 
-      "-40 523.75 760 566.25"
-    } 
+    {viewBox}
     xmlns="http://www.w3.org/2000/svg"
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
+    onwheel={onWheel}
     role="presentation"
     aria-label="Tactical drawing board"
   >
     <defs>
-      <clipPath id="zoom-clip">
-        {#if $currentPage?.fieldTemplate === 'Complet'}
-          <rect x="-40" y="-40" width="760" height="1130" />
-        {:else if $currentPage?.fieldTemplate === 'Demi'}
-          <rect x="-40" y="-40" width="760" height="566.25" />
-        {:else}
-          <rect x="-40" y="523.75" width="760" height="566.25" />
-        {/if}
-      </clipPath>
-
-      <marker 
-        id="preview-arrowhead" 
-        markerWidth="10" 
-        markerHeight="7" 
-        refX="9" 
-        refY="3.5" 
+      <marker
+        id="preview-arrowhead"
+        markerWidth="10"
+        markerHeight="7"
+        refX="9"
+        refY="3.5"
         orient="auto"
       >
         <polygon points="0 0, 10 3.5, 0 7" fill="white" opacity="0.6" />
       </marker>
     </defs>
 
-    <g clip-path="url(#zoom-clip)">
+    <g>
       {#if $currentPage}
-        <Pitch 
-          template={$currentPage.fieldTemplate} 
-          orientation="vertical" 
-          showStripes={$currentPage.showFieldStripes} 
+        <Pitch
+          template={$currentPage.fieldTemplate}
+          orientation="vertical"
+          showStripes={$currentPage.showFieldStripes}
+          grassColor={$currentPage.backgroundColor}
+          hideGoals={$currentPage.hideGoals}
+          hideLines={$currentPage.hidePitchLines}
         />
-        
-        <g class="elements">
-          <!-- 1. Unselected Arrows (Bottom layer) -->
-          {#each $currentPage.elements.filter(el => el.type === 'arrow' && !$selectedIds.includes(el.id)) as element (element.id)}
-            <Arrow {element} isSelected={false} />
-          {/each}
 
-          <!-- 2. Unselected Balls (Middle layer) -->
-          {#each $currentPage.elements.filter(el => el.type === 'ball' && !$selectedIds.includes(el.id)) as element (element.id)}
-            <Ball {element} isSelected={false} />
-          {/each}
-
-          <!-- 3. Unselected Players and other elements (Top normal layer) -->
-          {#each $currentPage.elements.filter(el => (el.type === 'player' || el.type === 'cone') && !$selectedIds.includes(el.id)) as element (element.id)}
+        <g class="elements" class:playing={$isPlaying || isPerspective}>
+          {#each displayElements as element (element.id)}
+            {@const sel = !$isPlaying && $selectedIds.includes(element.id)}
             {#if element.type === 'player'}
-              <Player {element} isSelected={false} />
-            {:else if element.type === 'cone'}
-              <!-- Cone logic -->
-            {/if}
-          {/each}
-
-          <!-- 4. Selected Elements (Foreground layer, everything else below) -->
-          {#each $currentPage.elements.filter(el => $selectedIds.includes(el.id)) as element (element.id)}
-            {#if element.type === 'player'}
-              <Player {element} isSelected={true} />
+              <Player {element} isSelected={sel} />
             {:else if element.type === 'ball'}
-              <Ball {element} isSelected={true} />
+              <Ball {element} isSelected={sel} />
             {:else if element.type === 'arrow'}
-              <Arrow {element} isSelected={true} />
+              <Arrow {element} isSelected={sel} />
+            {:else if element.type === 'text'}
+              <TextLabel {element} isSelected={sel} />
+            {:else if element.type === 'callout'}
+              <Callout {element} isSelected={sel} />
+            {:else if element.type === 'rect' || element.type === 'ellipse' || element.type === 'zone'}
+              <ShapeElement {element} isSelected={sel} />
+            {:else if EQUIPMENT_TYPES.includes(element.type)}
+              <Equipment {element} isSelected={sel} />
             {/if}
           {/each}
         </g>
 
         <!-- Drawing Preview -->
         {#if drawingPoint1 && mousePos}
-          <line 
-            x1={drawingPoint1.x} 
-            y1={drawingPoint1.y} 
-            x2={mousePos.x} 
-            y2={mousePos.y} 
-            stroke="white" 
-            stroke-width="3" 
+          <line
+            x1={drawingPoint1.x}
+            y1={drawingPoint1.y}
+            x2={mousePos.x}
+            y2={mousePos.y}
+            stroke="white"
+            stroke-width="3"
             stroke-dasharray="5,5"
             opacity="0.6"
             marker-end="url(#preview-arrowhead)"
+          />
+        {/if}
+
+        <!-- Shape creation preview -->
+        {#if shapePreview && ($activeTool === 'rect' || $activeTool === 'ellipse' || $activeTool === 'zone')}
+          {#if $activeTool === 'ellipse'}
+            <ellipse
+              cx={shapePreview.x + shapePreview.w / 2}
+              cy={shapePreview.y + shapePreview.h / 2}
+              rx={shapePreview.w / 2} ry={shapePreview.h / 2}
+              fill="rgba(255,255,255,0.08)" stroke="#fff" stroke-width="2" stroke-dasharray="5,5" pointer-events="none"
+            />
+          {:else}
+            <rect
+              x={shapePreview.x} y={shapePreview.y} width={shapePreview.w} height={shapePreview.h}
+              fill={$activeTool === 'zone' ? 'rgba(155,214,74,0.25)' : 'rgba(255,255,255,0.08)'}
+              stroke={$activeTool === 'zone' ? '#9bd64a' : '#fff'} stroke-width="2" stroke-dasharray="5,5" pointer-events="none"
+            />
+          {/if}
+        {/if}
+
+        <!-- Marquee selection rectangle -->
+        {#if marquee}
+          <rect
+            x={marquee.x}
+            y={marquee.y}
+            width={marquee.w}
+            height={marquee.h}
+            fill="rgba(94,106,210,0.15)"
+            stroke="var(--accent-primary)"
+            stroke-width="1.5"
+            stroke-dasharray="4,3"
+            pointer-events="none"
           />
         {/if}
       {/if}
@@ -221,7 +433,6 @@
 <style>
   .canvas-container {
     flex: 1;
-    background-color: #2b6b39; /* Same green as the terrain */
     overflow: hidden;
     display: flex;
     justify-content: center;
@@ -232,7 +443,19 @@
   .canvas-container.drawing-mode {
     cursor: crosshair;
   }
-  
+
+  .canvas-container.pan-mode {
+    cursor: grab;
+  }
+
+  .elements.playing { pointer-events: none; }
+
+  .drawing-surface-vertical.perspective {
+    transform: perspective(1500px) rotateX(34deg) scale(0.86);
+    transform-origin: center 58%;
+    transition: transform 0.35s ease;
+  }
+
   .drawing-surface-vertical {
     height: 100%;
     width: auto;
@@ -240,12 +463,12 @@
     max-height: 100%;
     background-color: transparent;
     filter: drop-shadow(0 4px 12px rgba(0,0,0,0.1));
+    touch-action: none;
   }
 
   @media print {
     .canvas-container {
       padding: 0;
-      background: #2b6b39;
       overflow: visible;
     }
   }

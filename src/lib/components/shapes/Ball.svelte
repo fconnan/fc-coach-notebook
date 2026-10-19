@@ -1,51 +1,12 @@
 <script lang="ts">
   import type { ComponentElement } from '$lib/stores/workspace';
-  import { updateElement, selectedIds, currentPage } from '$lib/stores/workspace';
+  import { currentPage } from '$lib/stores/workspace';
+  import { beginElementDrag } from '$lib/utils/interactions';
 
   let { element, isSelected } = $props<{ element: ComponentElement, isSelected: boolean }>();
-  
-  let isDragging = false;
-  let startX = 0;
-  let startY = 0;
-  let originalX = 0;
-  let originalY = 0;
 
   function onPointerDown(e: PointerEvent) {
-    e.stopPropagation();
-    selectedIds.set([element.id]);
-    
-    isDragging = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    originalX = element.position.x;
-    originalY = element.position.y;
-    
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-    
-    const target = e.target as SVGElement;
-    target.setPointerCapture(e.pointerId);
-  }
-  
-  function onPointerMove(e: PointerEvent) {
-    if (!isDragging) return;
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
-    
-    updateElement(element.id, {
-      position: {
-        x: originalX + dx,
-        y: originalY + dy
-      }
-    });
-  }
-  
-  function onPointerUp(e: PointerEvent) {
-    isDragging = false;
-    window.removeEventListener('pointermove', onPointerMove);
-    window.removeEventListener('pointerup', onPointerUp);
-    const target = e.target as SVGElement;
-    target.releasePointerCapture(e.pointerId);
+    beginElementDrag(e, element);
   }
  
   const radius = $derived(element.radius || $currentPage.ballSize);

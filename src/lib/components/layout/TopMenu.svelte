@@ -8,7 +8,7 @@
     openDirectory 
   } from '$lib/services/tacticFileService';
   import { onMount } from 'svelte';
-  import { currentPage, isDirty, showTacticBrowser } from '$lib/stores/workspace';
+  import { currentPage, isDirty, showTacticBrowser, showExportDialog } from '$lib/stores/workspace';
   import TacticBrowser from './TacticBrowser.svelte';
 
   let openMenu = $state<string | null>(null);
@@ -52,6 +52,7 @@
         { label: 'Enregistrer', action: () => handleSave(false) },
         { label: 'Enregistrer sous...', action: () => handleSave(true) },
         { divider: true },
+        { label: 'Exporter (PDF / Image)...', action: () => { closeMenu(); showExportDialog.set(true); } },
         { label: 'Imprimer...', action: () => { closeMenu(); window.print(); } }
       ]
     },
