@@ -67,22 +67,54 @@
   // Stripe configuration
   const stripeCount = 18;
   const stripeWidth = pw / stripeCount;
+
+  // Half-field clips (horizontal pitch coords; display y = hx after rotation).
+  // halfClip: grass run-off included on the cut side.
+  // playingClip: lines & stripes strictly inside the playing half (not in the cut margin).
+  const halfClip = $derived.by(() => {
+    if (template === 'Demi') {
+      return { x: -band, y: -band, w: hw + band * 2, h: ph + band * 2 };
+    }
+    if (template === 'DemiBas') {
+      return { x: hw - band, y: -band, w: pw - hw + band * 2, h: ph + band * 2 };
+    }
+    return null;
+  });
+  const playingClipId = $derived(halfClip ? 'url(#playing-clip)' : undefined);
 </script>
 
 <!-- We always render the full pitch lines to ensure 1:1 coordinate parity for zoom -->
-<g class="pitch-container" 
+<g
+  class="pitch-container"
   pointer-events="none"
+  clip-path={halfClip ? 'url(#pitch-half-clip)' : undefined}
   transform="
-    {orientation === 'vertical' 
-      ? `translate(${dx}, ${dy}) rotate(90, ${hw}, ${hh})` 
+    {orientation === 'vertical'
+      ? `translate(${dx}, ${dy}) rotate(90, ${hw}, ${hh})`
       : ''}
   "
 >
+  {#if halfClip}
+    <defs>
+      <clipPath id="pitch-half-clip">
+        <rect x={halfClip.x} y={halfClip.y} width={halfClip.w} height={halfClip.h} />
+      </clipPath>
+      {#if template === 'Demi'}
+        <clipPath id="playing-clip">
+          <rect x={-9999} y={-9999} width={hw + 9999} height={19999} />
+        </clipPath>
+      {:else}
+        <clipPath id="playing-clip">
+          <rect x={hw} y={-9999} width={19999} height={19999} />
+        </clipPath>
+      {/if}
+    </defs>
+  {/if}
   <!-- Grass: field + a run-off band (behind the goals). Everything outside stays light. -->
   <rect class="bg-rect" x={-band} y={-band} width={pw + band * 2} height={ph + band * 2} rx="10" fill={grassColor} fill-opacity="1" />
 
   {#if showStripes}
-    <g class="stripes" pointer-events="none">
+    <g class="stripes" pointer-events="none" clip-path={playingClipId}>
       {#each Array(stripeCount) as _, i}
         {#if i % 2 === 1}
           <rect x={i * stripeWidth} y="0" width={stripeWidth} height={ph} fill={lighten(grassColor)} />
@@ -92,14 +124,25 @@
   {/if}
 
   {#if !hideLines}
-  <!-- Main border -->
-  <rect width={pw} height={ph} fill="none" class="line" />
+  <!-- Pitch outline: closed path on half-field views so cut-edge corners are crisp -->
+  {#if template === 'Demi'}
+    <path class="line" fill="none" d="M 0,0 L {hw},0 L {hw},{ph} L 0,{ph} Z" />
+  {:else if template === 'DemiBas'}
+    <path class="line" fill="none" d="M {hw},0 L {pw},0 L {pw},{ph} L {hw},{ph} Z" />
+  {:else}
+    <rect width={pw} height={ph} fill="none" class="line" />
+    <line x1={hw} y1="0" x2={hw} y2={ph} class="line" />
+  {/if}
 
-  <!-- Halfway line -->
-  <line x1={hw} y1="0" x2={hw} y2={ph} class="line" />
-  
+  <g class="field-lines" clip-path={playingClipId}>
   <!-- Center circle and spot -->
-  <circle cx={hw} cy={hh} r={centerCircleR} fill="none" class="line" />
+  <circle
+    cx={hw}
+    cy={hh}
+    r={centerCircleR}
+    fill="none"
+    class="line"
+  />
   <circle cx={hw} cy={hh} r="3" fill="#ffffff" />
 
   <!-- Corner Arcs -->
@@ -129,6 +172,7 @@
     </clipPath>
     <circle cx={penSpotRightX} cy={hh} r={centerCircleR} fill="none" class="line" clip-path="url(#right-pen-clip)" />
   </g>
+  </g>
   {/if}
 
   {#if !hideGoals}
@@ -144,5 +188,7 @@
     stroke: #ffffff;
     stroke-width: 2.5;
     stroke-opacity: 0.9;
+    stroke-linejoin: miter;
+    stroke-linecap: butt;
   }
 </style>

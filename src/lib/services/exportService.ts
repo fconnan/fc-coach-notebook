@@ -28,10 +28,10 @@ function inlineStyles(src: Element, clone: Element) {
   }
 }
 
+import { exportViewBox } from '$lib/utils/fieldBounds';
+
 function baseViewBox(page: Page) {
-  if (page.fieldTemplate === 'Complet') return { x: -40, y: -40, w: 760, h: 1130 };
-  if (page.fieldTemplate === 'Demi') return { x: -40, y: -40, w: 760, h: 566.25 };
-  return { x: -40, y: 523.75, w: 760, h: 566.25 };
+  return exportViewBox(page.fieldTemplate);
 }
 
 const RES_WIDTH: Record<string, number> = { high: 2000, medium: 1400, low: 760 };

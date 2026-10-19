@@ -1,14 +1,12 @@
 import type { ComponentElement, ElementType, Page, Position, TeamType } from '$lib/stores/workspace';
+import { pitchCenter as centerForTemplate } from '$lib/utils/fieldBounds';
 
 const EQUIPMENT_TYPES: ElementType[] = [
   'cone', 'coneTall', 'pole', 'hurdle', 'ladder', 'ring', 'mannequin', 'miniGoal', 'fullGoal'
 ];
 
-/** Centre du terrain affiché (coordonnées SVG), selon le gabarit de page. */
 export function pitchCenter(fieldTemplate: Page['fieldTemplate']): Position {
-  if (fieldTemplate === 'Demi') return { x: 340, y: 262.5 };
-  if (fieldTemplate === 'DemiBas') return { x: 340, y: 787.5 };
-  return { x: 340, y: 525 };
+  return centerForTemplate(fieldTemplate);
 }
 
 const OCCUPY_RADIUS = 22;

@@ -10,6 +10,7 @@
   import Callout from '../shapes/Callout.svelte';
   import Equipment from '../shapes/Equipment.svelte';
   import { EQUIPMENT_TYPES, isPlaying, playbackElements } from '$lib/stores/workspace';
+  import { contentBox, fieldClipRect, FIELD_MARGIN } from '$lib/utils/fieldBounds';
 
   const displayElements = $derived($isPlaying ? $playbackElements : ($currentPage?.elements ?? []));
 
@@ -40,18 +41,14 @@
   let panOrigin: Position = { x: 0, y: 0 };
 
   // Content box of the pitch (in SVG user units) per template: centre + size.
-  const contentBox = $derived.by(() => {
-    const tpl = $currentPage?.fieldTemplate;
-    if (tpl === 'Demi') return { cx: 340, cy: 262.5, W: 680, H: 525 };
-    if (tpl === 'DemiBas') return { cx: 340, cy: 787.5, W: 680, H: 525 };
-    return { cx: 340, cy: 525, W: 680, H: 1050 };
-  });
+  const contentBoxDerived = $derived(contentBox($currentPage?.fieldTemplate ?? 'Complet'));
+  const fieldClip = $derived(fieldClipRect($currentPage?.fieldTemplate ?? 'Complet'));
 
   // --- ViewBox: aspect ratio follows the container so the board fills the
   // whole central area; the pitch is fitted (with a margin) and centred. ---
   const baseVB = $derived.by(() => {
-    const P = contentBox;
-    const margin = 55;
+    const P = contentBoxDerived;
+    const margin = FIELD_MARGIN;
     const W = P.W + margin * 2;
     const H = P.H + margin * 2;
     const A = contW > 0 && contH > 0 ? contW / contH : W / H;
@@ -228,50 +225,57 @@
   >
     <g>
       {#if $currentPage}
-        <Pitch
-          template={$currentPage.fieldTemplate}
-          orientation="vertical"
-          showStripes={$currentPage.showFieldStripes}
-          grassColor={$currentPage.backgroundColor}
-          hideGoals={$currentPage.hideGoals}
-          hideLines={$currentPage.hidePitchLines}
-        />
-
-        <g class="elements" class:playing={$isPlaying || isPerspective}>
-          {#each displayElements as element (element.id)}
-            {@const sel = !$isPlaying && $selectedIds.includes(element.id)}
-            {#if element.type === 'player'}
-              <Player {element} isSelected={sel} />
-            {:else if element.type === 'ball'}
-              <Ball {element} isSelected={sel} />
-            {:else if element.type === 'arrow'}
-              <Arrow {element} isSelected={sel} />
-            {:else if element.type === 'text'}
-              <TextLabel {element} isSelected={sel} />
-            {:else if element.type === 'callout'}
-              <Callout {element} isSelected={sel} />
-            {:else if element.type === 'rect' || element.type === 'ellipse' || element.type === 'zone'}
-              <ShapeElement {element} isSelected={sel} />
-            {:else if EQUIPMENT_TYPES.includes(element.type)}
-              <Equipment {element} isSelected={sel} />
-            {/if}
-          {/each}
-        </g>
-
-        <!-- Marquee selection rectangle -->
-        {#if marquee}
-          <rect
-            x={marquee.x}
-            y={marquee.y}
-            width={marquee.w}
-            height={marquee.h}
-            fill="rgba(94,106,210,0.15)"
-            stroke="var(--accent-primary)"
-            stroke-width="1.5"
-            stroke-dasharray="4,3"
-            pointer-events="none"
+        <defs>
+          <clipPath id="canvas-field-clip">
+            <rect x={fieldClip.x} y={fieldClip.y} width={fieldClip.w} height={fieldClip.h} />
+          </clipPath>
+        </defs>
+        <g clip-path="url(#canvas-field-clip)">
+          <Pitch
+            template={$currentPage.fieldTemplate}
+            orientation="vertical"
+            showStripes={$currentPage.showFieldStripes}
+            grassColor={$currentPage.backgroundColor}
+            hideGoals={$currentPage.hideGoals}
+            hideLines={$currentPage.hidePitchLines}
           />
-        {/if}
+
+          <g class="elements" class:playing={$isPlaying || isPerspective}>
+            {#each displayElements as element (element.id)}
+              {@const sel = !$isPlaying && $selectedIds.includes(element.id)}
+              {#if element.type === 'player'}
+                <Player {element} isSelected={sel} />
+              {:else if element.type === 'ball'}
+                <Ball {element} isSelected={sel} />
+              {:else if element.type === 'arrow'}
+                <Arrow {element} isSelected={sel} />
+              {:else if element.type === 'text'}
+                <TextLabel {element} isSelected={sel} />
+              {:else if element.type === 'callout'}
+                <Callout {element} isSelected={sel} />
+              {:else if element.type === 'rect' || element.type === 'ellipse' || element.type === 'zone'}
+                <ShapeElement {element} isSelected={sel} />
+              {:else if EQUIPMENT_TYPES.includes(element.type)}
+                <Equipment {element} isSelected={sel} />
+              {/if}
+            {/each}
+          </g>
+
+          <!-- Marquee selection rectangle -->
+          {#if marquee}
+            <rect
+              x={marquee.x}
+              y={marquee.y}
+              width={marquee.w}
+              height={marquee.h}
+              fill="rgba(94,106,210,0.15)"
+              stroke="var(--accent-primary)"
+              stroke-width="1.5"
+              stroke-dasharray="4,3"
+              pointer-events="none"
+            />
+          {/if}
+        </g>
       {/if}
     </g>
   </svg>
