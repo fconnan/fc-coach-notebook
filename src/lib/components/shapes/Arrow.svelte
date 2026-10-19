@@ -1,16 +1,14 @@
 <script lang="ts">
   import type { ComponentElement, Position, HeadStyle } from '$lib/stores/workspace';
-  import { updateElement, selectedIds, currentPage, selectElement, pushHistory } from '$lib/stores/workspace';
-  
+  import { updateElement, currentPage, selectElement, pushHistory } from '$lib/stores/workspace';
+  import { svgPoint, beginElementDrag } from '$lib/utils/interactions';
+
   let { element, isSelected } = $props<{ element: ComponentElement, isSelected: boolean }>();
-  
-  // DRAG LOGIC FOR POINTS
+
+  // DRAG LOGIC FOR POINTS (endpoint / vertex editing)
   let activePointIndex = $state<number | null>(null);
-  let startX = 0;
-  let startY = 0;
   let originalPoints: Position[] = [];
   let svgElement: SVGSVGElement | null = null;
-  let capturedTarget: SVGElement | null = null;
   let nearElementId = $state<string | null>(null); // Element currently being snapped to
 
   function onPointDown(e: PointerEvent, index: number) {
@@ -18,48 +16,28 @@
     selectElement(element.id, e.shiftKey);
     pushHistory(true);
     activePointIndex = index;
-    startX = e.clientX;
-    startY = e.clientY;
-    
-    const target = e.currentTarget as SVGElement;
-    svgElement = target.ownerSVGElement;
-    capturedTarget = target;
 
+    svgElement = (e.currentTarget as SVGElement).ownerSVGElement;
     originalPoints = JSON.parse(JSON.stringify(element.pathPoints || [{x: element.position.x, y: element.position.y}, element.endPosition || {x: element.position.x + 50, y: element.position.y}]));
-    
+
     window.addEventListener('pointermove', onPointMove);
     window.addEventListener('pointerup', onPointUp);
-    
-    target.setPointerCapture(e.pointerId);
   }
 
   function onPointMove(e: PointerEvent) {
-    if (activePointIndex === null) return;
-    
-    // We need to calculate the delta in SVG space. 
-    // Since we don't have easy access to the SVG root matrix here without passing it down,
-    // we can approximate or use a trick.
-    // For now, let's assume 1:1 screen/SVG or use the move logic from Player.svelte
-    // But Player.svelte uses screen deltas which works because it's translation.
-    // Here we're updating absolute coordinates.
-    
-    if (!svgElement) return;
+    if (activePointIndex === null || !svgElement) return;
 
-    const pt = svgElement.createSVGPoint();
-    pt.x = e.clientX;
-    pt.y = e.clientY;
-    const svgPoint = pt.matrixTransform(svgElement.getScreenCTM()?.inverse());
-
-    let targetX = svgPoint.x;
-    let targetY = svgPoint.y;
+    const p = svgPoint(svgElement, e.clientX, e.clientY);
+    let targetX = p.x;
+    let targetY = p.y;
     nearElementId = null;
 
     // Snapping logic for start and end points
     if (activePointIndex === 0 || activePointIndex === originalPoints.length - 1) {
       const otherElements = $currentPage.elements.filter(el => el.id !== element.id && el.type !== 'field');
       for (const el of otherElements) {
-        const dx = el.position.x - svgPoint.x;
-        const dy = el.position.y - svgPoint.y;
+        const dx = el.position.x - p.x;
+        const dy = el.position.y - p.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < 20) {
           targetX = el.position.x;
@@ -75,16 +53,13 @@
 
     // Update position if it's the first point (since position is the anchor in workspace)
     if (activePointIndex === 0) {
-      updateElement(element.id, { 
-        position: newPoints[0],
-        pathPoints: newPoints
-      });
+      updateElement(element.id, { position: newPoints[0], pathPoints: newPoints });
     } else {
       updateElement(element.id, { pathPoints: newPoints });
     }
   }
 
-  function onPointUp(e: PointerEvent) {
+  function onPointUp() {
     if (activePointIndex === 0) {
       updateElement(element.id, { linkedStartId: nearElementId || undefined });
     } else if (activePointIndex !== null && activePointIndex === pathPoints.length - 1) {
@@ -95,69 +70,13 @@
     nearElementId = null;
     window.removeEventListener('pointermove', onPointMove);
     window.removeEventListener('pointerup', onPointUp);
-    if (capturedTarget) {
-      capturedTarget.releasePointerCapture(e.pointerId);
-      capturedTarget = null;
-    }
   }
 
-  // ENTIRE ARROW DRAG
-  let isDraggingAll = false;
+  // ENTIRE ARROW DRAG — reuse the shared translate handler (same as players),
+  // which moves the whole path (incl. all pathPoints) in SVG space.
   function onArrowDown(e: PointerEvent) {
     if (activePointIndex !== null) return;
-    e.stopPropagation();
-    if (e.shiftKey) { selectElement(element.id, true); return; }
-    if (!$selectedIds.includes(element.id)) selectElement(element.id, false);
-    if (element.locked) return;
-    pushHistory(true);
-    isDraggingAll = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    
-    const target = e.currentTarget as SVGElement;
-    svgElement = target.ownerSVGElement;
-    capturedTarget = target;
-
-    originalPoints = JSON.parse(JSON.stringify(element.pathPoints || [{x: element.position.x, y: element.position.y}, element.endPosition || {x: element.position.x + 50, y: element.position.y}]));
-    
-    window.addEventListener('pointermove', onArrowMove);
-    window.addEventListener('pointerup', onArrowUp);
-    
-    target.setPointerCapture(e.pointerId);
-  }
-
-  function onArrowMove(e: PointerEvent) {
-    if (!isDraggingAll || !svgElement) return;
-
-    const ptStart = svgElement.createSVGPoint();
-    ptStart.x = startX;
-    ptStart.y = startY;
-    const svgStart = ptStart.matrixTransform(svgElement.getScreenCTM()?.inverse());
-
-    const ptCurrent = svgElement.createSVGPoint();
-    ptCurrent.x = e.clientX;
-    ptCurrent.y = e.clientY;
-    const svgCurrent = ptCurrent.matrixTransform(svgElement.getScreenCTM()?.inverse());
-
-    const dx = svgCurrent.x - svgStart.x;
-    const dy = svgCurrent.y - svgStart.y;
-
-    const newPoints = originalPoints.map(p => ({ x: p.x + dx, y: p.y + dy }));
-    
-    updateElement(element.id, { 
-      position: newPoints[0],
-      pathPoints: newPoints 
-    });
-  }
-
-  function onArrowUp(e: PointerEvent) {
-    isDraggingAll = false;
-    window.removeEventListener('pointermove', onArrowMove);
-    window.removeEventListener('pointerup', onArrowUp);
-    if (capturedTarget) {
-      capturedTarget.releasePointerCapture(e.pointerId);
-      capturedTarget = null;
-    }
+    beginElementDrag(e, element);
   }
 
   // PATH GENERATION

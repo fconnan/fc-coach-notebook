@@ -3,19 +3,29 @@
     zoom, pan, undo, redo, canUndo, canRedo,
     deleteSelected, selectedIds,
     bringToFront, sendToBack, toggleLockSelection,
-    duplicateSelection, showExportDialog, currentPage, updatePageSettings
+    duplicateSelection, showExportDialog, currentPage, updatePageSettings,
+    showNotes, theme
   } from '$lib/stores/workspace';
-  let { showProperties = $bindable() } = $props();
+  import { showLeft, showRight } from '$lib/stores/layout';
+
+  function toggleNotes() {
+    showNotes.update(v => !v);
+  }
+  function toggleTheme() {
+    theme.update(t => (t === 'dark' ? 'light' : 'dark'));
+  }
+  function toggleLeft() {
+    showLeft.update(v => !v);
+  }
+  function toggleRight() {
+    showRight.update(v => !v);
+  }
 
   const hasSelection = $derived($selectedIds.length > 0);
   const isPerspective = $derived($currentPage?.view === 'perspective');
 
   function toggleView() {
     updatePageSettings({ view: isPerspective ? '2d' : 'perspective' });
-  }
-
-  function toggleProperties() {
-    showProperties = !showProperties;
   }
 
   function zoomIn() {
@@ -40,6 +50,8 @@
 
 <div class="toolbar">
   <div class="toolbar-left">
+    <button class="tool-btn" class:active={$showLeft} title="Afficher/masquer les éléments" onclick={toggleLeft}>▤</button>
+    <div class="divider"></div>
     <button class="tool-btn" title="Zoom avant" onclick={zoomIn}>➕</button>
     <button class="tool-btn" title="Zoom arrière" onclick={zoomOut}>➖</button>
     <button class="tool-btn" title="Réinitialiser la vue (100%)" onclick={resetView}>
@@ -58,10 +70,15 @@
   </div>
 
   <div class="toolbar-right">
+    <button class="tool-btn notes-btn" class:active={$showNotes} title="Notes de séance" onclick={toggleNotes}>
+      <span>📝</span><span class="btn-text">Notes</span>
+    </button>
+    <div class="divider"></div>
     <button class="tool-btn" class:active={isPerspective} title="Vue perspective (présentation)" onclick={toggleView}>🎥</button>
     <button class="tool-btn" title="Exporter (PDF / Image)" onclick={() => showExportDialog.set(true)}>📤</button>
+    <button class="tool-btn" title={$theme === 'dark' ? 'Passer en clair' : 'Passer en sombre'} onclick={toggleTheme}>{$theme === 'dark' ? '☀️' : '🌙'}</button>
     <button class="tool-btn" title="Plein Écran" onclick={toggleFullscreen}>⛶</button>
-    <button class="tool-btn" class:active={showProperties} title="Propriétés" onclick={toggleProperties}>⚙️</button>
+    <button class="tool-btn" class:active={$showRight} title="Propriétés" onclick={toggleRight}>⚙️</button>
   </div>
 </div>
 
@@ -123,4 +140,7 @@
     color: var(--text-muted);
     min-width: 34px;
   }
+
+  .notes-btn { gap: 6px; padding: 0 10px; }
+  .btn-text { font-size: 12px; font-weight: 500; }
 </style>

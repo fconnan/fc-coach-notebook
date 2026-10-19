@@ -53,6 +53,10 @@
   // Corner arc
   const cornerR = 10; // 1m
 
+  // Grass run-off band around the field (sits behind the goals). The rest of the
+  // canvas stays on the light app background, keeping the green to a minimum.
+  const band = 28;
+
   // Vertical Centering:
   // We ALWAYS use the Full Pitch transformation now to enable "zoom" behavior.
   // Rotation of horizontal (1050x680) around its center (525, 340) stays at center.
@@ -74,9 +78,9 @@
       : ''}
   "
 >
-  <!-- Grass -->
-  <rect class="bg-rect" width={pw} height={ph} fill={grassColor} fill-opacity="1" />
-  
+  <!-- Grass: field + a run-off band (behind the goals). Everything outside stays light. -->
+  <rect class="bg-rect" x={-band} y={-band} width={pw + band * 2} height={ph + band * 2} rx="10" fill={grassColor} fill-opacity="1" />
+
   {#if showStripes}
     <g class="stripes" pointer-events="none">
       {#each Array(stripeCount) as _, i}

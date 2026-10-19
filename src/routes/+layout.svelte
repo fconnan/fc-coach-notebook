@@ -1,13 +1,26 @@
-<script>
+<script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
-  import { tryToReconnectDirectory } from '$lib/services/tacticFileService';
+  import { theme } from '$lib/stores/workspace';
+  import { refreshSession } from '$lib/storage/cloudClient';
+  import { restoreSession, startAutosave } from '$lib/storage/session';
 
   let { children } = $props();
 
-  onMount(async () => {
-    // Attempt to reconnect to the last directory for "Save" functionality
-    await tryToReconnectDirectory();
+  onMount(() => {
+    const saved = localStorage.getItem('fctactics_theme');
+    if (saved === 'dark' || saved === 'light') theme.set(saved);
+    refreshSession();
+    restoreSession();
+    startAutosave();
+  });
+
+  $effect(() => {
+    const t = $theme;
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-theme', t);
+      try { localStorage.setItem('fctactics_theme', t); } catch { /* ignore */ }
+    }
   });
 </script>
 

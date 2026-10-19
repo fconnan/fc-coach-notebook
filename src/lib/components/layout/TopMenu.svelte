@@ -1,83 +1,77 @@
 <script lang="ts">
-  import { 
-    saveTactic, 
-    loadTactic, 
-    hasActiveDirectory, 
-    getActiveDirName, 
-    reloadDataFromActiveDirectory,
-    openDirectory 
-  } from '$lib/services/tacticFileService';
   import { onMount } from 'svelte';
-  import { currentPage, isDirty, showTacticBrowser, showExportDialog } from '$lib/stores/workspace';
-  import TacticBrowser from './TacticBrowser.svelte';
+  import {
+    isDirty, showExportDialog, showSaveDialog, showConnections,
+    tacticName, newTactic, undo, redo
+  } from '$lib/stores/workspace';
+  import { quickSave, currentRef } from '$lib/storage';
+  import { cloudSession } from '$lib/storage/cloudClient';
+  import OpenDialog from './OpenDialog.svelte';
+
+  const anyCloud = $derived($cloudSession.configured.google || $cloudSession.configured.github || $cloudSession.configured.gitlab);
 
   let openMenu = $state<string | null>(null);
+  let showOpen = $state(false);
+  let editingName = $state(false);
 
   function toggleMenu(name: string, e: Event) {
     e.stopPropagation();
     openMenu = openMenu === name ? null : name;
   }
-
-  function closeMenu() {
-    openMenu = null;
-  }
-
-  async function handleSave(forceNew = false) {
-    closeMenu();
-    await saveTactic($currentPage, forceNew);
-  }
-
-  async function handleLoad() {
-    closeMenu();
-    const handle = await openDirectory();
-    if (handle) {
-      showTacticBrowser.set(true);
-    }
-  }
+  function closeMenu() { openMenu = null; }
 
   function createNew() {
     closeMenu();
-    if (confirm('Créer une nouvelle tactique ? Les éléments actuels seront effacés.')) {
-        window.location.reload();
-    }
+    if ($isDirty && !confirm('Créer une nouvelle tactique ? Les modifications non enregistrées seront perdues.')) return;
+    newTactic();
+    currentRef.set(null);
   }
+  function doOpen() { closeMenu(); showOpen = true; }
+  function doSave() { closeMenu(); quickSave(); }
+  function doSaveAs() { closeMenu(); showSaveDialog.set(true); }
+  function doExport() { closeMenu(); showExportDialog.set(true); }
+  function doConnections() { closeMenu(); showConnections.set(true); }
+  function doPrint() { closeMenu(); window.print(); }
 
-  const menuGroups = [
+  const menuGroups = $derived([
     {
       name: 'Fichier',
       items: [
         { label: 'Nouveau', action: createNew },
-        { label: 'Ouvrir répertoire...', action: handleLoad },
+        { label: 'Ouvrir…', action: doOpen },
         { divider: true },
-        { label: 'Enregistrer', action: () => handleSave(false) },
-        { label: 'Enregistrer sous...', action: () => handleSave(true) },
+        { label: 'Enregistrer', action: doSave },
+        { label: 'Enregistrer sous…', action: doSaveAs },
+        ...(anyCloud ? [{ divider: true }, { label: 'Connexions cloud…', action: doConnections }] : []),
         { divider: true },
-        { label: 'Exporter (PDF / Image)...', action: () => { closeMenu(); showExportDialog.set(true); } },
-        { label: 'Imprimer...', action: () => { closeMenu(); window.print(); } }
+        { label: 'Exporter (PDF / Image)…', action: doExport },
+        { label: 'Imprimer…', action: doPrint }
       ]
     },
-    { name: 'Modifier', items: [{ label: 'Annuler', action: closeMenu }, { label: 'Rétablir', action: closeMenu }] },
-    { name: 'Vue', items: [{ label: 'Zoom (Auto)', action: closeMenu }] },
-    { name: 'Aide', items: [{ label: 'Support', action: closeMenu }, { label: 'À propos', action: closeMenu }] }
-  ];
+    { name: 'Modifier', items: [
+      { label: 'Annuler', action: () => { closeMenu(); undo(); } },
+      { label: 'Rétablir', action: () => { closeMenu(); redo(); } }
+    ] },
+    { name: 'Aide', items: [
+      ...(anyCloud ? [{ label: 'Connexions cloud…', action: doConnections }] : []),
+      { label: 'À propos', action: closeMenu }
+    ] }
+  ]);
+
+  function commitName(e: Event) {
+    const v = (e.target as HTMLInputElement).value.trim();
+    if (v) tacticName.set(v);
+    editingName = false;
+  }
 
   onMount(() => {
     window.addEventListener('click', closeMenu);
-    
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       let dirty = false;
-      const unsubscribe = isDirty.subscribe(v => dirty = v);
-      unsubscribe();
-      
-      if (dirty) {
-        e.preventDefault();
-        e.returnValue = '';
-        return '';
-      }
+      const u = isDirty.subscribe(v => dirty = v); u();
+      if (dirty) { e.preventDefault(); e.returnValue = ''; return ''; }
     };
-
     window.addEventListener('beforeunload', handleBeforeUnload);
-
     return () => {
       window.removeEventListener('click', closeMenu);
       window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -86,27 +80,29 @@
 </script>
 
 <div class="top-menu">
-  <div class="logo">FC Tactics</div>
+  <div class="brand">
+    <svg class="brand-mark" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="1" y="1" width="30" height="30" rx="6" fill="var(--accent-primary)" />
+      <rect x="6" y="6" width="20" height="20" rx="2" fill="none" stroke="#fff" stroke-width="1.6" />
+      <line x1="6" y1="16" x2="26" y2="16" stroke="#fff" stroke-width="1.6" />
+      <circle cx="16" cy="16" r="3.4" fill="none" stroke="#fff" stroke-width="1.6" />
+    </svg>
+    <span class="brand-name">FC Tactics</span>
+  </div>
+
   <div class="menu-items-row">
     {#each menuGroups as group}
       <div class="menu-container">
-        <button 
-          class="menu-item" 
-          class:active={openMenu === group.name}
-          onclick={(e) => toggleMenu(group.name, e)}
-        >
+        <button class="menu-item" class:active={openMenu === group.name} onclick={(e) => toggleMenu(group.name, e)}>
           {group.name}
         </button>
-        
         {#if openMenu === group.name}
           <div class="dropdown">
             {#each group.items as item}
               {#if item.divider}
                 <div class="divider"></div>
               {:else}
-                <button class="dropdown-item" onclick={item.action}>
-                  {item.label}
-                </button>
+                <button class="dropdown-item" onclick={item.action}>{item.label}</button>
               {/if}
             {/each}
           </div>
@@ -116,190 +112,55 @@
   </div>
 
   <div class="spacer"></div>
-  
-  <div class="status-display">
-    <button class="breadcrumb-btn" onclick={() => showTacticBrowser.set(true)} title="Changer de tactique">
-      <span class="dir-name">[{getActiveDirName()}]</span>
-      <span class="sep">/</span>
-      <span class="file-info" class:is-dirty={$isDirty}>
-        {$currentPage.name || 'Sans titre'}
-        {#if $isDirty}<span class="asterisk">*</span>{/if}
-      </span>
-    </button>
+
+  <div class="filename">
+    {#if editingName}
+      <!-- svelte-ignore a11y_autofocus -->
+      <input class="name-edit" value={$tacticName} autofocus
+        onblur={commitName}
+        onkeydown={(e) => { if (e.key === 'Enter') commitName(e); if (e.key === 'Escape') editingName = false; }} />
+    {:else}
+      <button class="name-btn" onclick={() => editingName = true} title="Renommer">
+        {$tacticName || 'Sans titre'}{#if $isDirty}<span class="asterisk">*</span>{/if}
+      </button>
+    {/if}
   </div>
 
-  {#if hasActiveDirectory()}
-    <button class="resume-btn" onclick={reloadDataFromActiveDirectory} title="Recharger les fichiers depuis ce dossier">
-      <span class="icon">📂</span> Recharger
-    </button>
-  {/if}
+  <button class="save-btn" onclick={doSave} title="Enregistrer (Ctrl+S)">
+    <span class="icon">💾</span> Enregistrer
+  </button>
 </div>
 
-{#if $showTacticBrowser}
-  <TacticBrowser onclose={() => showTacticBrowser.set(false)} />
+{#if showOpen}
+  <OpenDialog onclose={() => showOpen = false} />
 {/if}
 
 <style>
-  .top-menu {
-    display: flex;
-    align-items: center;
-    background-color: var(--bg-panel);
-    padding: 2px 12px;
-    height: 32px;
-  }
-  
-  .logo {
-    font-weight: 700;
-    color: var(--accent-primary);
-    margin-right: 24px;
-    font-size: 14px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    white-space: nowrap;
-  }
-  
-  .menu-items-row {
-    display: flex;
-    gap: 4px;
-  }
+  .top-menu { display: flex; align-items: center; background-color: var(--bg-panel); padding: 2px 12px; height: 36px; }
 
-  .menu-container {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
+  .brand { display: flex; align-items: center; gap: 8px; margin-right: 22px; }
+  .brand-mark { display: block; border-radius: 6px; }
+  .brand-name { font-weight: 700; color: var(--text-main); font-size: 14px; letter-spacing: 0.3px; white-space: nowrap; }
 
-  .menu-item {
-    font-size: 13px;
-    padding: 4px 10px;
-    border-radius: 4px;
-    color: var(--text-main);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-  
-  .menu-item:hover, .menu-item.active {
-    background-color: var(--hover-bg);
-  }
+  .menu-items-row { display: flex; gap: 4px; }
+  .menu-container { position: relative; display: flex; align-items: center; }
+  .menu-item { font-size: 13px; padding: 4px 10px; border-radius: 4px; color: var(--text-main); background: transparent; border: none; cursor: pointer; transition: background 0.2s; }
+  .menu-item:hover, .menu-item.active { background-color: var(--hover-bg); }
 
-  .dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    min-width: 180px;
-    background-color: var(--bg-panel);
-    border: 1px solid var(--border-color);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-    border-radius: 6px;
-    padding: 6px 0;
-    margin-top: 4px;
-    z-index: 2000;
-  }
+  .dropdown { position: absolute; top: 100%; left: 0; min-width: 200px; background-color: var(--bg-panel); border: 1px solid var(--border-color); box-shadow: var(--shadow-md); border-radius: 6px; padding: 6px 0; margin-top: 4px; z-index: 2000; }
+  .dropdown-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: var(--text-main); padding: 6px 16px; font-size: 13px; cursor: pointer; transition: background 0.1s; }
+  .dropdown-item:hover { background-color: var(--accent-primary); color: white; }
+  .divider { height: 1px; background-color: var(--border-color); margin: 6px 0; }
 
-  .dropdown-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    background: transparent;
-    border: none;
-    color: var(--text-main);
-    padding: 6px 16px;
-    font-size: 13px;
-    cursor: pointer;
-    transition: background 0.1s;
-  }
+  .spacer { flex: 1; }
 
-  .dropdown-item:hover {
-    background-color: var(--accent-primary);
-    color: white;
-  }
+  .filename { margin-right: 14px; }
+  .name-btn { background: transparent; border: 1px solid transparent; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--text-main); }
+  .name-btn:hover { background: var(--hover-bg); border-color: var(--border-color); }
+  .asterisk { color: var(--accent-primary); margin-left: 3px; font-weight: 700; }
+  .name-edit { padding: 4px 10px; border: 1px solid var(--accent-primary); border-radius: 6px; background: var(--bg-canvas); color: var(--text-main); font-size: 13px; font-weight: 500; min-width: 180px; }
 
-  .divider {
-    height: 1px;
-    background-color: var(--border-color);
-    margin: 6px 0;
-  }
-
-  .spacer {
-    flex: 1;
-  }
-
-  .resume-btn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background-color: var(--accent-primary);
-    color: white;
-    border: none;
-    padding: 2px 12px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.2s;
-    height: 24px;
-  }
-
-  .resume-btn:hover {
-    background-color: var(--accent-hover);
-  }
-
-  .resume-btn .icon {
-    font-size: 14px;
-  }
-
-  .status-display {
-    display: flex;
-    align-items: center;
-    margin-right: 16px;
-    font-family: var(--font-main);
-  }
-
-  .file-info {
-    font-size: 12px;
-    color: var(--text-muted);
-    font-weight: 500;
-    letter-spacing: 0.3px;
-  }
-
-  .file-info.is-dirty {
-    color: var(--text-main);
-  }
-
-  .asterisk {
-    color: var(--accent-primary);
-    margin-left: 2px;
-    font-weight: 700;
-    font-size: 14px;
-  }
-
-  .breadcrumb-btn {
-    background: transparent;
-    border: none;
-    padding: 4px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    transition: background 0.2s;
-  }
-
-  .breadcrumb-btn:hover {
-    background: var(--hover-bg);
-  }
-
-  .dir-name {
-    color: var(--accent-primary);
-    font-family: monospace;
-    font-size: 11px;
-    opacity: 0.8;
-  }
-
-  .sep {
-    color: var(--text-muted);
-    font-size: 12px;
-  }
+  .save-btn { display: flex; align-items: center; gap: 6px; background-color: var(--accent-primary); color: white; border: none; padding: 5px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+  .save-btn:hover { background-color: var(--accent-hover); }
+  .save-btn .icon { font-size: 13px; }
 </style>

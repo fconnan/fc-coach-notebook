@@ -14,6 +14,23 @@
   const displayElements = $derived($isPlaying ? $playbackElements : ($currentPage?.elements ?? []));
 
   let svgElement: SVGSVGElement | undefined = $state();
+  let containerEl: HTMLDivElement | undefined = $state();
+
+  // Live size of the drawing area, so the viewBox can match its aspect ratio
+  // (no horizontal letterboxing → zoom uses the full central space).
+  let contW = $state(0);
+  let contH = $state(0);
+  $effect(() => {
+    if (!containerEl) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        contW = e.contentRect.width;
+        contH = e.contentRect.height;
+      }
+    });
+    ro.observe(containerEl);
+    return () => ro.disconnect();
+  });
 
   // Drawing State
   let drawingPoint1: Position | null = $state(null);
@@ -26,12 +43,26 @@
   let panStart: Position | null = null;
   let panOrigin: Position = { x: 0, y: 0 };
 
-  // --- ViewBox (base depends on field template, then zoom & pan) ---
-  const baseVB = $derived.by(() => {
+  // Content box of the pitch (in SVG user units) per template: centre + size.
+  const contentBox = $derived.by(() => {
     const tpl = $currentPage?.fieldTemplate;
-    if (tpl === 'Complet') return { x: -40, y: -40, w: 760, h: 1130 };
-    if (tpl === 'Demi') return { x: -40, y: -40, w: 760, h: 566.25 };
-    return { x: -40, y: 523.75, w: 760, h: 566.25 }; // DemiBas
+    if (tpl === 'Demi') return { cx: 340, cy: 262.5, W: 680, H: 525 };
+    if (tpl === 'DemiBas') return { cx: 340, cy: 787.5, W: 680, H: 525 };
+    return { cx: 340, cy: 525, W: 680, H: 1050 };
+  });
+
+  // --- ViewBox: aspect ratio follows the container so the board fills the
+  // whole central area; the pitch is fitted (with a margin) and centred. ---
+  const baseVB = $derived.by(() => {
+    const P = contentBox;
+    const margin = 55;
+    const W = P.W + margin * 2;
+    const H = P.H + margin * 2;
+    const A = contW > 0 && contH > 0 ? contW / contH : W / H;
+    let vbW: number, vbH: number;
+    if (A >= W / H) { vbH = H; vbW = H * A; } // container wider than pitch → fit height
+    else { vbW = W; vbH = W / A; }            // container taller → fit width
+    return { x: P.cx - vbW / 2, y: P.cy - vbH / 2, w: vbW, h: vbH };
   });
 
   const viewBox = $derived.by(() => {
@@ -311,10 +342,10 @@
 <svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} />
 
 <div
+  bind:this={containerEl}
   class="canvas-container"
   class:drawing-mode={$activeTool !== null}
   class:pan-mode={spaceHeld}
-  style:background-color={$currentPage?.backgroundColor || '#2b6b39'}
   ondragover={onDragOver}
   ondrop={onDrop}
   aria-label="Drawing area"
@@ -324,7 +355,6 @@
     bind:this={svgElement}
     class="drawing-surface-vertical"
     class:perspective={isPerspective}
-    style:aspect-ratio={$currentPage?.fieldTemplate === 'Complet' ? '760 / 1130' : '760 / 566.25'}
     {viewBox}
     xmlns="http://www.w3.org/2000/svg"
     onpointerdown={onPointerDown}
@@ -433,11 +463,11 @@
 <style>
   .canvas-container {
     flex: 1;
+    width: 100%;
+    height: 100%;
     overflow: hidden;
     display: flex;
-    justify-content: center;
-    align-items: center;
-    padding: 10px;
+    background-color: var(--bg-canvas);
   }
 
   .canvas-container.drawing-mode {
@@ -457,12 +487,10 @@
   }
 
   .drawing-surface-vertical {
+    width: 100%;
     height: 100%;
-    width: auto;
-    max-width: 100%;
-    max-height: 100%;
+    display: block;
     background-color: transparent;
-    filter: drop-shadow(0 4px 12px rgba(0,0,0,0.1));
     touch-action: none;
   }
 

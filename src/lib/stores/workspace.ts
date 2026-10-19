@@ -217,8 +217,22 @@ export const activeTool = writable<ElementType | null>(null);
 // Unsaved changes flag
 export const isDirty = writable<boolean>(false);
 
-// Flag to track if a tactic (file set) is currently loaded and active
-export const isTacticLoaded = writable<boolean>(false);
+// Flag to track if a tactic (file set) is currently loaded and active.
+// In the draw.io-style UX the app always starts with a ready-to-draw blank pitch.
+export const isTacticLoaded = writable<boolean>(true);
+
+// Display name of the current tactic file (without extension)
+export const tacticName = writable<string>('Sans titre');
+
+// UI theme ('light' | 'dark'), light by default
+export const theme = writable<'light' | 'dark'>('light');
+
+// Side notes (markdown session) panel toggle
+export const showNotes = writable<boolean>(false);
+
+// Save dialog & connections dialog visibility
+export const showSaveDialog = writable<boolean>(false);
+export const showConnections = writable<boolean>(false);
 
 // Track the active directory handle reactively
 export const activeDirectoryHandle = writable<FileSystemDirectoryHandle | null>(null);
@@ -768,12 +782,31 @@ export function importPage(data: Partial<Page>) {
 
   pages.set([newPage]);
   currentPageId.set(newId);
+  if (newPage.name) tacticName.set(newPage.name);
   refreshCounter.update(n => n + 1);
   selectedIds.set([]);
   resetHistory();
   zoom.set(1);
   pan.set({ x: 0, y: 0 });
   isTacticLoaded.set(true);
+}
+
+/**
+ * Resets the workspace to a fresh blank tactic (ready to draw).
+ */
+export function newTactic() {
+  const blank = structuredClone(DEFAULT_PAGE);
+  blank.id = `page-${Date.now()}`;
+  pages.set([blank]);
+  currentPageId.set(blank.id);
+  tacticName.set('Sans titre');
+  isTacticLoaded.set(true);
+  isDirty.set(false);
+  selectedIds.set([]);
+  resetHistory();
+  zoom.set(1);
+  pan.set({ x: 0, y: 0 });
+  refreshCounter.update(n => n + 1);
 }
 
 /**

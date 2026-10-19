@@ -1,27 +1,52 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-  /* Dark Premium Theme Core */
+  /* Light theme (default) */
+  --bg-app: #e7e9ef;       /* workspace behind panels */
+  --bg-panel: #ffffff;     /* sidebars / panels */
+  --bg-canvas: #eef0f4;    /* drawing area */
+  --bg-subtle: #f3f4f8;    /* raised controls: inputs, tiles, section heads */
+
+  --border-color: #d7dbe3; /* visible on white */
+  --border-strong: #c2c8d4;
+
+  --accent-primary: #4b62d6;
+  --accent-hover: #3a4fc0;
+  --accent-soft: #e4e8fb;
+
+  --text-main: #1b1f27;
+  --text-muted: #5a6373;   /* AA-friendly on light gray surfaces */
+
+  --hover-bg: #ebedf3;
+  --active-bg: #e4e8fb;
+
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 4px 16px rgba(16, 24, 40, 0.12);
+
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+:root[data-theme='dark'] {
   --bg-app: #121212;
   --bg-panel: #1e1e1e;
   --bg-canvas: #0f0f0f;
-  
-  --border-color: #2e2e2e;
+  --bg-subtle: #262626;
 
-  /* Accent Colors */
+  --border-color: #2e2e2e;
+  --border-strong: #3d3d3d;
+
   --accent-primary: #5e6ad2;
   --accent-hover: #7b86ea;
-  
-  /* Text Colors */
+  --accent-soft: #333a66;
+
   --text-main: #f0f0f0;
-  --text-muted: #9e9e9e;
-  
-  /* Interactive */
+  --text-muted: #a7adb8;
+
   --hover-bg: #2a2a2a;
   --active-bg: #333333;
 
-  /* Font */
-  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
 }
 
 *, *::before, *::after {
@@ -37,7 +62,7 @@ body, html {
   font-family: var(--font-body);
   background-color: var(--bg-app);
   color: var(--text-main);
-  user-select: none; /* Prevents text selection during drag */
+  user-select: none;
   -webkit-user-select: none;
 }
 
