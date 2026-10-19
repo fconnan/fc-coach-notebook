@@ -58,7 +58,8 @@ export function buildElementAt(
       radius: team === 'team1' ? page.team1Size : page.team2Size,
       color: team === 'team1' ? page.team1Color : page.team2Color,
       angle: team === 'team2' ? 180 : 0,
-      role: isGK ? 'goalkeeper' : 'outfield'
+      role: isGK ? 'goalkeeper' : 'outfield',
+      posture: isGK ? 'gk_ready' : 'standing'
     };
   }
 

@@ -4,6 +4,8 @@
     updateElement, removeElements, setFieldTemplate, setShowPlayerDetails,
     updatePageSettings, type ComponentElement
   } from '$lib/stores/workspace';
+  import PlayerFigure from '../shapes/PlayerFigure.svelte';
+  import { posturesForPlayer, resolvePosture, defaultPosture, type PlayerPostureId } from '$lib/utils/playerPostures';
 
   let { width = 290 } = $props<{ width?: number }>();
 
@@ -27,12 +29,8 @@
     const a = parseInt((e.target as HTMLInputElement).value);
     updateAll({ angle: a });
   }
-  function updateLegStance(side: 'left' | 'right', length: number) {
-    sel.forEach(el => {
-      const u: Partial<ComponentElement> = side === 'left' ? { leftLegLength: length } : { rightLegLength: length };
-      if (length > 10) { if (side === 'left') u.rightLegLength = 10; else u.leftLegLength = 10; }
-      updateElement(el.id, u);
-    });
+  function setPosture(posture: PlayerPostureId) {
+    updateAll({ posture });
   }
   function addPoint() {
     if (!one || one.type !== 'arrow') return;
@@ -59,6 +57,9 @@
 
   const isShape = $derived(one && (one.type === 'rect' || one.type === 'ellipse' || one.type === 'zone'));
   const isEquip = $derived(one && ['cone','coneTall','pole','hurdle','ladder','ring','mannequin','miniGoal','fullGoal'].includes(one.type));
+  const playerIsGK = $derived(one?.role === 'goalkeeper' || one?.label === 'G');
+  const playerPostures = $derived(posturesForPlayer(!!playerIsGK));
+  const currentPosture = $derived(one ? resolvePosture(one) : 'standing');
 </script>
 
 <div class="sidebar" style:width="{width}px">
@@ -255,36 +256,56 @@
         </div>
         <div class="prop-group">
           <label class="toggle-wrap" for="isgk">
-            <input id="isgk" type="checkbox" checked={one.role === 'goalkeeper' || one.label === 'G'} onchange={(e) => updateElement(one.id, { role: e.currentTarget.checked ? 'goalkeeper' : 'outfield', label: e.currentTarget.checked ? 'G' : one.label })} />
+            <input id="isgk" type="checkbox" checked={playerIsGK} onchange={(e) => {
+              const gk = e.currentTarget.checked;
+              updateElement(one.id, {
+                role: gk ? 'goalkeeper' : 'outfield',
+                label: gk ? 'G' : one.label,
+                posture: defaultPosture(gk)
+              });
+            }} />
             <span class="label-text">Gardien de but</span>
           </label>
         </div>
-        {#if $currentPage.showPlayerDetails}
-          <div class="prop-group">
-            <label for="rot">Orientation</label>
-            <div class="rotation-control">
-              <input id="rot" type="range" min="0" max="360" value={one.angle || 0} oninput={updateRotation} />
-              <input class="angle-num" type="number" min="0" max="360" value={one.angle || 0} oninput={updateRotation} />
-              <span class="unit">°</span>
-            </div>
+        <div class="prop-group">
+          <label for="rot">Orientation</label>
+          <div class="rotation-control">
+            <input id="rot" type="range" min="0" max="360" value={one.angle || 0} oninput={updateRotation} />
+            <input class="angle-num" type="number" min="0" max="360" value={one.angle || 0} oninput={updateRotation} />
+            <span class="unit">°</span>
           </div>
-          <div class="prop-group">
-            <span class="label-text">Posture</span>
-            <div class="stance-controls">
-              <div class="side-label">Gauche</div>
-              <div class="btn-group">
-                <button class:active={one.leftLegLength === 10 || !one.leftLegLength} onclick={() => updateLegStance('left', 10)}>Appui</button>
-                <button class:active={one.leftLegLength === 16} onclick={() => updateLegStance('left', 16)}>Avancé</button>
-                <button class:active={one.leftLegLength === 24} onclick={() => updateLegStance('left', 24)}>Allongé</button>
-              </div>
-              <div class="side-label">Droite</div>
-              <div class="btn-group">
-                <button class:active={one.rightLegLength === 10 || !one.rightLegLength} onclick={() => updateLegStance('right', 10)}>Appui</button>
-                <button class:active={one.rightLegLength === 16} onclick={() => updateLegStance('right', 16)}>Avancé</button>
-                <button class:active={one.rightLegLength === 24} onclick={() => updateLegStance('right', 24)}>Allongé</button>
-              </div>
-            </div>
+        </div>
+        <div class="prop-group">
+          <span class="label-text">Posture</span>
+          <p class="help-text posture-hint">Utilisée en vue perspective (sauvegardée dans le JSON).</p>
+          <div class="posture-grid">
+            {#each playerPostures as p}
+              <button
+                type="button"
+                class="posture-cell"
+                class:active={currentPosture === p.id}
+                title={p.label}
+                onclick={() => setPosture(p.id)}
+              >
+                <svg width="40" height="48" viewBox="-16 -38 32 48" aria-hidden="true">
+                  <PlayerFigure
+                    posture={p.id}
+                    shirt={one.shirtColor || one.color || '#5e6ad2'}
+                    short={one.shortColor || '#1c1c1c'}
+                    skin={one.skinColor || '#e8b58c'}
+                    pattern={one.shirtPattern || 'solid'}
+                    patternColor="#fff"
+                    scale={0.85}
+                    uid="thumb-{one.id}-{p.id}"
+                  />
+                </svg>
+                <span>{p.label}</span>
+              </button>
+            {/each}
           </div>
+        </div>
+        {#if $currentPage.showPlayerDetails && $currentPage.view !== 'perspective'}
+          <p class="help-text">En vue 2D détaillée, la posture s’applique à la vue perspective.</p>
         {/if}
       {/if}
 
@@ -516,6 +537,35 @@
   .prop-group input[type="range"] { width: 100%; accent-color: var(--accent-primary); }
   .perspective-props { margin-top: 10px; }
   .perspective-props .help-text { margin-top: 4px; font-style: normal; }
+  .posture-hint { margin: 4px 0 8px; font-style: normal; }
+  .posture-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .posture-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 2px 4px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    color: var(--text-main);
+    font-size: 8px;
+    line-height: 1.2;
+    text-align: center;
+  }
+  .posture-cell:hover { border-color: var(--accent-primary); background: var(--hover-bg); }
+  .posture-cell.active {
+    border-color: var(--accent-primary);
+    background: var(--active-bg);
+    color: var(--accent-primary);
+    font-weight: 600;
+  }
 
   .rotation-control { display: flex; align-items: center; gap: 12px; }
   .rotation-control input[type="range"] { flex: 2; }

@@ -5,6 +5,8 @@ import {
   pitchCenter,
   type LibraryPlaceArgs
 } from '$lib/utils/placement';
+import type { PlayerPostureId } from '$lib/utils/playerPostures';
+import { PLAYER_POSTURES } from '$lib/utils/playerPostures';
 
 // ---------------------------------------------------------
 // Schema versioning
@@ -40,6 +42,7 @@ export type TeamType = 'team1' | 'team2' | 'none';
 
 export type ShirtPattern = 'solid' | 'stripes' | 'hoops';
 export type PlayerRole = 'outfield' | 'goalkeeper';
+export type { PlayerPostureId };
 
 // Equipment element types (draggable training gear)
 export const EQUIPMENT_TYPES: ElementType[] = [
@@ -90,6 +93,8 @@ export interface ComponentElement {
   shortColor?: string;
   shirtPattern?: ShirtPattern;
   role?: PlayerRole;
+  /** Silhouette en vue perspective (label JSON → posture). */
+  posture?: PlayerPostureId;
 
   // --- Text / shapes / callouts / zones ---
   text?: string;
@@ -207,6 +212,15 @@ export function migratePage(data: Partial<Page>): Page {
   if (!merged.grassType) merged.grassType = 'stripes';
   if (!merged.backgroundColor) merged.backgroundColor = '#2b6b39';
   if (!merged.view) merged.view = '2d';
+  const validPostures = new Set(PLAYER_POSTURES.map((p) => p.id));
+  merged.elements = merged.elements.map((el) => {
+    if (el.type !== 'player') return el;
+    if (el.posture && !validPostures.has(el.posture)) {
+      const { posture: _, ...rest } = el;
+      return rest;
+    }
+    return el;
+  });
   if (typeof merged.perspectiveTilt !== 'number') merged.perspectiveTilt = DEFAULT_PAGE.perspectiveTilt;
   if (typeof merged.perspectiveIntensity !== 'number') merged.perspectiveIntensity = DEFAULT_PAGE.perspectiveIntensity;
   if (typeof merged.perspectiveScale !== 'number') merged.perspectiveScale = DEFAULT_PAGE.perspectiveScale;
@@ -786,6 +800,7 @@ export function setTeamFormation(team: TeamType, positions: { label: string; x: 
       radius: size,
       color,
       role: p.label === 'G' ? 'goalkeeper' : 'outfield',
+      posture: p.label === 'G' ? 'gk_ready' : 'standing',
       angle: team === 'team2' ? 180 : 0
     }));
     const maxNum = positions.reduce((m, p) => {
