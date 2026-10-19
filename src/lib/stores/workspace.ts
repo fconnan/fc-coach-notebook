@@ -29,6 +29,8 @@ export interface Page {
   id: string;
   name: string;
   fieldTemplate: 'Complet' | 'Demi' | 'DemiBas';
+  nextTeam1Number: number;
+  nextTeam2Number: number;
   markdownContent: string;
   elements: ComponentElement[];
 }
@@ -44,7 +46,9 @@ export const pages = writable<Page[]>([
     name: 'Schéma 1', 
     fieldTemplate: 'Complet', 
     markdownContent: '# Ma Fiche Tactique\n\n- Phase offensive\n- Occupation du terrain',
-    elements: [] 
+    elements: [],
+    nextTeam1Number: 1,
+    nextTeam2Number: 1
   }
 ]);
 
@@ -133,6 +137,23 @@ export function setFieldTemplate(template: 'Complet' | 'Demi' | 'DemiBas') {
     return p.map(page => {
       if (page.id === activeId) {
         return { ...page, fieldTemplate: template };
+      }
+      return page;
+    });
+  });
+}
+
+export function incrementTeamNumber(team: TeamType) {
+  if (team === 'none') return;
+  pages.update(p => {
+    const activeId = getCurrentPageId();
+    return p.map(page => {
+      if (page.id === activeId) {
+        return {
+          ...page,
+          nextTeam1Number: team === 'team1' ? page.nextTeam1Number + 1 : page.nextTeam1Number,
+          nextTeam2Number: team === 'team2' ? page.nextTeam2Number + 1 : page.nextTeam2Number
+        };
       }
       return page;
     });

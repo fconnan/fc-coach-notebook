@@ -54,7 +54,7 @@
 
 <g 
   class="player-group"
-  role="graphics-symbol"
+  role="button"
   tabindex="0"
   onpointerdown={onPointerDown}
   style="transform: translate({element.position.x}px, {element.position.y}px);"
@@ -69,9 +69,9 @@
     cx="0" 
     cy="0" 
     r={element.radius || 14} 
-    fill={element.color || '#5e6ad2'} 
-    stroke="#000" 
-    stroke-width="1.5" 
+    fill={element.label === 'G' ? '#fff' : (element.color || '#5e6ad2')} 
+    stroke={element.label === 'G' ? (element.color || '#5e6ad2') : '#000'} 
+    stroke-width={element.label === 'G' ? 2 : 1.5} 
   />
   
   <!-- Label / Number -->
@@ -81,7 +81,7 @@
       y="0" 
       text-anchor="middle" 
       dominant-baseline="central"
-      fill="#fff"
+      fill={element.label === 'G' ? (element.color || '#5e6ad2') : '#fff'}
       font-size={element.radius ? element.radius * 1.0 : 12}
       font-weight="bold"
       pointer-events="none"

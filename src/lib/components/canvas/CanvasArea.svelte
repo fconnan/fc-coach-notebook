@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { currentPage, selectedIds, updateElement, addElement } from '$lib/stores/workspace';
+  import { currentPage, selectedIds, updateElement, addElement, incrementTeamNumber } from '$lib/stores/workspace';
   import Player from '../shapes/Player.svelte';
   import Ball from '../shapes/Ball.svelte';
   import Pitch from '../shapes/Pitch.svelte';
@@ -36,6 +36,11 @@
         radius: type === 'ball' ? 8 : 14,
         color: team === 'team1' ? '#5e6ad2' : team === 'team2' ? '#d25e5e' : '#fff'
       });
+
+      // Increment numbering if it was a numbered field player
+      if (type === 'player' && label !== 'G') {
+        incrementTeamNumber(team);
+      }
     }
   }
 

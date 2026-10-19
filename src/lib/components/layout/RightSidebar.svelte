@@ -1,14 +1,30 @@
 <script lang="ts">
-  import { selectedElements, updateElement, removeElements, setFieldTemplate } from '$lib/stores/workspace';
+  import { currentPage, selectedElements, updateElement, removeElements, setFieldTemplate } from '$lib/stores/workspace';
   
   // Library Data
-  const categories = [
-    { title: 'Équipe 1', type: 'player', team: 'team1', items: [{ icon: '🔵', label: '1' }, { icon: '🧤', label: 'G' }] },
-    { title: 'Équipe 2', type: 'player', team: 'team2', items: [{ icon: '🔴', label: '1' }, { icon: '🧤', label: 'G' }] },
-    { title: 'Éléments', type: 'ball', team: 'none', items: [{ icon: '⚽', label: '' }, { icon: '🚩', label: '' }] },
-    { title: 'Tracés', type: 'arrow', team: 'none', items: [{ icon: '↗️', label: '' }, { icon: '➡️', label: '' }] },
-    { title: 'Terrains', type: 'field', team: 'none', items: [{ icon: '🟩', label: 'Complet' }, { icon: '🟢', label: 'Demi' }, { icon: '🔽', label: 'DemiBas' }] }
-  ];
+  const categories = $derived([
+    { 
+      title: 'Équipe 1', 
+      type: 'player' as const, 
+      team: 'team1' as const, 
+      items: [
+        { label: $currentPage.nextTeam1Number.toString(), isGK: false, color: '#5e6ad2', icon: '' }, 
+        { label: 'G', isGK: true, color: '#5e6ad2', icon: '' }
+      ] 
+    },
+    { 
+      title: 'Équipe 2', 
+      type: 'player' as const, 
+      team: 'team2' as const, 
+      items: [
+        { label: $currentPage.nextTeam2Number.toString(), isGK: false, color: '#d25e5e', icon: '' }, 
+        { label: 'G', isGK: true, color: '#d25e5e', icon: '' }
+      ] 
+    },
+    { title: 'Éléments', type: 'ball' as const, team: 'none' as const, items: [{ icon: '⚽', label: '', isGK: false, color: '' }, { icon: '🚩', label: '', isGK: false, color: '' }] },
+    { title: 'Tracés', type: 'arrow' as const, team: 'none' as const, items: [{ icon: '↗️', label: '', isGK: false, color: '' }, { icon: '➡️', label: '', isGK: false, color: '' }] },
+    { title: 'Terrains', type: 'field' as const, team: 'none' as const, items: [{ icon: '🟩', label: 'Complet', isGK: false, color: '' }, { icon: '🟢', label: 'Demi', isGK: false, color: '' }, { icon: '🔽', label: 'DemiBas', isGK: false, color: '' }] }
+  ]);
 
   // Drag & Click Handlers for Library
   function onDragStart(e: DragEvent, type: string, team: string, label: string) {
@@ -56,27 +72,33 @@
   <div class="library">
     <div class="header">Bibliothèque</div>
     <div class="library-content">
-      {#each categories as category}
-        <div class="category">
-          <div class="category-header">{category.title}</div>
-          <div class="category-items">
-            {#each category.items as item}
-              <div 
-                class="item" 
-                draggable="true" 
-                role="button"
-                tabindex="0"
-                title={item.label || category.title}
-                ondragstart={(e) => onDragStart(e, category.type, category.team, item.label)}
-                onclick={() => onItemClick(category.type, item.label)}
-                onkeydown={(e) => e.key === 'Enter' && onItemClick(category.type, item.label)}
-              >
+      <div class="all-items">
+        {#each categories as category}
+          {#each category.items as item}
+            <div 
+              class="item" 
+              draggable="true" 
+              role="button"
+              tabindex="0"
+              title={item.label || category.title}
+              ondragstart={(e) => onDragStart(e, category.type, category.team, item.label)}
+              onclick={() => onItemClick(category.type, item.label)}
+              onkeydown={(e) => e.key === 'Enter' && onItemClick(category.type, item.label)}
+            >
+              {#if category.type === 'player'}
+                <svg width="56" height="56" viewBox="0 0 56 56">
+                  <circle cx="28" cy="28" r="24" fill={item.isGK ? '#fff' : item.color} stroke={item.isGK ? item.color : 'white'} stroke-width="4" />
+                  <text x="28" y="28" dy=".35em" text-anchor="middle" fill={item.isGK ? item.color : 'white'} font-size="20" font-weight="bold">
+                    {item.label}
+                  </text>
+                </svg>
+              {:else}
                 <span class="icon">{item.icon}</span>
-              </div>
-            {/each}
-          </div>
-        </div>
-      {/each}
+              {/if}
+            </div>
+          {/each}
+        {/each}
+      </div>
     </div>
   </div>
 
@@ -141,55 +163,52 @@
 
   /* Library Styles */
   .library {
-    flex: 2;
+    border-bottom: 1px solid var(--border-color);
+    background-color: rgba(255, 255, 255, 0.02);
     display: flex;
     flex-direction: column;
-    min-height: 300px;
-    overflow: hidden;
-    border-bottom: 1px solid var(--border-color);
+    max-height: 40%; /* Save space for properties */
   }
 
   .library-content {
-    flex: 1;
+    padding: 12px;
     overflow-y: auto;
   }
   
-  .category-header {
-    padding: 10px 14px;
-    font-size: 10px;
-    text-transform: uppercase;
-    font-weight: 600;
-    color: var(--text-muted);
-    letter-spacing: 0.5px;
-    background-color: rgba(255, 255, 255, 0.03);
-  }
-  
-  .category-items {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-    padding: 12px;
+  .all-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
   }
   
   .item {
-    aspect-ratio: 1;
-    background-color: var(--bg-canvas);
+    width: 72px;
+    height: 72px;
+    background-color: var(--bg-app);
     border: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: grab;
-    transition: all 0.2s;
+    transition: all 0.15s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
   }
   
   .item:hover {
     border-color: var(--accent-primary);
     background-color: var(--hover-bg);
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(0,0,0,0.2);
+  }
+
+  .item:active {
+    cursor: grabbing;
+    transform: scale(0.95);
   }
 
   .icon {
-    font-size: 24px;
+    font-size: 36px;
   }
 
   /* Properties Styles */
@@ -197,8 +216,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    min-height: 200px;
-    background-color: rgba(0, 0, 0, 0.05);
+    overflow: hidden;
   }
   
   .properties-content {
