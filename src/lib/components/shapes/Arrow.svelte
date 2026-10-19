@@ -1,16 +1,17 @@
 <script lang="ts">
   import type { ComponentElement, Position } from '$lib/stores/workspace';
-  import { updateElement, selectedIds } from '$lib/stores/workspace';
+  import { updateElement, selectedIds, currentPage } from '$lib/stores/workspace';
   
   let { element, isSelected } = $props<{ element: ComponentElement, isSelected: boolean }>();
   
   // DRAG LOGIC FOR POINTS
-  let activePointIndex: number | null = null;
+  let activePointIndex = $state<number | null>(null);
   let startX = 0;
   let startY = 0;
   let originalPoints: Position[] = [];
   let svgElement: SVGSVGElement | null = null;
   let capturedTarget: SVGElement | null = null;
+  let nearElementId = $state<string | null>(null); // Element currently being snapped to
 
   function onPointDown(e: PointerEvent, index: number) {
     e.stopPropagation();
@@ -41,7 +42,6 @@
     // But Player.svelte uses screen deltas which works because it's translation.
     // Here we're updating absolute coordinates.
     
-    // Better way: use the captured SVG root
     if (!svgElement) return;
 
     const pt = svgElement.createSVGPoint();
@@ -49,8 +49,28 @@
     pt.y = e.clientY;
     const svgPoint = pt.matrixTransform(svgElement.getScreenCTM()?.inverse());
 
+    let targetX = svgPoint.x;
+    let targetY = svgPoint.y;
+    nearElementId = null;
+
+    // Snapping logic for start and end points
+    if (activePointIndex === 0 || activePointIndex === originalPoints.length - 1) {
+      const otherElements = $currentPage.elements.filter(el => el.id !== element.id && el.type !== 'field');
+      for (const el of otherElements) {
+        const dx = el.position.x - svgPoint.x;
+        const dy = el.position.y - svgPoint.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 20) {
+          targetX = el.position.x;
+          targetY = el.position.y;
+          nearElementId = el.id;
+          break;
+        }
+      }
+    }
+
     const newPoints = [...originalPoints];
-    newPoints[activePointIndex] = { x: svgPoint.x, y: svgPoint.y };
+    newPoints[activePointIndex] = { x: targetX, y: targetY };
 
     // Update position if it's the first point (since position is the anchor in workspace)
     if (activePointIndex === 0) {
@@ -64,7 +84,14 @@
   }
 
   function onPointUp(e: PointerEvent) {
+    if (activePointIndex === 0) {
+      updateElement(element.id, { linkedStartId: nearElementId || undefined });
+    } else if (activePointIndex !== null && activePointIndex === pathPoints.length - 1) {
+      updateElement(element.id, { linkedEndId: nearElementId || undefined });
+    }
+
     activePointIndex = null;
+    nearElementId = null;
     window.removeEventListener('pointermove', onPointMove);
     window.removeEventListener('pointerup', onPointUp);
     if (capturedTarget) {
@@ -214,6 +241,8 @@
     stroke-width={strokeWidth + 15} 
     onpointerdown={onArrowDown}
     class="hit-area"
+    role="button"
+    aria-label="Arrow handle"
   />
 
   <!-- Visible path -->
@@ -229,6 +258,8 @@
     marker-end={markerEnd}
     onpointerdown={onArrowDown}
     class="main-path"
+    role="button"
+    aria-label="Arrow path"
   />
 
   <!-- Handles for editing points -->
@@ -238,17 +269,28 @@
         class="handle" 
         onpointerdown={(e) => onPointDown(e, i)}
         transform="translate({pt.x}, {pt.y})"
+        role="button"
+        tabindex="0"
+        aria-label="Edit point {i}"
       >
         <circle 
           cx="0" 
           cy="0" 
           r={i === 0 || i === pathPoints.length - 1 ? 6 : 5} 
-          fill={i === 0 || i === pathPoints.length - 1 ? 'var(--accent-primary)' : 'var(--bg-panel)'} 
-          stroke="white" 
-          stroke-width="1.5" 
+          fill={
+            (i === 0 && element.linkedStartId) || (i === pathPoints.length - 1 && element.linkedEndId) 
+            ? 'var(--accent-primary)' 
+            : (nearElementId && (i === 0 || i === pathPoints.length - 1) && activePointIndex === i ? 'var(--accent-primary)' : 'var(--bg-panel)')
+          } 
+          stroke={
+            (i === 0 && element.linkedStartId) || (i === pathPoints.length - 1 && element.linkedEndId) 
+            ? 'white' 
+            : 'white'
+          }
+          stroke-width={(i === 0 && element.linkedStartId) || (i === pathPoints.length - 1 && element.linkedEndId) ? 2 : 1.5} 
         />
-        {#if i === 0}<text y="-10" text-anchor="middle" font-size="8" fill="white">Début</text>{/if}
-        {#if i === pathPoints.length - 1}<text y="-10" text-anchor="middle" font-size="8" fill="white">Fin</text>{/if}
+        {#if i === 0}<text y="-10" text-anchor="middle" font-size="8" fill="white">{element.linkedStartId ? 'Linked' : 'Début'}</text>{/if}
+        {#if i === pathPoints.length - 1}<text y="-10" text-anchor="middle" font-size="8" fill="white">{element.linkedEndId ? 'Linked' : 'Fin'}</text>{/if}
       </g>
     {/each}
   {/if}

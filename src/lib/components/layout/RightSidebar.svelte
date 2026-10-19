@@ -281,6 +281,32 @@
               <option value="2,4" selected={$selectedElements[0].strokeDasharray === '2,4'}>Finement pointillés</option>
             </select>
           </div>
+
+          <div class="prop-group">
+            <label>Liaisons</label>
+            <div class="links-container">
+              <div class="link-indicator">
+                <span class="pos">Début:</span>
+                {#if $selectedElements[0].linkedStartId}
+                  {@const target = $currentPage.elements.find(el => el.id === $selectedElements[0].linkedStartId)}
+                  <span class="tag">{target?.label || (target?.type === 'player' ? 'Joueur' : target?.type) || 'Objet'}</span>
+                  <button class="unlink-btn" onclick={() => updateElement($selectedElements[0].id, { linkedStartId: undefined })} title="Détacher">✕</button>
+                {:else}
+                  <span class="none">Aucune (Glisser sur un joueur)</span>
+                {/if}
+              </div>
+              <div class="link-indicator">
+                <span class="pos">Fin:</span>
+                {#if $selectedElements[0].linkedEndId}
+                  {@const target = $currentPage.elements.find(el => el.id === $selectedElements[0].linkedEndId)}
+                  <span class="tag">{target?.label || (target?.type === 'player' ? 'Joueur' : target?.type) || 'Objet'}</span>
+                  <button class="unlink-btn" onclick={() => updateElement($selectedElements[0].id, { linkedEndId: undefined })} title="Détacher">✕</button>
+                {:else}
+                  <span class="none">Aucune (Glisser sur un joueur)</span>
+                {/if}
+              </div>
+            </div>
+          </div>
         {/if}
 
         {#if $selectedElements.length === 1 && $selectedElements[0].type === 'player'}
@@ -813,5 +839,63 @@
 
   .color-size-row input[type="number"] {
     width: 45px;
+  }
+
+  /* Link Indicators */
+  .links-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.1);
+    padding: 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+  }
+
+  .link-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+  }
+
+  .link-indicator .pos {
+    color: var(--text-muted);
+    width: 40px;
+  }
+
+  .link-indicator .tag {
+    background: var(--accent-primary);
+    color: white;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-weight: 600;
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .link-indicator .none {
+    color: var(--text-muted);
+    font-style: italic;
+    opacity: 0.7;
+  }
+
+  .unlink-btn {
+    background: transparent;
+    border: none;
+    color: #ff6b6b;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s;
+  }
+
+  .unlink-btn:hover {
+    transform: scale(1.2);
   }
 </style>

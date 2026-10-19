@@ -133,8 +133,7 @@
     xmlns="http://www.w3.org/2000/svg"
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
-    role="application"
-    tabindex="0"
+    role="presentation"
     aria-label="Tactical drawing board"
   >
     <defs>
@@ -169,13 +168,33 @@
         />
         
         <g class="elements">
-          {#each $currentPage.elements as element (element.id)}
+          <!-- 1. Unselected Arrows (Bottom layer) -->
+          {#each $currentPage.elements.filter(el => el.type === 'arrow' && !$selectedIds.includes(el.id)) as element (element.id)}
+            <Arrow {element} isSelected={false} />
+          {/each}
+
+          <!-- 2. Unselected Balls (Middle layer) -->
+          {#each $currentPage.elements.filter(el => el.type === 'ball' && !$selectedIds.includes(el.id)) as element (element.id)}
+            <Ball {element} isSelected={false} />
+          {/each}
+
+          <!-- 3. Unselected Players and other elements (Top normal layer) -->
+          {#each $currentPage.elements.filter(el => (el.type === 'player' || el.type === 'cone') && !$selectedIds.includes(el.id)) as element (element.id)}
             {#if element.type === 'player'}
-              <Player {element} isSelected={$selectedIds.includes(element.id)} />
+              <Player {element} isSelected={false} />
+            {:else if element.type === 'cone'}
+              <!-- Cone logic -->
+            {/if}
+          {/each}
+
+          <!-- 4. Selected Elements (Foreground layer, everything else below) -->
+          {#each $currentPage.elements.filter(el => $selectedIds.includes(el.id)) as element (element.id)}
+            {#if element.type === 'player'}
+              <Player {element} isSelected={true} />
             {:else if element.type === 'ball'}
-              <Ball {element} isSelected={$selectedIds.includes(element.id)} />
+              <Ball {element} isSelected={true} />
             {:else if element.type === 'arrow'}
-              <Arrow {element} isSelected={$selectedIds.includes(element.id)} />
+              <Arrow {element} isSelected={true} />
             {/if}
           {/each}
         </g>

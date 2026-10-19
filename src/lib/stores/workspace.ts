@@ -31,6 +31,8 @@ export interface ComponentElement {
   angle?: number; // Rotation in degrees (0-359)
   leftLegLength?: number; 
   rightLegLength?: number;
+  linkedStartId?: string; // ID of the element the start point is linked to
+  linkedEndId?: string;   // ID of the element the end point is linked to
 }
 
 export interface Page {
@@ -131,10 +133,35 @@ export function updateElement(id: string, updates: Partial<ComponentElement>) {
     const activeId = getCurrentPageId();
     return p.map(page => {
       if (page.id === activeId) {
-        return {
-          ...page,
-          elements: page.elements.map(el => el.id === id ? { ...el, ...updates } : el)
-        };
+        // 1. Update the targeted element
+        const nextElements = page.elements.map(el => el.id === id ? { ...el, ...updates } : el);
+        const movedEl = nextElements.find(el => el.id === id);
+
+        // 2. If it's a move, update linked arrows
+        if (movedEl && updates.position) {
+          return {
+            ...page,
+            elements: nextElements.map(el => {
+              if (el.type === 'arrow' && (el.linkedStartId === id || el.linkedEndId === id)) {
+                const newPoints = [...(el.pathPoints || [el.position, el.endPosition || { x: el.position.x + 50, y: el.position.y }])];
+                let changed = false;
+                if (el.linkedStartId === id) {
+                  newPoints[0] = movedEl.position;
+                  changed = true;
+                }
+                if (el.linkedEndId === id) {
+                  newPoints[newPoints.length - 1] = movedEl.position;
+                  changed = true;
+                }
+                if (changed) {
+                  return { ...el, pathPoints: newPoints, position: newPoints[0] };
+                }
+              }
+              return el;
+            })
+          };
+        }
+        return { ...page, elements: nextElements };
       }
       return page;
     });
