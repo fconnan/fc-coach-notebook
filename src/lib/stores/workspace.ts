@@ -131,6 +131,22 @@ export interface SessionMeta {
   coachingPoints?: string;
 }
 
+/** Short optional atoms of an exercise (the rest lives in markdown). */
+export interface DrillFields {
+  kind?: string;
+  method?: string;
+  duration?: string;
+  area?: string;
+  headcount?: string;
+  equipment?: string;
+}
+
+export const STYLE_FIELDS = [
+  'team1Color', 'team2Color', 'team1Size', 'team2Size',
+  'ballColor', 'ballSize', 'showFieldStripes', 'grassType',
+  'backgroundColor', 'hideGoals', 'goalNetOpacity', 'hidePitchLines', 'morphology'
+] as const;
+
 export type PageMorphology = 'man' | 'woman' | 'child';
 
 export interface Page {
@@ -143,7 +159,6 @@ export interface Page {
   markdownContent: string;
   elements: ComponentElement[];
   showPlayerDetails: boolean;
-  /** Body type for perspective PNG sprites (no mix on one page). */
   morphology?: PageMorphology;
   // Global styles
   team1Color: string;
@@ -160,16 +175,16 @@ export interface Page {
   /** Semi-transparency of pitch goal net faces (0–1). */
   goalNetOpacity?: number;
   hidePitchLines: boolean;
-  view: '2d' | 'perspective';
-  /** Perspective presentation (view === 'perspective') */
-  perspectiveTilt?: number;       // rotateX degrees (15–55)
-  perspectiveIntensity?: number;  // 0 = léger, 100 = prononcé
-  perspectiveScale?: number;      // fit scale (0.7–1)
+  view: '2d';
   // Animation
   frames: Frame[];
   activeFrameIndex: number;
-  // Session
+  // Session (legacy single-page files; the séance header lives on the séance file)
   session: SessionMeta;
+  /** Shared page style in the category folder. */
+  styleId?: string;
+  /** Optional official atoms. Free text, never required. */
+  drill?: DrillFields;
 }
 
 // ---------------------------------------------------------
@@ -200,9 +215,6 @@ export const DEFAULT_PAGE: Page = {
   goalNetOpacity: 0.25,
   hidePitchLines: false,
   view: '2d',
-  perspectiveTilt: 34,
-  perspectiveIntensity: 62,
-  perspectiveScale: 0.86,
   frames: [],
   activeFrameIndex: 0,
   session: {}
@@ -219,11 +231,10 @@ export function migratePage(data: Partial<Page>): Page {
   if (!Array.isArray(merged.frames)) merged.frames = [];
   if (typeof merged.activeFrameIndex !== 'number') merged.activeFrameIndex = 0;
   if (!merged.session) merged.session = {};
+  if (!merged.drill || typeof merged.drill !== 'object') merged.drill = {};
   if (!merged.grassType) merged.grassType = 'stripes';
   if (!merged.backgroundColor) merged.backgroundColor = '#2b6b39';
-  if (!merged.view) merged.view = '2d';
-  if ((data as { view?: string }).view === '3d') merged.view = 'perspective';
-  if (!['2d', 'perspective'].includes(merged.view)) merged.view = '2d';
+  merged.view = '2d';
   if (!merged.morphology || !['man', 'woman', 'child'].includes(merged.morphology)) {
     merged.morphology = 'man';
   }
@@ -238,9 +249,6 @@ export function migratePage(data: Partial<Page>): Page {
     if (migrated !== el.posture) return { ...el, posture: migrated };
     return el;
   });
-  if (typeof merged.perspectiveTilt !== 'number') merged.perspectiveTilt = DEFAULT_PAGE.perspectiveTilt;
-  if (typeof merged.perspectiveIntensity !== 'number') merged.perspectiveIntensity = DEFAULT_PAGE.perspectiveIntensity;
-  if (typeof merged.perspectiveScale !== 'number') merged.perspectiveScale = DEFAULT_PAGE.perspectiveScale;
   const leftover = merged as Page & Record<string, unknown>;
   delete leftover.cam3dYaw;
   delete leftover.cam3dPitch;
@@ -249,6 +257,9 @@ export function migratePage(data: Partial<Page>): Page {
   delete leftover.cam3dRadius;
   delete leftover.cam3dTarget;
   delete leftover.playerAnimations;
+  delete leftover.perspectiveTilt;
+  delete leftover.perspectiveIntensity;
+  delete leftover.perspectiveScale;
   merged.schemaVersion = SCHEMA_VERSION;
   return merged;
 }
@@ -310,8 +321,12 @@ export const clipboard = writable<ComponentElement[]>([]);
 
 // Animation playback state
 export const isPlaying = writable<boolean>(false);
-// Interpolated elements shown on the canvas while playing
+// Interpolated elements shown on the canvas while the transport owns the picture
 export const playbackElements = writable<ComponentElement[]>([]);
+/** True while the transport shows a sampled pose (playing or paused mid-way). */
+export const animPreview = writable<boolean>(false);
+/** Phase label for the current transport time. */
+export const animPhase = writable<string>('');
 
 // Derived store to get the currently active page object easily
 export const currentPage = derived(
@@ -694,18 +709,114 @@ export function setMarkdownContent(content: string) {
   });
 }
 
+let styleHook: ((page: Page, updates: Partial<Page>) => void) | null = null;
+
+/** Called when the active exercise's shared visual style changes. */
+export function setStyleHook(fn: ((page: Page, updates: Partial<Page>) => void) | null) {
+  styleHook = fn;
+}
+
 export function updatePageSettings(updates: Partial<Page>, opts?: { skipHistory?: boolean }) {
+  if (updates.view) updates = { ...updates, view: '2d' };
   if (!opts?.skipHistory) pushHistory();
   isDirty.set(true);
-  pages.update(p => {
-    const activeId = getCurrentPageId();
-    return p.map(page => {
-      if (page.id === activeId) {
-        return { ...page, ...updates };
-      }
-      return page;
-    });
+  const activeId = getCurrentPageId();
+  pages.update(p => p.map(page => (page.id === activeId ? { ...page, ...updates } : page)));
+  const visual: Partial<Page> = {};
+  let any = false;
+  for (const key of STYLE_FIELDS) {
+    if (key in updates) {
+      (visual as Record<string, unknown>)[key] = updates[key];
+      any = true;
+    }
+  }
+  if (any && styleHook) {
+    const page = get(pages).find(p => p.id === activeId);
+    if (page?.styleId) styleHook(page, visual);
+  }
+}
+
+export function updateDrill(updates: Partial<DrillFields>) {
+  isDirty.set(true);
+  patchActivePage(page => ({ ...page, drill: { ...page.drill, ...updates } }));
+}
+
+export function updateExerciseDrill(id: string, updates: Partial<DrillFields>) {
+  isDirty.set(true);
+  pages.update(list => list.map(page => (
+    page.id === id ? { ...page, drill: { ...page.drill, ...updates } } : page
+  )));
+}
+
+export function setExerciseMarkdown(id: string, content: string) {
+  isDirty.set(true);
+  pages.update(list => list.map(page => (page.id === id ? { ...page, markdownContent: content } : page)));
+}
+
+export function addExercise() {
+  const base = get(currentPage);
+  const page = structuredClone(DEFAULT_PAGE);
+  page.id = crypto.randomUUID();
+  page.name = `Exercice ${get(pages).length + 1}`;
+  page.drill = {};
+  if (base) {
+    for (const key of STYLE_FIELDS) {
+      (page as unknown as Record<string, unknown>)[key] = base[key];
+    }
+    page.styleId = base.styleId;
+    page.fieldTemplate = base.fieldTemplate;
+    page.view = base.view;
+    page.morphology = base.morphology;
+  }
+  pages.update(list => [...list, page]);
+  currentPageId.set(page.id);
+  isDirty.set(true);
+  selectedIds.set([]);
+}
+
+export function duplicateExercise(id: string) {
+  const src = get(pages).find(p => p.id === id);
+  if (!src) return;
+  const copy = structuredClone(src);
+  copy.id = crypto.randomUUID();
+  copy.name = `${src.name || 'Exercice'} (copie)`;
+  pages.update(list => {
+    const i = list.findIndex(p => p.id === id);
+    const next = list.slice();
+    next.splice(i + 1, 0, copy);
+    return next;
   });
+  currentPageId.set(copy.id);
+  isDirty.set(true);
+  selectedIds.set([]);
+}
+
+export function renameExercise(id: string, name: string) {
+  isDirty.set(true);
+  pages.update(list => list.map(p => (p.id === id ? { ...p, name } : p)));
+}
+
+export function removeExercise(id: string) {
+  const list = get(pages);
+  if (list.length < 2) return;
+  const next = list.filter(page => page.id !== id);
+  pages.set(next);
+  if (get(currentPageId) === id) currentPageId.set(next[0].id);
+  isDirty.set(true);
+  selectedIds.set([]);
+}
+
+export function moveExercise(id: string, dir: -1 | 1) {
+  pages.update(list => {
+    const i = list.findIndex(p => p.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return list;
+    const next = list.slice();
+    const [item] = next.splice(i, 1);
+    next.splice(j, 0, item);
+    return next;
+  });
+  isDirty.set(true);
 }
 
 // ---------------------------------------------------------

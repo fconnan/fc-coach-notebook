@@ -75,8 +75,8 @@
   const strokeCol = $derived(isGK ? element.color || teamColor : '#111');
   const leftLegH = $derived(element.leftLegLength || 10);
   const rightLegH = $derived(element.rightLegLength || 10);
-  const useFigure = $derived($currentPage.view === 'perspective');
-  const usePngSprite = $derived($currentPage.view === 'perspective');
+  const useFigure = false;
+  const usePngSprite = false;
   const morphology = $derived($currentPage.morphology || 'man');
   const projector = $derived(getPerspectiveContext());
   const animId = $derived(resolvePlayerAnimId(element));

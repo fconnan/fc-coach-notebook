@@ -1,7 +1,12 @@
 import { get } from 'svelte/store';
-import { currentPage, tacticName, isDirty, importPage, pages } from '$lib/stores/workspace';
+import { currentPage, currentPageId, tacticName, isDirty, importPage, migratePage, pages, type Page } from '$lib/stores/workspace';
 import { currentRef, type SaveRef } from './index';
 import { idbSet, idbGet } from './idb';
+import { workspaceOpen } from '$lib/workspace/state';
+
+function workspaceOpenNow(): boolean {
+  return get(workspaceOpen);
+}
 
 const KEY = 'fctactics_session';
 const HANDLE_KEY = 'last_device_handle';
@@ -17,11 +22,19 @@ function refToJSON(ref: SaveRef | null): any {
 
 function write() {
   if (typeof localStorage === 'undefined') return;
+  if (workspaceOpenNow()) return;
   try {
     const page = get(currentPage);
     if (!page) return;
     const name = get(tacticName);
-    const payload = { name, page: { ...page, name }, ref: refToJSON(get(currentRef)) };
+    const all = get(pages);
+    const payload = {
+      name,
+      page: { ...page, name },
+      pages: all,
+      activeId: get(currentPageId),
+      ref: refToJSON(get(currentRef))
+    };
     localStorage.setItem(KEY, JSON.stringify(payload));
   } catch { /* quota or serialization issue: ignore */ }
 }
@@ -58,8 +71,16 @@ export function restoreSession(): boolean {
   try { data = JSON.parse(raw); } catch { return false; }
   if (!data?.page) return false;
 
-  importPage(data.page);
-  tacticName.set(data.name || data.page.name || 'Sans titre');
+  if (Array.isArray(data.pages) && data.pages.length > 1) {
+    const restored = (data.pages as Partial<Page>[]).map(item => migratePage(item));
+    pages.set(restored);
+    const active = restored.find(item => item.id === data.activeId) || restored[0];
+    currentPageId.set(active.id);
+    tacticName.set(data.name || active.name || 'Sans titre');
+  } else {
+    importPage(data.page);
+    tacticName.set(data.name || data.page.name || 'Sans titre');
+  }
 
   const ref = data.ref as SaveRef | null;
   if (ref && ref.provider === 'device') {

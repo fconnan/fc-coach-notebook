@@ -99,6 +99,7 @@ export function buildVisibleStripeRects(template: FieldTemplate): RectDef[] {
 
 export function halfFieldClip(template: FieldTemplate) {
   const { lengthPx: pw, widthPx: ph, halfLengthPx: hw, bandPx: band } = PITCH;
+  // Vertical layout: low lx is the top of the screen (Attaque), high lx the bottom (Défense).
   if (template === 'Demi') {
     return {
       grass: { x: -band, y: -band, w: hw + band * 2, h: ph + band * 2 },

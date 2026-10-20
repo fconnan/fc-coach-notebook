@@ -5,6 +5,7 @@ import {
   currentPage,
   pushHistory,
   moveElements,
+  animPreview,
   type Position
 } from '$lib/stores/workspace';
 import { activeProjector, screenDeltaToWorld } from '$lib/utils/projection';
@@ -25,6 +26,7 @@ export function svgPoint(svg: SVGSVGElement, clientX: number, clientY: number): 
  * equipment). Handles additive selection (shift) and group dragging in SVG space.
  */
 export function beginElementDrag(e: PointerEvent, element: { id: string; locked?: boolean }) {
+  if (get(animPreview)) return;
   const svg = (e.currentTarget as SVGElement).ownerSVGElement;
   if (!svg) return;
   e.stopPropagation();

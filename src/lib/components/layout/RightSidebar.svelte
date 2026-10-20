@@ -69,7 +69,7 @@
   const playerAnims = $derived(listCatalogAnimations(!!playerIsGK));
   const currentAnimId = $derived(one ? resolvePlayerAnimId(one) : 'idle');
   const currentSpritePosture = $derived(normalizePostureId(one?.posture || currentAnimId));
-  const isPerspective = $derived($currentPage.view === 'perspective');
+  const isPerspective = false;
   const playerTeam = $derived(one?.team ?? 'none');
   const morphology = $derived($currentPage.morphology || 'man');
 
@@ -480,70 +480,6 @@
         </div>
       </div>
 
-      <div class="prop-group">
-        <label>Affichage</label>
-        <div class="btn-group view-btns">
-          <button class:active={$currentPage.view === '2d'} onclick={() => updatePageSettings({ view: '2d' })}>2D</button>
-          <button class:active={$currentPage.view === 'perspective'} onclick={() => updatePageSettings({ view: 'perspective' })}>2.5D</button>
-        </div>
-        {#if $currentPage.view === 'perspective'}
-          <div class="prop-group perspective-props">
-            <label>Morphologie (page)</label>
-            <div class="btn-group">
-              <button
-                type="button"
-                class:active={($currentPage.morphology || 'man') === 'man'}
-                onclick={() => updatePageSettings({ morphology: 'man' })}
-              >Homme</button>
-              <button
-                type="button"
-                class:active={$currentPage.morphology === 'woman'}
-                onclick={() => updatePageSettings({ morphology: 'woman' })}
-              >Femme</button>
-              <button
-                type="button"
-                class:active={$currentPage.morphology === 'child'}
-                onclick={() => updatePageSettings({ morphology: 'child' })}
-              >Enfant</button>
-            </div>
-            <p class="help-text">Tous les joueurs de la page utilisent la même morphologie.</p>
-          </div>
-          <div class="prop-group perspective-props">
-            <label for="persTilt">Inclinaison ({$currentPage.perspectiveTilt ?? 34}°)</label>
-            <input
-              id="persTilt"
-              type="range"
-              min="15"
-              max="55"
-              value={$currentPage.perspectiveTilt ?? 34}
-              oninput={(e) => updatePageSettings({ perspectiveTilt: parseInt(e.currentTarget.value) })}
-            />
-          </div>
-          <div class="prop-group perspective-props">
-            <label for="persInt">Intensité ({$currentPage.perspectiveIntensity ?? 62}%)</label>
-            <input
-              id="persInt"
-              type="range"
-              min="0"
-              max="100"
-              value={$currentPage.perspectiveIntensity ?? 62}
-              oninput={(e) => updatePageSettings({ perspectiveIntensity: parseInt(e.currentTarget.value) })}
-            />
-            <p class="help-text">Plus élevé = effet de profondeur plus marqué.</p>
-          </div>
-          <div class="prop-group perspective-props">
-            <label for="persScale">Échelle ({Math.round(($currentPage.perspectiveScale ?? 0.86) * 100)}%)</label>
-            <input
-              id="persScale"
-              type="range"
-              min="70"
-              max="100"
-              value={Math.round(($currentPage.perspectiveScale ?? 0.86) * 100)}
-              oninput={(e) => updatePageSettings({ perspectiveScale: parseInt(e.currentTarget.value) / 100 })}
-            />
-          </div>
-        {/if}
-      </div>
 
       <div class="prop-group">
         <label class="toggle-wrap" for="details">

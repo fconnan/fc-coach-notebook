@@ -1,4 +1,5 @@
 import { get, writable } from 'svelte/store';
+import { saveOpenSeance, workspaceOpen } from '$lib/workspace/state';
 import {
   currentPage,
   importPage,
@@ -98,6 +99,10 @@ export async function saveTo(provider: Provider, rawName: string): Promise<boole
 
 /** Re-saves to the existing destination, or opens the save dialog if none. */
 export async function quickSave(): Promise<boolean> {
+  if (get(workspaceOpen)) {
+    await saveOpenSeance();
+    return true;
+  }
   const ref = get(currentRef);
   if (!ref) {
     showSaveDialog.set(true);

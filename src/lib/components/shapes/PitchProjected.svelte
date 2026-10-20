@@ -1,8 +1,15 @@
 <script lang="ts">
   import type { Projector } from '$lib/utils/projection';
   import type { FieldTemplate } from '$lib/utils/fieldBounds';
-  import { contentBox } from '$lib/utils/fieldBounds';
-  import { PITCH, pitchDerived, lightenGrassColor, buildStripeRects, buildGoalRects } from '$lib/utils/pitchMarkings';
+  import {
+    PITCH,
+    pitchDerived,
+    lightenGrassColor,
+    visibleGrassRect,
+    buildVisibleStripeRects,
+    buildOutlinePolygon,
+    buildGoalRects
+  } from '$lib/utils/pitchMarkings';
   import {
     DEFAULT_GOAL_NET_OPACITY,
     goalPlanFrameSegments,
@@ -31,9 +38,6 @@
   const pw = PITCH.lengthPx;
   const ph = PITCH.widthPx;
   const hw = PITCH.halfLengthPx;
-  const band = PITCH.bandPx;
-  const stripeCount = PITCH.stripeCount;
-  const stripeWidth = d.stripeWidth;
 
   const goalAreaW = PITCH.goalAreaW;
   const goalAreaH = PITCH.goalAreaH;
@@ -47,9 +51,9 @@
   const pitchGoals = $derived(buildGoalRects());
   const cornerR = PITCH.cornerR;
 
-  /** Pitch-local (horizontal layout) → display SVG coords. */
+  /** Pitch-local → display SVG coords (same as the 2D vertical rotation). */
   function toDisplay(lx: number, ly: number) {
-    return { x: ly, y: pw - lx };
+    return { x: ph - ly, y: lx };
   }
 
   function proj(lx: number, ly: number) {
@@ -89,117 +93,93 @@
     return pts.join(' ');
   }
 
-  const box = $derived(contentBox(template));
-  const grassStrips = $derived.by(() => {
-    const strips: { path: string; alt: boolean }[] = [];
-    const rows = 28;
-    const y0 = -band;
-    const y1 = ph + band;
-    const x0 = -band;
-    const x1 = pw + band;
-    for (let i = 0; i < rows; i++) {
-      const t0 = y0 + ((y1 - y0) * i) / rows;
-      const t1 = y0 + ((y1 - y0) * (i + 1)) / rows;
-      strips.push({
-        path: quadPath([
-          { lx: x0, ly: t0 },
-          { lx: x1, ly: t0 },
-          { lx: x1, ly: t1 },
-          { lx: x0, ly: t1 }
-        ]),
-        alt: i % 2 === 1
-      });
-    }
-    return strips;
-  });
+  function rectPath(rect: { x: number; y: number; w: number; h: number }) {
+    return quadPath([
+      { lx: rect.x, ly: rect.y },
+      { lx: rect.x + rect.w, ly: rect.y },
+      { lx: rect.x + rect.w, ly: rect.y + rect.h },
+      { lx: rect.x, ly: rect.y + rect.h }
+    ]);
+  }
+
+  const showLeft = $derived(template !== 'DemiBas');
+  const showRight = $derived(template !== 'Demi');
+
+  const grassPath = $derived(rectPath(visibleGrassRect(template)));
 
   const stripeStrips = $derived.by(() => {
     if (!showStripes) return [];
-    const strips: { path: string; alt: boolean }[] = [];
-    for (const stripe of buildStripeRects()) {
-      strips.push({
-        path: quadPath([
-          { lx: stripe.x, ly: stripe.y },
-          { lx: stripe.x + stripe.w, ly: stripe.y },
-          { lx: stripe.x + stripe.w, ly: stripe.y + stripe.h },
-          { lx: stripe.x, ly: stripe.y + stripe.h }
-        ]),
-        alt: true
-      });
-    }
-    return strips;
+    return buildVisibleStripeRects(template).map((stripe) => rectPath(stripe));
   });
+
+  const outlinePath = $derived(
+    quadPath(buildOutlinePolygon(template).map((p) => ({ lx: p.x, ly: p.y })))
+  );
 </script>
 
 <g class="pitch-projected" pointer-events="none">
-  {#each grassStrips as strip}
-    <path class="bg-rect pitch-surface" d={strip.path} fill={grassColor} />
-  {/each}
+  <path class="bg-rect pitch-surface" d={grassPath} fill={grassColor} />
 
-  {#each stripeStrips as strip}
-    <path d={strip.path} fill={lightenGrassColor(grassColor)} pointer-events="none" />
+  {#each stripeStrips as path}
+    <path d={path} fill={lightenGrassColor(grassColor)} pointer-events="none" />
   {/each}
 
   {#if !hideLines}
+    <path class="line" fill="none" d={outlinePath} />
     {#if template === 'Complet'}
-      <path class="line" fill="none" d={quadPath([
-        { lx: 0, ly: 0 }, { lx: pw, ly: 0 }, { lx: pw, ly: ph }, { lx: 0, ly: ph }
-      ])} />
       <path class="line" d={linePath(hw, 0, hw, ph)} />
+      <path class="line" d={circlePath(hw, ph / 2, centerCircleR)} fill="none" />
     {:else if template === 'Demi'}
-      <path class="line" fill="none" d={quadPath([
-        { lx: 0, ly: 0 }, { lx: hw, ly: 0 }, { lx: hw, ly: ph }, { lx: 0, ly: ph }
-      ])} />
+      <path class="line" d={arcPath(hw, ph / 2, centerCircleR, 90, 270)} fill="none" />
     {:else}
-      <path class="line" fill="none" d={quadPath([
-        { lx: hw, ly: 0 }, { lx: pw, ly: 0 }, { lx: pw, ly: ph }, { lx: hw, ly: ph }
-      ])} />
+      <path class="line" d={arcPath(hw, ph / 2, centerCircleR, -90, 90)} fill="none" />
     {/if}
-
-    <path class="line" d={circlePath(hw, ph / 2, centerCircleR)} fill="none" />
     <circle cx={proj(hw, ph / 2).x} cy={proj(hw, ph / 2).y} r={2.5 * proj(hw, ph / 2).scale} fill="#fff" />
 
-    <path class="line" d={arcPath(0, 0, cornerR, 0, 90)} fill="none" />
-    <path class="line" d={arcPath(pw, 0, cornerR, 90, 180)} fill="none" />
-    <path class="line" d={arcPath(pw, ph, cornerR, 180, 270)} fill="none" />
-    <path class="line" d={arcPath(0, ph, cornerR, 270, 360)} fill="none" />
+    {#if showLeft}
+      <path class="line" d={arcPath(0, 0, cornerR, 0, 90)} fill="none" />
+      <path class="line" d={arcPath(0, ph, cornerR, 270, 360)} fill="none" />
+      <path class="line" d={quadPath([
+        { lx: 0, ly: penAreaY },
+        { lx: penAreaW, ly: penAreaY },
+        { lx: penAreaW, ly: penAreaY + penAreaH },
+        { lx: 0, ly: penAreaY + penAreaH }
+      ])} fill="none" />
+      <path class="line" d={quadPath([
+        { lx: 0, ly: goalAreaY },
+        { lx: goalAreaW, ly: goalAreaY },
+        { lx: goalAreaW, ly: goalAreaY + goalAreaH },
+        { lx: 0, ly: goalAreaY + goalAreaH }
+      ])} fill="none" />
+      <circle cx={proj(penSpotX, ph / 2).x} cy={proj(penSpotX, ph / 2).y} r={2.5 * proj(penSpotX, ph / 2).scale} fill="#fff" />
+    {/if}
 
-    <path class="line" d={quadPath([
-      { lx: 0, ly: penAreaY },
-      { lx: penAreaW, ly: penAreaY },
-      { lx: penAreaW, ly: penAreaY + penAreaH },
-      { lx: 0, ly: penAreaY + penAreaH }
-    ])} fill="none" />
-    <path class="line" d={quadPath([
-      { lx: 0, ly: goalAreaY },
-      { lx: goalAreaW, ly: goalAreaY },
-      { lx: goalAreaW, ly: goalAreaY + goalAreaH },
-      { lx: 0, ly: goalAreaY + goalAreaH }
-    ])} fill="none" />
-    <circle cx={proj(penSpotX, ph / 2).x} cy={proj(penSpotX, ph / 2).y} r={2.5 * proj(penSpotX, ph / 2).scale} fill="#fff" />
-
-    <path class="line" d={quadPath([
-      { lx: pw - penAreaW, ly: penAreaY },
-      { lx: pw, ly: penAreaY },
-      { lx: pw, ly: penAreaY + penAreaH },
-      { lx: pw - penAreaW, ly: penAreaY + penAreaH }
-    ])} fill="none" />
-    <path class="line" d={quadPath([
-      { lx: pw - goalAreaW, ly: goalAreaY },
-      { lx: pw, ly: goalAreaY },
-      { lx: pw, ly: goalAreaY + goalAreaH },
-      { lx: pw - goalAreaW, ly: goalAreaY + goalAreaH }
-    ])} fill="none" />
-    <circle
-      cx={proj(penSpotRightX, ph / 2).x}
-      cy={proj(penSpotRightX, ph / 2).y}
-      r={2.5 * proj(penSpotRightX, ph / 2).scale}
-      fill="#fff"
-    />
+    {#if showRight}
+      <path class="line" d={arcPath(pw, 0, cornerR, 90, 180)} fill="none" />
+      <path class="line" d={arcPath(pw, ph, cornerR, 180, 270)} fill="none" />
+      <path class="line" d={quadPath([
+        { lx: pw - penAreaW, ly: penAreaY },
+        { lx: pw, ly: penAreaY },
+        { lx: pw, ly: penAreaY + penAreaH },
+        { lx: pw - penAreaW, ly: penAreaY + penAreaH }
+      ])} fill="none" />
+      <path class="line" d={quadPath([
+        { lx: pw - goalAreaW, ly: goalAreaY },
+        { lx: pw, ly: goalAreaY },
+        { lx: pw, ly: goalAreaY + goalAreaH },
+        { lx: pw - goalAreaW, ly: goalAreaY + goalAreaH }
+      ])} fill="none" />
+      <circle
+        cx={proj(penSpotRightX, ph / 2).x}
+        cy={proj(penSpotRightX, ph / 2).y}
+        r={2.5 * proj(penSpotRightX, ph / 2).scale}
+        fill="#fff"
+      />
+    {/if}
   {/if}
 
   {#if !hideGoals}
-    {#each pitchGoals as g}
+    {#each pitchGoals.filter((g) => (g.side === 'left' ? showLeft : showRight)) as g}
       {#each goalPlanNetBands(g.side, g.rect) as band}
         <path
           class="goal-net"

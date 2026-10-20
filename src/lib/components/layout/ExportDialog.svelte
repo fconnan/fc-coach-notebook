@@ -1,14 +1,12 @@
 <script lang="ts">
-  import { showExportDialog, currentPage, updateSession, clearSelection } from '$lib/stores/workspace';
-  import { exportImage, exportPDF, type ImageExportOptions } from '$lib/services/exportService';
+  import { showExportDialog, clearSelection } from '$lib/stores/workspace';
+  import { exportImage, exportOdsFile, exportSessionPDF, exportSVG, type ImageExportOptions } from '$lib/services/exportService';
 
-  let format = $state<'jpeg' | 'png' | 'pdf'>('jpeg');
+  let format = $state<'jpeg' | 'png' | 'svg' | 'pdf' | 'ods'>('jpeg');
   let resolution = $state<'high' | 'medium' | 'low'>('high');
   let crop = $state(false);
   let busy = $state(false);
   let error = $state('');
-
-  const session = $derived($currentPage?.session ?? {});
 
   const resLabels: Record<string, string> = {
     high: 'Haute (≈ 2000 px)',
@@ -23,7 +21,12 @@
       clearSelection();
       await new Promise(r => setTimeout(r, 30)); // let selection clear render
       if (format === 'pdf') {
-        await exportPDF();
+        await exportSessionPDF();
+      } else if (format === 'svg') {
+        await exportSVG();
+      } else if (format === 'ods') {
+        const warning = await exportOdsFile();
+        if (warning) alert(warning);
       } else {
         await exportImage({ format, resolution, crop } as ImageExportOptions);
       }
@@ -50,11 +53,13 @@
         <div class="seg">
           <button class:active={format === 'jpeg'} onclick={() => format = 'jpeg'}>JPEG</button>
           <button class:active={format === 'png'} onclick={() => format = 'png'}>PNG</button>
-          <button class:active={format === 'pdf'} onclick={() => format = 'pdf'}>PDF (fiche)</button>
+          <button class:active={format === 'svg'} onclick={() => format = 'svg'}>SVG</button>
+          <button class:active={format === 'pdf'} onclick={() => format = 'pdf'}>PDF</button>
+          <button class:active={format === 'ods'} onclick={() => format = 'ods'}>ODS</button>
         </div>
       </div>
 
-      {#if format !== 'pdf'}
+      {#if format === 'jpeg' || format === 'png'}
         <div class="block">
           <div class="block-title">Résolution</div>
           {#each ['high', 'medium', 'low'] as r}
@@ -69,17 +74,12 @@
           <label class="radio"><input type="radio" name="crop" checked={!crop} onchange={() => crop = false} /><span>Terrain complet</span></label>
           <label class="radio"><input type="radio" name="crop" checked={crop} onchange={() => crop = true} /><span>Recadrer sur le contenu</span></label>
         </div>
+      {:else if format === 'svg'}
+        <p class="note">Le fichier SVG joue l'animation tout seul. La pause, le retour et le pas à pas restent dans l'application.</p>
+      {:else if format === 'pdf'}
+        <p class="note">Une page par exercice, avec le texte et la liste des phases.</p>
       {:else}
-        <div class="block">
-          <div class="block-title">Informations de séance</div>
-          <div class="grid2">
-            <label class="fld"><span>Date</span><input type="text" value={session.date || ''} oninput={(e) => updateSession({ date: e.currentTarget.value })} placeholder="22/03/2026" /></label>
-            <label class="fld"><span>Durée (min)</span><input type="number" value={session.durationMin || ''} oninput={(e) => updateSession({ durationMin: parseInt(e.currentTarget.value) || undefined })} /></label>
-            <label class="fld"><span>Niveau</span><input type="text" value={session.level || ''} oninput={(e) => updateSession({ level: e.currentTarget.value })} placeholder="U11 - U13" /></label>
-          </div>
-          <label class="fld full"><span>Objectif</span><input type="text" value={session.objective || ''} oninput={(e) => updateSession({ objective: e.currentTarget.value })} /></label>
-          <p class="note">Le terrain et les notes Markdown sont inclus automatiquement.</p>
-        </div>
+        <p class="note">Écrit la séance dans le classeur de la catégorie. Au-delà de 4 exercices, les suivants restent dans le dossier et dans le PDF.</p>
       {/if}
 
       {#if error}<div class="error">{error}</div>{/if}
@@ -88,7 +88,7 @@
     <div class="modal-footer">
       <button class="secondary" onclick={() => showExportDialog.set(false)} disabled={busy}>Annuler</button>
       <button class="primary" onclick={doExport} disabled={busy}>
-        {busy ? 'Export…' : format === 'pdf' ? 'Exporter PDF' : `Exporter ${format.toUpperCase()}`}
+        {busy ? 'Export…' : `Exporter ${format.toUpperCase()}`}
       </button>
     </div>
   </div>
@@ -117,10 +117,6 @@
   .seg button.active { border-color: var(--accent-primary); background: rgba(94,106,210,0.18); color: var(--accent-primary); }
   .radio { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; cursor: pointer; }
   .radio input { accent-color: var(--accent-primary); }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .fld { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
-  .fld.full { grid-column: 1 / -1; }
-  .fld input { background: var(--bg-canvas); border: 1px solid var(--border-color); color: var(--text-main); padding: 6px 8px; border-radius: 4px; font-size: 13px; }
   .note { font-size: 11px; color: var(--text-muted); font-style: italic; margin: 4px 0 0; }
   .error { color: #ff7b7b; font-size: 12px; margin-top: 8px; }
   .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--border-color); }

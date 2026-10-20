@@ -173,7 +173,7 @@
   });
 </script>
 
-<g class="arrow-element" class:selected={isSelected}>
+<g class="arrow-element" data-id={element.id} class:selected={isSelected}>
   <defs>
     <!-- END markers -->
     <marker id="mk-end-arrow-{element.id}" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">

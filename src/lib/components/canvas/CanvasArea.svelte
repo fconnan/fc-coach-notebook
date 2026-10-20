@@ -9,13 +9,13 @@
   import TextLabel from '../shapes/TextLabel.svelte';
   import Callout from '../shapes/Callout.svelte';
   import Equipment from '../shapes/Equipment.svelte';
-  import { EQUIPMENT_TYPES, isPlaying, playbackElements } from '$lib/stores/workspace';
+  import { EQUIPMENT_TYPES, isPlaying, playbackElements, animPreview, animPhase } from '$lib/stores/workspace';
   import { contentBox, fieldClipRect, FIELD_MARGIN } from '$lib/utils/fieldBounds';
-  import { createProjector, isStandingElement, elementDisplayPosition, activeProjector } from '$lib/utils/projection';
+  import { isStandingElement, elementDisplayPosition, activeProjector } from '$lib/utils/projection';
   import PitchProjected from '../shapes/PitchProjected.svelte';
   import PerspectiveScope from './PerspectiveScope.svelte';
 
-  const displayElements = $derived($isPlaying ? $playbackElements : ($currentPage?.elements ?? []));
+  const displayElements = $derived($animPreview ? $playbackElements : ($currentPage?.elements ?? []));
 
   let svgElement: SVGSVGElement | undefined = $state();
   let containerEl: HTMLDivElement | undefined = $state();
@@ -98,12 +98,8 @@
     return el === svgElement || el?.classList?.contains('pitch-surface') || el?.classList?.contains('bg-rect');
   }
 
-  const isPerspective = $derived($currentPage?.view === 'perspective');
-  const projector = $derived(
-    isPerspective && $currentPage
-      ? createProjector($currentPage.fieldTemplate, $currentPage)
-      : null
-  );
+  const isPerspective = false;
+  const projector = null;
 
   const flatElements = $derived(
     displayElements.filter((el) => !isStandingElement(el.type))
@@ -114,20 +110,12 @@
     return () => activeProjector.set(null);
   });
 
-  const standingElements = $derived.by(() => {
-    if (!projector) return displayElements.filter((el) => isStandingElement(el.type));
-    return displayElements
-      .filter((el) => isStandingElement(el.type))
-      .map((el) => ({
-        el,
-        depth: projector.projectGround(el.position.x, el.position.y).depth
-      }))
-      .sort((a, b) => a.depth - b.depth)
-      .map((x) => x.el);
-  });
+  const standingElements = $derived(
+    displayElements.filter((el) => isStandingElement(el.type))
+  );
 
   function onPointerDown(e: PointerEvent) {
-    if ($isPlaying) return;
+    if ($isPlaying || $animPreview) return;
     if (!isBackground(e.target)) return;
 
     // Middle mouse or Space-pan → pan; otherwise marquee select
@@ -291,19 +279,20 @@
             <rect x={fieldClip.x} y={fieldClip.y} width={fieldClip.w} height={fieldClip.h} />
           </clipPath>
         </defs>
+        {#if projector}
+          <PitchProjected
+            template={$currentPage.fieldTemplate}
+            showStripes={$currentPage.showFieldStripes}
+            grassColor={$currentPage.backgroundColor}
+            hideGoals={$currentPage.hideGoals}
+            hideLines={$currentPage.hidePitchLines}
+            goalNetOpacity={$currentPage.goalNetOpacity ?? 0.25}
+            {projector}
+          />
+        {/if}
         <g clip-path="url(#canvas-field-clip)">
           <PerspectiveScope {projector}>
-          {#if projector}
-            <PitchProjected
-              template={$currentPage.fieldTemplate}
-              showStripes={$currentPage.showFieldStripes}
-              grassColor={$currentPage.backgroundColor}
-              hideGoals={$currentPage.hideGoals}
-              hideLines={$currentPage.hidePitchLines}
-              goalNetOpacity={$currentPage.goalNetOpacity ?? 0.25}
-              {projector}
-            />
-          {:else}
+          {#if !projector}
             <Pitch
               template={$currentPage.fieldTemplate}
               orientation="vertical"
@@ -315,9 +304,9 @@
             />
           {/if}
 
-          <g class="elements elements-flat" class:playing={$isPlaying}>
+          <g class="elements elements-flat" class:playing={$animPreview}>
             {#each flatElements as element (element.id)}
-              {@const sel = !$isPlaying && $selectedIds.includes(element.id)}
+              {@const sel = !$animPreview && $selectedIds.includes(element.id)}
               {#if element.type === 'ball'}
                 <Ball {element} isSelected={sel} />
               {:else if element.type === 'arrow'}
@@ -334,9 +323,9 @@
             {/each}
           </g>
 
-          <g class="elements elements-standing" class:playing={$isPlaying}>
+          <g class="elements elements-standing" class:playing={$animPreview}>
             {#each standingElements as element (element.id)}
-              {@const sel = !$isPlaying && $selectedIds.includes(element.id)}
+              {@const sel = !$animPreview && $selectedIds.includes(element.id)}
               {#if element.type === 'player'}
                 <Player {element} isSelected={sel} />
               {:else if EQUIPMENT_TYPES.includes(element.type)}
@@ -345,6 +334,18 @@
             {/each}
           </g>
           </PerspectiveScope>
+
+          {#if $animPreview && $animPhase}
+            <text
+              x={contentBoxDerived.cx}
+              y={contentBoxDerived.cy - contentBoxDerived.H / 2 + 22}
+              text-anchor="middle"
+              fill="#ffffff"
+              font-size="16"
+              font-weight="700"
+              pointer-events="none"
+            >{$animPhase}</text>
+          {/if}
 
           <!-- Marquee selection rectangle -->
           {#if marquee}

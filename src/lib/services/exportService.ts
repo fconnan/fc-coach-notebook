@@ -1,6 +1,19 @@
 import { get } from 'svelte/store';
-import { currentPage } from '$lib/stores/workspace';
+import { clearSelection, commitToActiveFrame, currentPage, currentPageId, pages } from '$lib/stores/workspace';
 import type { Page } from '$lib/stores/workspace';
+import { injectSmil } from '$lib/animation/timeline';
+import { exportSeanceToOds, importClasseur } from '$lib/ods/classeur';
+import { trainerLabel, type SeanceFile } from '$lib/workspace/model';
+import {
+  attachTemplate,
+  categoryInfo,
+  categoryOds,
+  reloadSeances,
+  seanceHeader,
+  storeCategoryOds,
+  trainer,
+  workspaceOpen
+} from '$lib/workspace/state';
 
 // SVG presentation properties to inline before rasterisation (component-scoped
 // CSS is lost when the SVG is serialised standalone, so we bake computed styles in).
@@ -207,6 +220,153 @@ export async function exportPDF() {
   download(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }), `${(page.name || 'tactique').replace(/[^\w\-]+/g, '_')}.pdf`);
 }
 
+function waitPaint(): Promise<void> {
+  return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+}
+
+async function pickOdsBytes(): Promise<Uint8Array | null> {
+  const picker = (window as unknown as { showOpenFilePicker?: (o: unknown) => Promise<{ getFile: () => Promise<File> }[]> }).showOpenFilePicker;
+  if (!picker) return null;
+  const [handle] = await picker({
+    multiple: false,
+    types: [{ description: 'Classeur ODS', accept: { 'application/vnd.oasis.opendocument.spreadsheet': ['.ods'] } }]
+  });
+  return new Uint8Array(await (await handle.getFile()).arrayBuffer());
+}
+
+export async function exportSVG() {
+  clearSelection();
+  await waitPaint();
+  const page = get(currentPage);
+  const live = document.querySelector('svg.drawing-surface-vertical') as SVGSVGElement | null;
+  if (!live) throw new Error('Canvas SVG introuvable');
+  const vb = baseViewBox(page);
+  const clone = live.cloneNode(true) as SVGSVGElement;
+  inlineStyles(live, clone);
+  clone.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  clone.setAttribute('width', String(vb.w));
+  clone.setAttribute('height', String(vb.h));
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.removeAttribute('style');
+  injectSmil(clone, page);
+  const svg = new XMLSerializer().serializeToString(clone);
+  download(new Blob([svg], { type: 'image/svg+xml' }), `${(page.name || 'exercice').replace(/[^\w\-]+/g, '_')}.svg`);
+}
+
+export async function exportSessionPDF() {
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+  const exercises = get(pages);
+  const saved = get(currentPageId);
+  const header = get(seanceHeader);
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const dark = rgb(0.1, 0.1, 0.12);
+  const muted = rgb(0.4, 0.4, 0.45);
+  clearSelection();
+
+  for (const exercise of exercises) {
+    currentPageId.set(exercise.id);
+    await waitPaint();
+    const canvas = await renderToCanvas({ resolution: 'medium', crop: false });
+    const pngBytes = new Uint8Array(await (await canvasToBlob(canvas, 'image/png')).arrayBuffer());
+    const pdfPage = doc.addPage([595.28, 841.89]);
+    const { width, height } = pdfPage.getSize();
+    const margin = 36;
+    let y = height - margin;
+    pdfPage.drawText(pdfSafe(header.name || tacticNameSafe() || 'Seance'), { x: margin, y: y - 16, size: 16, font: fontBold, color: dark });
+    y -= 28;
+    pdfPage.drawText(pdfSafe(exercise.name || 'Exercice'), { x: margin, y, size: 13, font: fontBold, color: dark });
+    y -= 16;
+    const bits = [header.date && `Date : ${header.date}`, header.phase && header.phase, exercise.drill?.kind, exercise.drill?.duration].filter(Boolean);
+    if (bits.length) {
+      pdfPage.drawText(pdfSafe(bits.join('   ')), { x: margin, y, size: 10, font, color: muted });
+      y -= 14;
+    }
+    const png = await doc.embedPng(pngBytes);
+    const maxW = width - margin * 2;
+    const maxH = 280;
+    let imgW = maxW;
+    let imgH = imgW / (png.width / png.height);
+    if (imgH > maxH) { imgH = maxH; imgW = imgH * (png.width / png.height); }
+    y -= imgH + 8;
+    pdfPage.drawImage(png, { x: margin, y, width: imgW, height: imgH });
+    y -= 18;
+    const notes = markdownToPlain(exercise.markdownContent || '');
+    for (const line of notes.split('\n')) {
+      if (y < margin + 12) break;
+      y -= drawWrapped(pdfPage, line || ' ', margin, y, width - margin * 2, 10, font, dark);
+    }
+    const phases = (exercise.frames || []).map((frame, i) => `${i + 1}. ${frame.name || 'Phase'} (${Math.round((frame.durationMs || 1000) / 100) / 10}s)`);
+    if (phases.length && y > margin + 20) {
+      y -= 8;
+      pdfPage.drawText('Phases', { x: margin, y, size: 11, font: fontBold, color: dark });
+      y -= 14;
+      for (const line of phases) {
+        if (y < margin + 12) break;
+        y -= drawWrapped(pdfPage, line, margin, y, width - margin * 2, 10, font, dark);
+      }
+    }
+  }
+  currentPageId.set(saved);
+  const bytes = await doc.save();
+  const name = (header.name || 'seance').replace(/[^\w\-]+/g, '_');
+  download(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }), `${name}.pdf`);
+}
+
+function tacticNameSafe(): string {
+  return get(seanceHeader).name;
+}
+
+export async function exportOdsFile(): Promise<string | undefined> {
+  if (!get(workspaceOpen) || !get(categoryInfo)) {
+    throw new Error('Ouvrez un espace de travail et une catégorie.');
+  }
+  commitToActiveFrame();
+  let bytes = await categoryOds();
+  if (!bytes) {
+    bytes = await pickOdsBytes();
+    if (!bytes) throw new Error('Choisissez le classeur officiel.');
+    await attachTemplate(bytes);
+  }
+  const saved = get(currentPageId);
+  const exercises = get(pages);
+  const images: { index: number; png: Uint8Array }[] = [];
+  clearSelection();
+  for (let i = 0; i < Math.min(4, exercises.length); i++) {
+    currentPageId.set(exercises[i].id);
+    await waitPaint();
+    const canvas = await renderToCanvas({ resolution: 'medium', crop: false });
+    const png = new Uint8Array(await (await canvasToBlob(canvas, 'image/png')).arrayBuffer());
+    images.push({ index: i, png });
+  }
+  currentPageId.set(saved);
+  const header = get(seanceHeader);
+  const seance: SeanceFile = {
+    ...header,
+    name: header.name || 'Séance',
+    exercises: get(pages)
+  };
+  const result = exportSeanceToOds(bytes, seance, trainerLabel(get(trainer)), get(categoryInfo)?.name || '', images);
+  await storeCategoryOds(result.bytes);
+  return result.warning;
+}
+
+export async function importOdsFile(): Promise<number> {
+  if (!get(workspaceOpen) || !get(categoryInfo)) {
+    throw new Error('Ouvrez un espace de travail et une catégorie.');
+  }
+  let bytes = await categoryOds();
+  if (!bytes) {
+    bytes = await pickOdsBytes();
+    if (!bytes) return 0;
+    await attachTemplate(bytes);
+  }
+  const seances = importClasseur(bytes);
+  await reloadSeances(seances);
+  return seances.length;
+}
+
 function wrapLines(text: string, maxWidth: number, size: number, font: any): string[] {
   const words = text.split(/\s+/);
   const lines: string[] = [];
@@ -228,8 +388,12 @@ function wrapCount(text: string, maxWidth: number, size: number, font: any): num
   return wrapLines(text, maxWidth, size, font).length;
 }
 
+function pdfSafe(text: string): string {
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
+}
+
 function drawWrapped(pdfPage: any, text: string, x: number, y: number, maxWidth: number, size: number, font: any, color: any): number {
-  const lines = wrapLines(text, maxWidth, size, font);
+  const lines = wrapLines(pdfSafe(text), maxWidth, size, font);
   let dy = 0;
   for (const line of lines) {
     pdfPage.drawText(line, { x, y: y - dy, size, font, color });

@@ -22,6 +22,7 @@
 
 <g 
   class="ball-group"
+  data-id={element.id}
   role="graphics-symbol"
   tabindex="0"
   onpointerdown={onPointerDown}

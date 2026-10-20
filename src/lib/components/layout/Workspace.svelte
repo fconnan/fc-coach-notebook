@@ -1,29 +1,18 @@
 <script lang="ts">
   import TopMenu from './TopMenu.svelte';
-  import Toolbar from './Toolbar.svelte';
-  import LeftSidebar from './LeftSidebar.svelte';
-  import RightSidebar from './RightSidebar.svelte';
-  import BottomTabs from './BottomTabs.svelte';
-  import CanvasArea from '../canvas/CanvasArea.svelte';
-  import MarkdownEditor from './MarkdownEditor.svelte';
+  import SchemaEditor from './SchemaEditor.svelte';
+  import { screen, restoring, categoryInfo, seanceFile, seanceHeader, showHome, showCategory, showSeanceScreen } from '$lib/workspace/state';
+  import AppShell from './AppShell.svelte';
+  import WorkspaceGate from './WorkspaceGate.svelte';
+  import WorkspaceBrowser from './WorkspaceBrowser.svelte';
   import ExportDialog from './ExportDialog.svelte';
   import SaveDialog from './SaveDialog.svelte';
   import ConnectionsDialog from './ConnectionsDialog.svelte';
-  import Resizer from './Resizer.svelte';
   import {
-    currentPage, setMarkdownContent, refreshCounter,
     deleteSelected, undo, redo, copySelection, cutSelection, pasteClipboard,
-    duplicateSelection, showExportDialog, showSaveDialog, showConnections, showNotes
+    duplicateSelection, showExportDialog, showSaveDialog, showConnections, currentPage
   } from '$lib/stores/workspace';
-  import {
-    leftWidth, notesWidth, rightWidth, showLeft, showRight,
-    clamp, LEFT_MIN, LEFT_MAX, NOTES_MIN, NOTES_MAX, RIGHT_MIN, RIGHT_MAX
-  } from '$lib/stores/layout';
   import { quickSave } from '$lib/storage';
-
-  function handleMarkdownChange(newVal: string) {
-    setMarkdownContent(newVal);
-  }
 
   function handleGlobalKeydown(e: KeyboardEvent) {
     const target = e.target as HTMLElement;
@@ -49,42 +38,40 @@
 
 <svelte:window onkeydown={handleGlobalKeydown} />
 
-<div class="workspace">
+{#if $restoring}
+  <AppShell></AppShell>
+{:else if $screen === 'gate'}
+  <AppShell>
+    <WorkspaceGate />
+  </AppShell>
+{:else if $screen !== 'exercise'}
+  <AppShell>
+    <WorkspaceBrowser />
+  </AppShell>
+{:else}
+<div class="workspace schema-mode">
   <div class="top-row">
     <TopMenu />
-    <Toolbar />
+    <nav class="crumb">
+      <button type="button" onclick={showHome}>Espace de travail</button>
+      {#if $categoryInfo}
+        <span>/</span>
+        <button type="button" onclick={() => $categoryInfo && showCategory($categoryInfo.id)}>{$categoryInfo.name}</button>
+      {/if}
+      <span>/</span>
+      <button type="button" onclick={showSeanceScreen}>{$seanceHeader.name || 'Séance'}</button>
+      <span>/</span>
+      <span>Schéma</span>
+    </nav>
   </div>
 
-  <div class="main-row">
-    {#if $showLeft}
-      <LeftSidebar width={$leftWidth} />
-      <Resizer onDelta={(dx) => leftWidth.set(clamp($leftWidth + dx, LEFT_MIN, LEFT_MAX))} />
-    {/if}
-
-    <div class="canvas-region">
-      {#key $refreshCounter}
-        <CanvasArea />
-      {/key}
-    </div>
-
-    {#if $showNotes}
-      <Resizer onDelta={(dx) => notesWidth.set(clamp($notesWidth - dx, NOTES_MIN, NOTES_MAX))} />
-      <div class="notes-pane" style:width="{$notesWidth}px">
-        <div class="notes-head">Notes de séance</div>
-        <div class="notes-body">
-          <MarkdownEditor value={$currentPage?.markdownContent || ''} onchange={handleMarkdownChange} />
-        </div>
-      </div>
-    {/if}
-
-    {#if $showRight}
-      <Resizer onDelta={(dx) => rightWidth.set(clamp($rightWidth - dx, RIGHT_MIN, RIGHT_MAX))} />
-      <RightSidebar width={$rightWidth} />
-    {/if}
-  </div>
-
-  <BottomTabs />
+  {#if $categoryInfo && $seanceFile && $currentPage}
+    {#key `${$categoryInfo.id}/${$seanceFile}/${$currentPage.id}`}
+      <SchemaEditor at={`categories/${$categoryInfo.id}/seances/${$seanceFile}/${$currentPage.id}`} />
+    {/key}
+  {/if}
 </div>
+{/if}
 
 {#if $showExportDialog}
   <ExportDialog />
@@ -97,9 +84,10 @@
 {/if}
 
 <style>
+  .workspace.schema-mode { grid-template-rows: auto 1fr; }
   .workspace {
     display: grid;
-    grid-template-rows: auto 1fr 32px;
+    grid-template-rows: auto 1fr 40px;
     height: 100vh;
     width: 100vw;
     background-color: var(--bg-app);
@@ -112,40 +100,16 @@
     z-index: 100;
   }
 
-  .main-row {
-    display: flex;
-    height: 100%;
-    overflow: hidden;
+  .crumb {
+    display: flex; gap: 6px; align-items: center;
+    padding: 6px 12px; font-size: 12px; color: var(--text-muted);
+    border-top: 1px solid var(--border-color);
   }
-
-  .canvas-region {
-    flex: 1;
-    min-width: 0;
-    height: 100%;
-    overflow: hidden;
-    display: flex;
-    background-color: var(--bg-canvas);
+  .crumb button {
+    background: transparent; border: none; color: var(--accent-primary); cursor: pointer; font-size: 12px; padding: 0;
   }
-
-  .notes-pane {
-    flex: 0 0 auto;
-    border-left: 1px solid var(--border-color);
-    background-color: var(--bg-panel);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .notes-head {
-    padding: 12px 16px;
-    font-size: 13px;
-    font-weight: 600;
-    border-bottom: 1px solid var(--border-color);
-  }
-  .notes-body { flex: 1; overflow: hidden; padding: 12px; }
 
   @media print {
-    .top-row, :global(.bottom-tabs), .notes-pane :global(*) {
-      display: none !important;
-    }
+    .top-row { display: none !important; }
   }
 </style>

@@ -5,6 +5,8 @@
     tacticName, newTactic, undo, redo
   } from '$lib/stores/workspace';
   import { quickSave, currentRef } from '$lib/storage';
+  import { pickWorkspace, workspaceOpen } from '$lib/workspace/state';
+  import { exportOdsFile, importOdsFile } from '$lib/services/exportService';
   import { cloudSession } from '$lib/storage/cloudClient';
   import OpenDialog from './OpenDialog.svelte';
 
@@ -22,9 +24,29 @@
 
   function createNew() {
     closeMenu();
+    if ($workspaceOpen) return;
     if ($isDirty && !confirm('Créer une nouvelle tactique ? Les modifications non enregistrées seront perdues.')) return;
     newTactic();
     currentRef.set(null);
+  }
+  function doWorkspace() { closeMenu(); void pickWorkspace(true); }
+  async function doImportOds() {
+    closeMenu();
+    try {
+      const n = await importOdsFile();
+      if (n) alert(`${n} séance(s) importée(s).`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Import impossible.');
+    }
+  }
+  async function doExportOds() {
+    closeMenu();
+    try {
+      const warning = await exportOdsFile();
+      alert(warning || 'Classeur mis à jour.');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Export impossible.');
+    }
   }
   function doOpen() { closeMenu(); showOpen = true; }
   function doSave() { closeMenu(); quickSave(); }
@@ -39,6 +61,10 @@
       items: [
         { label: 'Nouveau', action: createNew },
         { label: 'Ouvrir…', action: doOpen },
+        { label: 'Ouvrir un espace de travail…', action: doWorkspace },
+        { divider: true },
+        { label: 'Importer le classeur', action: () => { void doImportOds(); } },
+        { label: 'Exporter vers le classeur', action: () => { void doExportOds(); } },
         { divider: true },
         { label: 'Enregistrer', action: doSave },
         { label: 'Enregistrer sous…', action: doSaveAs },

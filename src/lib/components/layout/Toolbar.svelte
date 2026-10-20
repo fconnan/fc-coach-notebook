@@ -3,7 +3,7 @@
     zoom, pan, undo, redo, canUndo, canRedo,
     deleteSelected, selectedIds,
     bringToFront, sendToBack, toggleLockSelection,
-    duplicateSelection, showExportDialog, currentPage, updatePageSettings,
+    duplicateSelection, showExportDialog,
     showNotes, theme
   } from '$lib/stores/workspace';
   import { showLeft, showRight } from '$lib/stores/layout';
@@ -22,11 +22,6 @@
   }
 
   const hasSelection = $derived($selectedIds.length > 0);
-  const viewMode = $derived($currentPage?.view ?? '2d');
-
-  function setView(view: '2d' | 'perspective') {
-    updatePageSettings({ view });
-  }
 
   function zoomIn() {
     zoom.update(z => Math.min(6, z * 1.15));
@@ -70,14 +65,10 @@
   </div>
 
   <div class="toolbar-right">
-    <button class="tool-btn notes-btn" class:active={$showNotes} title="Notes de séance" onclick={toggleNotes}>
-      <span>📝</span><span class="btn-text">Notes</span>
+    <button class="tool-btn notes-btn" class:active={$showNotes} title="Fiche de séance" onclick={toggleNotes}>
+      <span>📝</span><span class="btn-text">Fiche</span>
     </button>
     <div class="divider"></div>
-    <div class="view-switch">
-      <button class="tool-btn" class:active={viewMode === '2d'} title="Vue 2D (dessus)" onclick={() => setView('2d')}>2D</button>
-      <button class="tool-btn" class:active={viewMode === 'perspective'} title="Vue perspective" onclick={() => setView('perspective')}>2.5D</button>
-    </div>
     <button class="tool-btn" title="Exporter (PDF / Image)" onclick={() => showExportDialog.set(true)}>📤</button>
     <button class="tool-btn" title={$theme === 'dark' ? 'Passer en clair' : 'Passer en sombre'} onclick={toggleTheme}>{$theme === 'dark' ? '☀️' : '🌙'}</button>
     <button class="tool-btn" title="Plein Écran" onclick={toggleFullscreen}>⛶</button>
@@ -131,17 +122,6 @@
   .tool-btn.active {
     background-color: var(--active-bg);
     color: var(--accent-primary);
-  }
-
-  .view-switch {
-    display: flex;
-    gap: 2px;
-    align-items: center;
-  }
-  .view-switch .tool-btn {
-    font-size: 11px;
-    font-weight: 600;
-    min-width: 36px;
   }
 
   .tool-btn.danger:hover:not(:disabled) {
