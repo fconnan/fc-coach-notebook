@@ -1,87 +1,39 @@
+import type { JSONSchema } from 'monaco-yaml';
 import type { LibraryEntry } from './types';
+import source from './fccn-schema-0.json' with { type: 'json' };
 
-export function schemaDocument(names: string[]) {
+const NAMED = new Set(['template', 'object', 'shape', 'boundary']);
+
+export function schemaDocument(names: string[]): JSONSchema {
   const known = names.length ? names : ['half', 'full'];
-  const point = { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 };
-  const move = {
-    type: 'object',
-    properties: {
-      player: { type: ['string', 'number'] },
-      dribble: point,
-      run: point,
-      from: { type: ['string', 'number'] },
-      pass: { type: ['string', 'number', 'array'] }
+  const doc = structuredClone(source) as JSONSchema;
+  stamp(doc, known);
+  return doc;
+}
+
+function stamp(node: JSONSchema, known: string[]) {
+  const props = node.properties;
+  if (props && typeof props === 'object') {
+    for (const [key, child] of Object.entries(props)) {
+      if (!child || typeof child === 'boolean') continue;
+      if (NAMED.has(key) && acceptsString(child)) child.enum = [...known];
+      stamp(child, known);
     }
-  };
-  const item: Record<string, unknown> = {
-    type: 'object',
-    properties: {
-      team: { type: 'string', enum: ['blue', 'red', 'white', 'yellow'] },
-      shape: { type: 'string', enum: known },
-      at: point,
-      object: { type: 'string', enum: known },
-      player: { type: ['string', 'number'] },
-      ball: { type: ['array', 'string', 'number'] },
-      goal: { type: ['array', 'boolean'] }
-    }
-  };
-  const zone: Record<string, unknown> = {
-    type: 'object',
-    properties: {
-      name: { type: 'string' },
-      box: { type: 'array', items: { type: 'number' }, minItems: 4, maxItems: 4 },
-      items: { type: 'array', items: item },
-      zones: { type: 'array', items: { $ref: '#/$defs/zone' } }
-    }
-  };
-  return {
-    $schema: 'http://json-schema.org/draft-07/schema#',
-    type: 'object',
-    required: ['type', 'version', 'name'],
-    properties: {
-      type: { const: 'fc-tactics-schema' },
-      version: { const: 0 },
-      name: { type: 'string' },
-      units: { enum: ['meters', 'relative'] },
-      svg: { type: 'string' },
-      pitch: {
-        type: 'object',
-        properties: {
-          template: { type: 'string', enum: known },
-          width: { type: 'number' },
-          length: { type: 'number' },
-          margin: { type: 'number' },
-          boundary: { type: 'string', enum: known }
-        }
-      },
-      lines: { type: 'array', items: { type: 'array', items: { type: 'number' } } },
-      players: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            number: { type: ['string', 'number'] },
-            at: point,
-            team: { type: 'string' }
-          }
-        }
-      },
-      zones: { type: 'array', items: { $ref: '#/$defs/zone' } },
-      items: { type: 'array', items: item },
-      phases: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            name: { type: 'string' },
-            duration: { type: 'number' },
-            moves: { type: 'array', items: move }
-          }
-        }
-      }
-    },
-    $defs: { zone }
-  };
+  }
+  const items = node.items;
+  if (Array.isArray(items)) {
+    for (const child of items) if (child && typeof child !== 'boolean') stamp(child, known);
+  } else if (items && typeof items !== 'boolean') stamp(items, known);
+  for (const list of [node.oneOf, node.anyOf, node.allOf]) {
+    if (!list) continue;
+    for (const child of list) if (child && typeof child !== 'boolean') stamp(child, known);
+  }
+  if (node.additionalProperties && typeof node.additionalProperties !== 'boolean') stamp(node.additionalProperties, known);
+  for (const child of Object.values(node.definitions || {})) stamp(child, known);
+}
+
+function acceptsString(node: JSONSchema) {
+  return node.type === 'string' || (Array.isArray(node.type) && node.type.includes('string'));
 }
 
 export function namesFrom(entries: LibraryEntry[]): string[] {

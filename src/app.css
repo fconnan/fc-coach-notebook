@@ -1,4 +1,10 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+@import "../node_modules/flowbite-svelte/dist/theme-selector/themes/default.css";
+@import "../node_modules/flowbite-svelte/dist/theme-selector/themes/default-runtime.css";
+@plugin "flowbite/plugin";
+@custom-variant dark (&:where(.dark, .dark *));
+@source "../node_modules/flowbite-svelte/dist";
+@source "../node_modules/flowbite-svelte-icons/dist";
 
 :root {
   /* Light theme (default) */
@@ -66,13 +72,16 @@ body, html {
   -webkit-user-select: none;
 }
 
-ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
+input, textarea {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
-button {
+select[data-part="select"] {
+  padding-inline-end: 2.5rem;
+}
+
+button:not([data-scope]) {
   font-family: inherit;
   border: none;
   background: none;
@@ -82,4 +91,140 @@ button {
 
 input {
   font-family: inherit;
+}
+
+/* Flowbite semantic edges. The default tokens sit on gray-200, which disappears on white. */
+:root {
+  --color-body: var(--color-gray-700);
+  --color-default-subtle: var(--color-gray-300);
+  --color-default: var(--color-gray-300);
+  --color-default-medium: var(--color-gray-400);
+  --color-default-strong: var(--color-gray-500);
+}
+
+.dark {
+  --color-body: var(--color-gray-300);
+  --color-default-subtle: var(--color-gray-700);
+  --color-default: var(--color-gray-600);
+  --color-default-medium: var(--color-gray-500);
+  --color-default-strong: var(--color-gray-400);
+}
+
+[data-scope="navbar"] {
+  position: relative;
+  z-index: 20;
+  background: var(--color-neutral-primary-soft);
+  border-bottom: 1px solid var(--color-default-medium);
+  box-shadow: 0 1px 3px rgb(16 24 40 / 0.08);
+}
+
+.dark [data-scope="navbar"] {
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.45);
+}
+
+[data-scope="navbar"]:has(+ [data-scope="app-path"]) {
+  box-shadow: none;
+  border-bottom-color: var(--color-default);
+}
+
+[data-scope="app-path"] {
+  background: var(--color-gray-200);
+  border-bottom: 1px solid var(--color-default-medium);
+  box-shadow: 0 1px 3px rgb(16 24 40 / 0.08);
+}
+
+[data-scope="app-path"] select,
+[data-scope="app-path"] button.path-home,
+[data-scope="app-path"] button.path-back {
+  box-sizing: border-box;
+  height: 1.625rem;
+  min-height: 0;
+  border: 1px solid var(--color-default-medium);
+  border-radius: 4px;
+  background: var(--color-neutral-secondary-medium);
+  color: var(--color-heading);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.05);
+}
+
+[data-scope="app-path"] select {
+  padding: 0 1.15rem 0 0.4rem;
+}
+
+[data-scope="app-path"] button.path-home,
+[data-scope="app-path"] button.path-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.625rem;
+}
+
+[data-scope="app-path"] button.path-home:hover,
+[data-scope="app-path"] button.path-back:hover {
+  background: var(--color-neutral-tertiary-medium);
+}
+
+.dark [data-scope="app-path"] {
+  background: var(--color-gray-800);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.45);
+}
+
+[data-scope="table"],
+[data-scope="table-search"] table {
+  border: 1px solid var(--color-default-medium);
+  border-radius: var(--radius-base);
+  overflow: hidden;
+}
+
+[data-scope="table"] table,
+[data-scope="table-search"] table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+[data-scope="table"] :is(th, td),
+[data-scope="table-search"] :is(th, td) {
+  border: none;
+  border-bottom: 1px solid var(--color-gray-200);
+}
+
+.dark [data-scope="table"] :is(th, td),
+.dark [data-scope="table-search"] :is(th, td) {
+  border-bottom-color: var(--color-gray-800);
+}
+
+[data-scope="table"] tbody tr:last-child :is(th, td),
+[data-scope="table-search"] tbody tr:last-child :is(th, td) {
+  border-bottom: none;
+}
+
+[data-scope="table"] thead th,
+[data-scope="table-search"] thead th {
+  background: var(--color-neutral-secondary-medium);
+  color: var(--color-heading);
+  border-bottom: 1px solid var(--color-default-medium);
+}
+
+.dark [data-scope="table"] thead th,
+.dark [data-scope="table-search"] thead th {
+  border-bottom-color: var(--color-default-medium);
+}
+
+[data-scope="table"] thead th:first-child,
+[data-scope="table-search"] thead th:first-child {
+  border-top-left-radius: calc(var(--radius-base) - 1px);
+}
+
+[data-scope="table"] thead th:last-child,
+[data-scope="table-search"] thead th:last-child {
+  border-top-right-radius: calc(var(--radius-base) - 1px);
+}
+
+[data-scope="table"] tbody tr:last-child td:first-child,
+[data-scope="table-search"] tbody tr:last-child td:first-child {
+  border-bottom-left-radius: calc(var(--radius-base) - 1px);
+}
+
+[data-scope="table"] tbody tr:last-child td:last-child,
+[data-scope="table-search"] tbody tr:last-child td:last-child {
+  border-bottom-right-radius: calc(var(--radius-base) - 1px);
 }

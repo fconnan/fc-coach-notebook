@@ -1,21 +1,30 @@
 <script lang="ts">
-  import favicon from '$lib/assets/favicon.svg';
-  import { folderLabel, needsPermission, pickWorkspace, refreshWorkspace, resumeWorkspace, workspaceOpen } from '$lib/workspace/state';
+  import type { Snippet } from 'svelte';
+  import logo from '$lib/assets/logo.png';
+  import { Button, ButtonGroup, Navbar, NavBrand } from 'flowbite-svelte';
+  import { ExpandOutline, MinimizeOutline, RefreshOutline } from 'flowbite-svelte-icons';
+  import { folderLabel, needsPermission, pickWorkspace, refreshWorkspace, resumeWorkspace, showHome, workspaceOpen } from '$lib/workspace/state';
 
-  let { children } = $props();
+  let { children, fill = false, bar }: { children?: Snippet; fill?: boolean; bar?: Snippet } = $props();
 
   const FULLSCREEN = 'fctactics.fullscreen';
+  const DARK = 'fctactics_ui_dark';
   let fullscreen = $state(false);
   let nativeFullscreen = false;
   let choosing = $state(false);
 
   function savedFullscreen(): boolean {
-    try { return localStorage.getItem(FULLSCREEN) === '1'; } catch { return false; }
+    try { return sessionStorage.getItem(FULLSCREEN) === '1'; } catch { return false; }
   }
 
   function remember(next: boolean) {
     fullscreen = next;
-    try { localStorage.setItem(FULLSCREEN, next ? '1' : '0'); } catch { /* ignore */ }
+    try { sessionStorage.setItem(FULLSCREEN, next ? '1' : '0'); } catch { /* ignore */ }
+  }
+
+  function toggleDark() {
+    const dark = document.documentElement.classList.toggle('dark');
+    try { sessionStorage.setItem(DARK, dark ? '1' : '0'); } catch { /* ignore */ }
   }
 
   async function enterNative() {
@@ -70,134 +79,57 @@
 
 <svelte:document onfullscreenchange={onFullscreenChange} />
 
-<div class="shell">
-  <header>
-    <div class="bar" class:wide={fullscreen}>
-      <img src={favicon} alt="" class="mark" />
-      <div class="titles">
-        <p class="title">FC Tactics</p>
-        <p class="subtitle">Fiches de séance et schémas d’exercices</p>
-      </div>
+<div class="flex h-screen flex-col overflow-hidden bg-gray-100 text-gray-900 dark:bg-gray-950 dark:text-white">
+  <Navbar fluid class="shrink-0">
+    <NavBrand href="#marque" onclick={(e) => { e.preventDefault(); if ($workspaceOpen) void showHome(); }}>
+      <img src={logo} alt="" class="me-3 h-10 w-auto object-contain" />
+      <span class="flex flex-col items-start text-left">
+        <span class="text-lg font-semibold whitespace-nowrap">FC Coach Notebook</span>
+        <span class="text-sm font-normal text-gray-500 dark:text-gray-400">Préparer la saison d’entraînement</span>
+      </span>
+    </NavBrand>
+    <div class="ms-auto flex items-center gap-2">
       {#if $workspaceOpen}
-        <div class="actions">
-          <div class="ws">
-            <button type="button" class="ws-id" title="Changer de dossier" disabled={choosing} onclick={changeFolder}>
-              <span class="kicker">Espace de travail</span>
-              <span class="name">{$folderLabel || 'Sans nom'}</span>
-            </button>
-            <div class="ws-tools">
-              <button type="button" class="icon" aria-label="Actualiser" title="Actualiser" onclick={() => refreshWorkspace()}>
-                <svg viewBox="0 0 16 16" class="glyph" aria-hidden="true">
-                  <path d="M13.2 8a5.2 5.2 0 1 1-1.55-3.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-                  <path d="M13.4 2.2V5.4H10.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          <button
-            type="button"
-            class="icon solo"
-            aria-pressed={fullscreen}
-            aria-label={fullscreen ? 'Quitter le plein écran' : 'Plein écran'}
-            title={fullscreen ? 'Quitter le plein écran' : 'Plein écran'}
-            onclick={toggleFullscreen}
-          >
-            {#if fullscreen}
-              <svg viewBox="0 0 16 16" class="glyph" aria-hidden="true">
-                <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-              </svg>
-            {:else}
-              <svg viewBox="0 0 16 16" class="glyph" aria-hidden="true">
-                <path d="M6 2.5H3.2v2.8M10 2.5h2.8v2.8M6 13.5H3.2v-2.8M10 13.5h2.8v-2.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            {/if}
-          </button>
-        </div>
+        <ButtonGroup>
+          <Button color="alternative" disabled={choosing} onclick={changeFolder} title="Espace de travail">
+            <span class="max-w-56 truncate">{$folderLabel || 'Sans nom'}</span>
+          </Button>
+          <Button color="alternative" aria-label="Actualiser" title="Actualiser" onclick={() => refreshWorkspace()}>
+            <RefreshOutline class="h-4 w-4" />
+          </Button>
+        </ButtonGroup>
+        <Button
+          color="alternative"
+          aria-pressed={fullscreen}
+          aria-label={fullscreen ? 'Quitter le plein écran' : 'Plein écran'}
+          title={fullscreen ? 'Quitter le plein écran' : 'Plein écran'}
+          onclick={toggleFullscreen}
+        >
+          {#if fullscreen}
+            <MinimizeOutline class="h-4 w-4" />
+          {:else}
+            <ExpandOutline class="h-4 w-4" />
+          {/if}
+        </Button>
       {/if}
+      <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-base p-2 text-sm text-body hover:bg-neutral-secondary-soft hover:text-heading focus:ring-2 focus:ring-neutral-tertiary focus:outline-none" aria-label="Dark mode" onclick={toggleDark}>
+        <svg class="hidden h-4 w-4 dark:block" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5V3m0 18v-2M7.05 7.05 5.636 5.636m12.728 12.728L16.95 16.95M5 12H3m18 0h-2M7.05 16.95l-1.414 1.414M18.364 5.636 16.95 7.05M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z"></path>
+        </svg>
+        <svg class="block h-4 w-4 dark:hidden" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 21a9 9 0 0 1-.5-17.986V3c-.354.966-.5 1.911-.5 3a9 9 0 0 0 9 9c.239 0 .254.018.488 0A9.004 9.004 0 0 1 12 21Z"></path>
+        </svg>
+      </button>
     </div>
-  </header>
-  <main class:wide={fullscreen}>
-    {#if children}{@render children()}{/if}
-  </main>
+  </Navbar>
+  {#if bar}
+    <div class="flex shrink-0 items-center px-2 py-1.5 sm:px-4" data-scope="app-path">
+      {@render bar()}
+    </div>
+  {/if}
+  <div class={fill ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'min-h-0 flex-1 overflow-y-auto'}>
+    <main class={fill ? 'flex h-full min-h-0 flex-col px-4 py-4' : fullscreen ? 'px-3 py-6' : 'mx-auto w-full max-w-6xl px-4 py-6'}>
+      {#if children}{@render children()}{/if}
+    </main>
+  </div>
 </div>
-
-<style>
-  .shell {
-    min-height: 100vh;
-    background: #f8fafc;
-    color: #0f172a;
-    font-family: 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
-  }
-  header { border-bottom: 1px solid #e2e8f0; background: #fff; }
-  .bar, main {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: min(72rem, 100%);
-    margin: 0 auto;
-    padding: 20px 16px;
-  }
-  .bar.wide, main.wide { width: 100%; padding-left: 12px; padding-right: 12px; }
-  main { display: block; padding-top: 24px; padding-bottom: 40px; }
-  .mark { width: 40px; height: 40px; flex: 0 0 auto; }
-  .titles { min-width: 0; flex: 1; }
-  .title { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
-  .subtitle { margin: 0; font-size: 14px; color: #64748b; }
-  .actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; }
-  .ws {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    padding: 3px 4px 3px 12px;
-    border: 1px solid #e2e8f0;
-    border-radius: 10px;
-    background: #f8fafc;
-  }
-  .ws-id {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1px;
-    border: none;
-    background: transparent;
-    border-radius: 8px;
-    padding: 2px 8px;
-    cursor: pointer;
-    min-width: 0;
-  }
-  .kicker { font-size: 11px; line-height: 1.2; color: #64748b; font-weight: 500; }
-  .name {
-    max-width: 14rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 14px;
-    line-height: 1.2;
-    font-weight: 600;
-    color: #0f172a;
-  }
-  .ws-id:hover { background: #e2e8f0; }
-  .ws-id:disabled { opacity: 0.45; cursor: default; }
-  .ws-tools {
-    display: flex;
-    gap: 2px;
-    padding-left: 4px;
-    border-left: 1px solid #e2e8f0;
-  }
-  .icon {
-    width: 32px;
-    height: 32px;
-    display: grid;
-    place-items: center;
-    border: none;
-    background: transparent;
-    border-radius: 8px;
-    color: #374151;
-    cursor: pointer;
-  }
-  .icon:hover { background: #e2e8f0; }
-  .icon:disabled { opacity: 0.45; cursor: default; }
-  .icon.solo { border: 1px solid #e2e8f0; background: #fff; }
-  .icon.solo:hover { background: #f8fafc; border-color: #94a3b8; }
-  .glyph { width: 16px; height: 16px; display: block; }
-</style>

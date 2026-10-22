@@ -1,13 +1,11 @@
-export const SCHEMA_TYPE = 'fc-tactics-schema';
-export const SCHEMA_VERSION = 0;
+export const SCHEMA_TYPE = 'fccn-schema:0';
 
 export interface SchemaDoc {
   type?: string;
-  version?: number;
   name?: string;
   units?: 'meters' | 'relative';
   pitch?: PitchSpec;
-  lines?: number[][];
+  lines?: Array<number[] | Segment>;
   players?: PlayerSpec[];
   zones?: ZoneSpec[];
   items?: ItemSpec[];
@@ -26,23 +24,54 @@ export interface PitchSpec {
 export interface PlayerSpec {
   number?: string | number;
   at?: number[];
+  x?: number;
+  y?: number;
   team?: string;
 }
 
 export interface ZoneSpec {
   name?: string;
-  box?: number[];
+  box?: number[] | Rect;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  width?: number;
+  height?: number;
   zones?: ZoneSpec[];
   items?: ItemSpec[];
+}
+
+export interface Rect {
+  x: number;
+  y: number;
+  w?: number;
+  h?: number;
+  width?: number;
+  height?: number;
+}
+
+export interface Segment {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface Spot {
+  x: number;
+  y: number;
 }
 
 export interface ItemSpec {
   team?: string;
   shape?: string;
   at?: number[];
+  x?: number;
+  y?: number;
   object?: string;
   player?: string | number;
-  ball?: number[] | string | number;
+  ball?: number[] | Spot | string | number;
   goal?: number[] | boolean;
 }
 
@@ -54,10 +83,10 @@ export interface PhaseSpec {
 
 export interface MoveSpec {
   player?: string | number;
-  dribble?: number[];
-  run?: number[];
+  dribble?: number[] | Spot;
+  run?: number[] | Spot;
   from?: string | number;
-  pass?: string | number | number[];
+  pass?: string | number | number[] | Spot;
 }
 
 export interface LibraryEntry {
@@ -101,6 +130,8 @@ export interface Scene {
   length: number;
   margin: number;
   lines: number[][];
+  /** Pitch drawing in SVG coordinates, y downward, origin at the top-left of the playing area. */
+  drawing: string;
   zones: PlacedZone[];
   players: PlacedPlayer[];
   marks: PlacedMark[];

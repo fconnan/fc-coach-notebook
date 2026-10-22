@@ -1,10 +1,20 @@
 <script lang="ts">
-  import { pages, renameExercise, updateExerciseDrill, setExerciseMarkdown } from '$lib/stores/workspace';
-  import { categoryInfo, seanceHeader, trainer, patchHeader, showExercise, createExercise } from '$lib/workspace/state';
-  import { AREAS, KINDS, KNOWN, METHODS, PHASES, consignesCell, splitMarkdown, trainerLabel, writeSection, type SectionKey } from '$lib/workspace/model';
+  import { onMount } from 'svelte';
+  import { pages, type Page } from '$lib/stores/workspace';
+  import { exerciseDocument, exerciseOrder } from '$lib/workspace/exerciseFile';
+  import { categoryInfo, exercisePaths, seanceHeader, trainer, showExercise, createExercise, saveSessionMarkdown } from '$lib/workspace/state';
+  import { trainerLabel } from '$lib/workspace/model';
+  import { fillTemplate, readTemplate } from '$lib/workspace/templates';
+  import { Alert, Button, Card, Heading, Input, Label, Modal } from 'flowbite-svelte';
+  import { PenOutline } from 'flowbite-svelte-icons';
+  import MarkdownEditor from './MarkdownEditor.svelte';
+  import SchemaPreview from './SchemaPreview.svelte';
 
-  const sheets = Array.from({ length: 80 }, (_, i) => `S${i + 1}`);
   let adding = $state(false);
+  let editing = $state(false);
+  let draft = $state('');
+  let savingText = $state(false);
+  let template = $state('');
   let entryName = $state('');
   let plainName = $state('');
   let addError = $state('');
@@ -21,148 +31,180 @@
     if (!addError) adding = false;
   }
 
-  function sectionValue(markdown: string, key: SectionKey): string {
-    if (key === 'consignes') return consignesCell(markdown);
-    return splitMarkdown(markdown).sections[key] || '';
+  function renderMarkdown(source: string): string {
+    const html: string[] = [];
+    let list = false;
+    const closeList = () => {
+      if (!list) return;
+      html.push('</ul>');
+      list = false;
+    };
+    for (const line of source.replace(/\r\n/g, '\n').split('\n')) {
+      if (!line.trim()) {
+        closeList();
+        continue;
+      }
+      const heading = /^(#{1,3})\s+(.*)$/.exec(line);
+      if (heading) {
+        closeList();
+        const level = heading[1].length;
+        html.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+        continue;
+      }
+      const item = /^[-*]\s+(.*)$/.exec(line);
+      if (item) {
+        if (!list) {
+          html.push('<ul>');
+          list = true;
+        }
+        html.push(`<li>${inline(item[1])}</li>`);
+        continue;
+      }
+      closeList();
+      html.push(`<p>${inline(line)}</p>`);
+    }
+    closeList();
+    return html.join('');
   }
 
-  function setSection(id: string, markdown: string, key: SectionKey, value: string) {
-    setExerciseMarkdown(id, writeSection(markdown, key, value));
+  function inline(text: string): string {
+    return escape(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>');
+  }
+
+  function escape(text: string): string {
+    return text.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch] || ch);
+  }
+
+  function exerciseHtml(page: Page, order: number): string {
+    const drill = page.drill || {};
+    return renderMarkdown(exerciseDocument({
+      name: page.name,
+      drill: {
+        kind: drill.kind || '',
+        method: drill.method || '',
+        duration: drill.duration || '',
+        area: drill.area || '',
+        headcount: drill.headcount || '',
+        equipment: drill.equipment || ''
+      },
+      markdownContent: page.markdownContent || ''
+    }, exerciseOrder(($exercisePaths[page.id] || '').split('/').pop() || '', order)));
+  }
+
+  function schemaAt(id: string): string {
+    return $exercisePaths[id] || '';
+  }
+
+  const shown = $derived(($seanceHeader.markdown || '').trim()
+    ? $seanceHeader.markdown || ''
+    : fillTemplate(template, {
+      name: $seanceHeader.name,
+      phase: $seanceHeader.phase,
+      principle: $seanceHeader.principle,
+      means: $seanceHeader.means,
+      trainer: trainerLabel($trainer),
+      date: $seanceHeader.date,
+      category: $categoryInfo?.name || '',
+      sheet: $seanceHeader.sheet
+    }));
+
+  onMount(() => {
+    void readTemplate('session').then(text => { template = text; });
+  });
+
+  function startEdit() {
+    draft = shown;
+    editing = true;
+  }
+
+  function cancelEdit() {
+    editing = false;
+    draft = '';
+  }
+
+  async function saveEdit() {
+    savingText = true;
+    const ok = await saveSessionMarkdown(draft);
+    savingText = false;
+    if (ok) editing = false;
   }
 </script>
 
-<div class="board">
-  <h1>{$seanceHeader.name || 'Séance'}</h1>
-  <div class="header">
-    <label>Phase
-      <input list="board-phases" value={$seanceHeader.phase} oninput={(e) => patchHeader({ phase: e.currentTarget.value })} />
-    </label>
-    <label>Principe
-      <input value={$seanceHeader.principle} oninput={(e) => patchHeader({ principle: e.currentTarget.value })} />
-    </label>
-    <label>Moyens
-      <input value={$seanceHeader.means} oninput={(e) => patchHeader({ means: e.currentTarget.value })} />
-    </label>
-    <label>Nom
-      <input value={trainerLabel($trainer)} readonly />
-    </label>
-    <label>Date
-      <input value={$seanceHeader.date} oninput={(e) => patchHeader({ date: e.currentTarget.value })} />
-    </label>
-    <label>Catégorie
-      <input value={$categoryInfo?.name || ''} readonly />
-    </label>
-    <label>Feuille
-      <select value={$seanceHeader.sheet} onchange={(e) => patchHeader({ sheet: e.currentTarget.value })}>
-        {#each sheets as sheet}<option value={sheet}>{sheet}</option>{/each}
-      </select>
-    </label>
-    <label>Nom de la séance
-      <input value={$seanceHeader.name} oninput={(e) => patchHeader({ name: e.currentTarget.value })} />
-    </label>
+<div class="space-y-4">
+  <div class="flex items-center justify-between gap-3">
+    <Heading tag="h2" class="text-xl">Thème</Heading>
+    {#if !editing}
+      <Button size="sm" color="brand" onclick={startEdit}>Éditer le thème</Button>
+    {/if}
   </div>
-  <datalist id="board-phases">{#each PHASES as item}<option value={item}></option>{/each}</datalist>
+  <Card size="xl" class="p-6">
+    {#if editing}
+      <div class="mb-3 flex justify-end gap-2">
+        <Button size="sm" color="alternative" onclick={cancelEdit}>Annuler</Button>
+        <Button size="sm" color="brand" disabled={savingText} onclick={() => { void saveEdit(); }}>Sauver</Button>
+      </div>
+      <MarkdownEditor bind:value={draft} />
+    {:else}
+      <div class="session-md">{@html renderMarkdown(shown)}</div>
+    {/if}
+  </Card>
 
-  <div class="ex-head">
-    <h2>Exercices</h2>
-    <button type="button" onclick={openAdd}>Ajouter</button>
+  <div class="flex items-center justify-between">
+    <Heading tag="h2" class="text-xl">Exercices</Heading>
+    <Button size="sm" color="brand" onclick={openAdd}>Ajouter un exercice</Button>
   </div>
 
   {#each $pages as page, index (page.id)}
-    <article>
-      <header>
-        <span>{index + 1}</span>
-        <input value={page.name} oninput={(e) => renameExercise(page.id, e.currentTarget.value)} />
-        <button type="button" onclick={() => showExercise(page.id)}>Schéma</button>
-      </header>
-      <div class="grid">
-        <label>Procédé
-          <input list="board-kinds" value={page.drill?.kind || ''} oninput={(e) => updateExerciseDrill(page.id, { kind: e.currentTarget.value })} />
-        </label>
-        <label>Méthode
-          <input list="board-methods" value={page.drill?.method || ''} oninput={(e) => updateExerciseDrill(page.id, { method: e.currentTarget.value })} />
-        </label>
-        <label>Durée
-          <input value={page.drill?.duration || ''} oninput={(e) => updateExerciseDrill(page.id, { duration: e.currentTarget.value })} />
-        </label>
-        <label>Aire
-          <input list="board-areas" value={page.drill?.area || ''} oninput={(e) => updateExerciseDrill(page.id, { area: e.currentTarget.value })} />
-        </label>
-        <label>Effectif
-          <input value={page.drill?.headcount || ''} oninput={(e) => updateExerciseDrill(page.id, { headcount: e.currentTarget.value })} />
-        </label>
-        <label>Matériels
-          <input value={page.drill?.equipment || ''} oninput={(e) => updateExerciseDrill(page.id, { equipment: e.currentTarget.value })} />
-        </label>
+    <Card size="xl" class="p-6">
+      <div class="mb-3 flex justify-end">
+        <Button size="sm" color="alternative" onclick={() => showExercise(page.id)}>
+          <PenOutline class="me-1 h-3.5 w-3.5" /> Modifier
+        </Button>
       </div>
-      {#each KNOWN as section}
-        <label class="block">{section.title}
-          <textarea
-            rows="3"
-            value={sectionValue(page.markdownContent || '', section.key)}
-            oninput={(e) => setSection(page.id, page.markdownContent || '', section.key, e.currentTarget.value)}
-          ></textarea>
-        </label>
-      {/each}
-    </article>
+      <div class="grid items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]">
+        <div class="exercise-frame flex min-h-0 flex-col overflow-hidden lg:h-0 lg:min-h-full">
+          <div class="exercise-md min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+            {@html exerciseHtml(page, index)}
+          </div>
+        </div>
+        <SchemaPreview at={schemaAt(page.id)} exerciseId={page.id} />
+      </div>
+    </Card>
   {/each}
-  <datalist id="board-kinds">{#each KINDS as item}<option value={item}></option>{/each}</datalist>
-  <datalist id="board-methods">{#each METHODS as item}<option value={item}></option>{/each}</datalist>
-  <datalist id="board-areas">{#each AREAS as item}<option value={item}></option>{/each}</datalist>
 </div>
 
-{#if adding}
-  <div class="overlay">
-    <form class="dialog" aria-labelledby="exercise-title" onsubmit={(e) => { e.preventDefault(); void confirmAdd(); }}>
-      <h2 id="exercise-title">Nouvel exercice</h2>
-      <label>Répertoire
-        <input bind:value={entryName} />
-      </label>
-      <label>Nom
-        <input bind:value={plainName} />
-      </label>
-      {#if addError}<p class="error">{addError}</p>{/if}
-      <div class="dialog-actions">
-        <button type="button" class="quiet" onclick={() => adding = false}>Annuler</button>
-        <button type="submit">OK</button>
-      </div>
-    </form>
-  </div>
-{/if}
-
 <style>
-  .board { display: flex; flex-direction: column; gap: 16px; color: #0f172a; }
-  h1, h2 { margin: 0; }
-  h1 { font-size: 20px; font-weight: 600; }
-  h2 { font-size: 15px; font-weight: 600; }
-  .header, .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .header {
-    border: 1px solid #e2e8f0; border-radius: 16px; background: #fff; padding: 16px;
+  .session-md { font-size: 0.975rem; line-height: 1.5; }
+  .session-md :global(h1) { margin: 0 0 0.75rem; font-size: 1.15rem; font-weight: 700; }
+  .session-md :global(h2) { margin: 0.9rem 0 0.3rem; font-size: 1rem; font-weight: 650; }
+  .session-md :global(p) { margin: 0.35rem 0; }
+  .session-md :global(ul) { margin: 0.25rem 0 0.6rem; padding-left: 1.15rem; list-style: disc; }
+  .session-md :global(li) { margin: 0.12rem 0; }
+  .exercise-frame {
+    border: 1px solid var(--color-default-medium);
+    border-radius: 0;
   }
-  .ex-head { display: flex; justify-content: space-between; align-items: center; }
-  article {
-    border: 1px solid #e2e8f0; border-radius: 16px; padding: 16px;
-    display: flex; flex-direction: column; gap: 8px; background: #fff;
+  .exercise-md {
+    padding: 0.9rem 1rem;
+    font-size: 0.925rem;
+    line-height: 1.45;
   }
-  header { display: flex; gap: 8px; align-items: center; }
-  header span { font-weight: 700; color: #64748b; }
-  header input { flex: 1; }
-  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #64748b; }
-  input, select, textarea {
-    font: inherit; font-size: 14px; color: #0f172a;
-    background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 10px;
-  }
-  textarea { resize: vertical; }
-  button {
-    border: none; background: #2563eb; color: #fff; border-radius: 8px;
-    padding: 6px 12px; cursor: pointer; font-size: 14px; font-weight: 500; letter-spacing: 0;
-  }
-  button:hover { background: #1d4ed8; }
-  .quiet { border: 1px solid #d4d4d4; background: #fff; color: #374151; }
-  .quiet:hover { background: #f8fafc; }
-  .overlay { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: rgba(15, 23, 42, 0.35); }
-  .dialog { display: flex; flex-direction: column; gap: 12px; width: min(24rem, calc(100% - 32px)); padding: 16px; border-radius: 16px; background: #fff; border: 1px solid #e2e8f0; }
-  .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
-  .error { margin: 0; font-size: 13px; color: #b91c1c; }
-  input[readonly] { color: #64748b; background: #f8fafc; }
+  .exercise-md :global(h1) { margin: 0 0 0.75rem; font-size: 1.05rem; font-weight: 650; }
+  .exercise-md :global(h2) { margin: 0.9rem 0 0.3rem; font-size: 0.95rem; font-weight: 650; }
+  .exercise-md :global(h3) { margin: 0.75rem 0 0.25rem; font-size: 0.9rem; font-weight: 650; }
+  .exercise-md :global(p) { margin: 0.35rem 0; }
+  .exercise-md :global(ul) { margin: 0.25rem 0 0.6rem; padding-left: 1.15rem; list-style: disc; }
+  .exercise-md :global(li) { margin: 0.12rem 0; }
 </style>
+
+<Modal title="Nouvel exercice" bind:open={adding} size="md">
+  <form id="exercise-form" class="space-y-3" onsubmit={(e) => { e.preventDefault(); void confirmAdd(); }}>
+    <Label>Répertoire <Input class="mt-1" bind:value={entryName} /></Label>
+    <Label>Nom <Input class="mt-1" bind:value={plainName} /></Label>
+    {#if addError}<Alert color="red">{addError}</Alert>{/if}
+  </form>
+  {#snippet footer()}
+    <Button color="alternative" onclick={() => adding = false}>Annuler</Button>
+    <Button color="brand" type="submit" form="exercise-form">OK</Button>
+  {/snippet}
+</Modal>

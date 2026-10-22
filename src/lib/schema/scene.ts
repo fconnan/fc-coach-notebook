@@ -8,6 +8,7 @@ import type {
   PlacedZone,
   Scene,
   SchemaDoc,
+  Segment,
   ZoneSpec
 } from './types';
 
@@ -18,7 +19,7 @@ function parts(value: string): string[] {
 function score(exerciseDir: string, schemaDir: string): [number, number] | null {
   const ex = parts(exerciseDir);
   const sc = parts(schemaDir);
-  const global = sc[0] === 'library';
+  const global = (sc[0] === 'studio' && sc[1] === 'library') || sc[0] === 'library';
   let shared = 0;
   while (shared < ex.length && shared < sc.length && ex[shared] === sc[shared]) shared += 1;
   const insideExercise = shared === ex.length;
@@ -46,9 +47,18 @@ function num(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function pair(value: unknown): [number, number] | null {
-  if (!Array.isArray(value) || value.length < 2) return null;
-  return [num(value[0]), num(value[1])];
+function pointOf(value: unknown): [number, number] | null {
+  if (Array.isArray(value) && value.length >= 2) return [num(value[0]), num(value[1])];
+  if (value && typeof value === 'object') {
+    const spot = value as { x?: unknown; y?: unknown };
+    if (typeof spot.x === 'number' && typeof spot.y === 'number') return [spot.x, spot.y];
+  }
+  return null;
+}
+
+function placedAt(item: { x?: number; y?: number; at?: unknown }): [number, number] | null {
+  if (typeof item.x === 'number' && typeof item.y === 'number') return [item.x, item.y];
+  return pointOf(item.at);
 }
 
 function idOf(value: string | number | undefined): string {
@@ -61,6 +71,7 @@ interface Pitch {
   margin: number;
   boundary: string;
   lines: number[][];
+  drawing: string;
 }
 
 function pitchOf(doc: SchemaDoc, library: Map<string, SchemaDoc>, depth: number): Pitch {
@@ -69,7 +80,8 @@ function pitchOf(doc: SchemaDoc, library: Map<string, SchemaDoc>, depth: number)
   let length = num(spec.length, 0);
   let margin = num(spec.margin, 0);
   let boundary = spec.boundary || '';
-  let lines = Array.isArray(doc.lines) ? doc.lines : [];
+  let lines = linesOf(doc.lines);
+  let drawing = spec.template ? '' : (doc.svg || '');
   if (spec.template && depth < 6) {
     const base = library.get(spec.template);
     if (base) {
@@ -79,11 +91,43 @@ function pitchOf(doc: SchemaDoc, library: Map<string, SchemaDoc>, depth: number)
       margin = spec.margin === undefined ? parent.margin : margin;
       boundary = boundary || parent.boundary;
       if (!lines.length) lines = parent.lines;
+      if (!drawing) drawing = parent.drawing;
     }
   }
   if (!width) width = 68;
   if (!length) length = 105;
-  return { width, length, margin, boundary, lines };
+  return { width, length, margin, boundary, lines, drawing };
+}
+
+function linesOf(value: SchemaDoc['lines']): number[][] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(line => {
+    const parsed = segmentOf(line);
+    return parsed ? [parsed] : [];
+  });
+}
+
+function segmentOf(value: unknown): number[] | null {
+  if (Array.isArray(value) && value.length >= 4) return [num(value[0]), num(value[1]), num(value[2]), num(value[3])];
+  if (value && typeof value === 'object') {
+    const line = value as Partial<Segment>;
+    if ([line.x1, line.y1, line.x2, line.y2].every(item => typeof item === 'number')) {
+      return [line.x1 as number, line.y1 as number, line.x2 as number, line.y2 as number];
+    }
+  }
+  return null;
+}
+
+function zoneBox(zone: ZoneSpec): [number, number, number, number] | null {
+  const listed = Array.isArray(zone.box) ? zone.box : null;
+  if (listed && listed.length >= 4) return [num(listed[0]), num(listed[1]), num(listed[2]), num(listed[3])];
+  const rect = zone.box && !Array.isArray(zone.box) ? zone.box : zone;
+  const across = typeof rect.w === 'number' ? rect.w : rect.width;
+  const down = typeof rect.h === 'number' ? rect.h : rect.height;
+  if (typeof rect.x === 'number' && typeof rect.y === 'number' && typeof across === 'number' && typeof down === 'number') {
+    return [rect.x, rect.y, across, down];
+  }
+  return null;
 }
 
 function mapPoint(at: [number, number], box: [number, number, number, number], relative: boolean): [number, number] {
@@ -99,11 +143,10 @@ function placePlayers(
 ) {
   const relative = doc.units !== 'meters';
   for (const player of doc.players || []) {
-    const at = pair(player.at);
+    const at = placedAt(player);
     if (!at) continue;
     const [x, y] = mapPoint(at, box, relative);
-    const side = player.team || team;
-    into.push({ id: `${side}:${idOf(player.number)}`, team: side, x, y });
+    into.push({ id: `${team}:${idOf(player.number)}`, team, x, y });
   }
 }
 
@@ -121,20 +164,20 @@ function placeItems(
       if (shape) placePlayers(shape, item.team || 'blue', box, players);
     }
     if (item.player !== undefined) {
-      const at = pair(item.at);
+      const at = placedAt(item);
       if (at) {
         const side = item.team || 'blue';
         players.push({ id: `${side}:${idOf(item.player)}`, team: side, x: box[0] + at[0], y: box[1] + at[1] });
       }
     }
     if (item.object) {
-      const at = pair(item.at);
+      const at = placedAt(item);
       const mark = library.get(item.object);
       if (at && mark?.svg) marks.push({ svg: mark.svg, x: box[0] + at[0], y: box[1] + at[1] });
     }
     if (item.ball !== undefined) {
       if (Array.isArray(item.ball)) {
-        const at = pair(item.ball);
+        const at = pointOf(item.ball);
         if (at) ballHolder.id = `@${box[0] + at[0]},${box[1] + at[1]}`;
       } else {
         ballHolder.id = idOf(item.ball as string | number);
@@ -153,9 +196,9 @@ function placeZones(
   ballHolder: { id: string }
 ) {
   for (const zone of zones || []) {
-    const box = zone.box;
-    if (!box || box.length < 4) continue;
-    const world: [number, number, number, number] = [origin[0] + num(box[0]), origin[1] + num(box[1]), num(box[2]), num(box[3])];
+    const box = zoneBox(zone);
+    if (!box) continue;
+    const world: [number, number, number, number] = [origin[0] + box[0], origin[1] + box[1], box[2], box[3]];
     placed.push({ name: zone.name || '', x: world[0], y: world[1], w: world[2], h: world[3] });
     placeItems(zone.items, library, world, players, marks, ballHolder);
     placeZones(zone.zones, library, [world[0], world[1]], placed, players, marks, ballHolder);
@@ -174,7 +217,7 @@ function findPlayer(players: PlacedPlayer[], token: string | number | undefined)
 
 function applyMove(players: PlacedPlayer[], move: MoveSpec) {
   const who = findPlayer(players, move.player);
-  const dest = pair(move.dribble) || pair(move.run);
+  const dest = pointOf(move.dribble) || pointOf(move.run);
   if (who && dest) {
     who.x = dest[0];
     who.y = dest[1];
@@ -191,7 +234,7 @@ function arrowsFor(before: PlacedPlayer[], after: PlacedPlayer[], moves: MoveSpe
     }
     if (move.pass !== undefined && move.from !== undefined) {
       const from = findPlayer(before, move.from);
-      const target = Array.isArray(move.pass) ? pair(move.pass) : null;
+      const target = typeof move.pass === 'number' || typeof move.pass === 'string' ? null : pointOf(move.pass);
       const mate = typeof move.pass === 'number' || typeof move.pass === 'string'
         ? findPlayer(after, move.pass)
         : null;
@@ -270,6 +313,7 @@ export function buildScene(
     length: pitch.length,
     margin: pitch.margin,
     lines: pitch.lines,
+    drawing: pitch.drawing,
     zones,
     players,
     marks,
@@ -306,10 +350,72 @@ function wavy(x1: number, y1: number, x2: number, y2: number): string {
   return d;
 }
 
+function attrMap(source: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  for (const match of source.matchAll(/([\w:-]+)="([^"]*)"/g)) attrs[match[1]] = match[2];
+  return attrs;
+}
+
+function markExtent(svg: string): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const add = (x: number, y: number) => {
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      xs.push(x);
+      ys.push(y);
+    }
+  };
+  for (const match of svg.matchAll(/<rect\b([^>]*?)\/?>/gi)) {
+    const attrs = attrMap(match[1]);
+    const x = num(Number(attrs.x));
+    const y = num(Number(attrs.y));
+    add(x, y);
+    add(x + num(Number(attrs.width)), y + num(Number(attrs.height)));
+  }
+  for (const match of svg.matchAll(/<(?:polygon|polyline)\b([^>]*?)\/?>/gi)) {
+    const points = (attrMap(match[1]).points || '').trim().split(/[\s,]+/).map(Number);
+    for (let i = 0; i + 1 < points.length; i += 2) add(points[i], points[i + 1]);
+  }
+  for (const match of svg.matchAll(/<circle\b([^>]*?)\/?>/gi)) {
+    const attrs = attrMap(match[1]);
+    const radius = num(Number(attrs.r));
+    add(num(Number(attrs.cx)) - radius, num(Number(attrs.cy)) - radius);
+    add(num(Number(attrs.cx)) + radius, num(Number(attrs.cy)) + radius);
+  }
+  for (const match of svg.matchAll(/<line\b([^>]*?)\/?>/gi)) {
+    const attrs = attrMap(match[1]);
+    add(num(Number(attrs.x1)), num(Number(attrs.y1)));
+    add(num(Number(attrs.x2)), num(Number(attrs.y2)));
+  }
+  if (!xs.length) return null;
+  let stroke = 0;
+  for (const match of svg.matchAll(/stroke-width="([\d.]+)"/gi)) stroke = Math.max(stroke, num(Number(match[1])));
+  const ink = stroke / 2;
+  return { minX: Math.min(...xs) - ink, minY: Math.min(...ys) - ink, maxX: Math.max(...xs) + ink, maxY: Math.max(...ys) + ink };
+}
+
+function frameOf(scene: Scene): { left: number; right: number; top: number; bottom: number } {
+  const room = scene.margin || 0;
+  const gap = room > 0 ? room : 1;
+  let left = room;
+  let right = room;
+  let top = room;
+  let bottom = room;
+  for (const mark of scene.marks) {
+    const box = markExtent(mark.svg);
+    if (!box) continue;
+    left = Math.max(left, gap - (mark.x + box.minX));
+    right = Math.max(right, mark.x + box.maxX - scene.width + gap);
+    bottom = Math.max(bottom, gap - (mark.y + box.minY));
+    top = Math.max(top, mark.y + box.maxY - scene.length + gap);
+  }
+  return { left, right, top, bottom };
+}
+
 export function renderSvg(scene: Scene): string {
-  const margin = scene.margin || 0;
-  const width = scene.width + margin * 2;
-  const height = scene.length + margin * 2;
+  const frame = frameOf(scene);
+  const width = scene.width + frame.left + frame.right;
+  const height = scene.length + frame.top + frame.bottom;
   const players = scene.players.map(player => {
     const fill = TEAM_COLOR[player.team] || '#334155';
     const ink = player.team === 'white' || player.team === 'yellow' ? '#111827' : '#ffffff';
@@ -324,6 +430,9 @@ export function renderSvg(scene: Scene): string {
   const lines = scene.lines.filter(line => line.length >= 4).map(line =>
     `<line x1="${line[0]}" y1="${line[1]}" x2="${line[2]}" y2="${line[3]}" stroke="#ffffff" stroke-width="0.18" fill="none"/>`
   ).join('');
+  const drawing = scene.drawing
+    ? `<g transform="translate(${frame.left} ${frame.top})">${scene.drawing}</g>`
+    : '';
   const marks = scene.marks.map(mark =>
     `<g transform="translate(${mark.x} ${mark.y})">${mark.svg}</g>`
   ).join('');
@@ -345,9 +454,12 @@ export function renderSvg(scene: Scene): string {
     </marker>
   </defs>
   <rect width="${width}" height="${height}" fill="#166534"/>
-  <g transform="translate(${margin} ${margin + scene.length}) scale(1 -1)">
+  <g transform="translate(${frame.left} ${frame.top + scene.length}) scale(1 -1)">
     <rect x="0" y="0" width="${scene.width}" height="${scene.length}" fill="#2b6b39"/>
     ${lines}
+  </g>
+  ${drawing}
+  <g transform="translate(${frame.left} ${frame.top + scene.length}) scale(1 -1)">
     ${zones}
     ${marks}
     ${arrows}

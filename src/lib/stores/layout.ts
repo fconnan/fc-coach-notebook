@@ -2,17 +2,16 @@ import { writable, type Writable } from 'svelte/store';
 
 function persisted<T>(key: string, initial: T): Writable<T> {
   let value = initial;
-  if (typeof localStorage !== 'undefined') {
+  if (typeof sessionStorage !== 'undefined') {
     try {
-      const raw = localStorage.getItem(key);
+      const raw = sessionStorage.getItem(key);
       if (raw != null) value = JSON.parse(raw);
     } catch { /* ignore */ }
   }
   const store = writable<T>(value);
   store.subscribe((v) => {
-    if (typeof localStorage !== 'undefined') {
-      try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* ignore */ }
-    }
+    if (typeof sessionStorage === 'undefined') return;
+    try { sessionStorage.setItem(key, JSON.stringify(v)); } catch { /* ignore */ }
   });
   return store;
 }

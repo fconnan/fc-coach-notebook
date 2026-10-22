@@ -1,17 +1,26 @@
 <script lang="ts">
-  import favicon from '$lib/assets/favicon.svg';
+  import logo from '$lib/assets/logo.png';
   import '../app.css';
   import { onMount } from 'svelte';
-  import { theme } from '$lib/stores/workspace';
   import { refreshSession } from '$lib/storage/cloudClient';
-import { startAutosave } from '$lib/storage/session';
-import { restoreWorkspace, startWorkspaceAutosave } from '$lib/workspace/state';
+  import { idbDel } from '$lib/storage/idb';
+  import { startAutosave } from '$lib/storage/session';
+  import { installAddress } from '$lib/workspace/address';
+  import { restoreWorkspace, startWorkspaceAutosave } from '$lib/workspace/state';
 
   let { children } = $props();
 
   onMount(() => {
-    const saved = localStorage.getItem('fctactics_theme');
-    if (saved === 'dark' || saved === 'light') theme.set(saved);
+    try {
+      for (const key of ['fctactics_ws_cursor', 'fctactics_ws_snap', 'fctactics_session', 'fctactics_theme', 'THEME_PREFERENCE_KEY', 'fctactics.fullscreen', 'fctactics_left_w', 'fctactics_notes_w', 'fctactics_right_w', 'fctactics_show_left', 'fctactics_show_right', 'fctactics_destinations']) {
+        localStorage.removeItem(key);
+      }
+      sessionStorage.removeItem('fctactics_ws_snap');
+      sessionStorage.removeItem('fctactics_session');
+      if (window.name.startsWith('fctactics:')) window.name = '';
+    } catch { /* ignore */ }
+    void idbDel('workspace_snapshot');
+    installAddress();
     refreshSession();
     void (async () => {
       await restoreWorkspace();
@@ -20,17 +29,15 @@ import { restoreWorkspace, startWorkspaceAutosave } from '$lib/workspace/state';
     })();
   });
 
-  $effect(() => {
-    const t = $theme;
-    if (typeof document !== 'undefined') {
-      document.documentElement.setAttribute('data-theme', t);
-      try { localStorage.setItem('fctactics_theme', t); } catch { /* ignore */ }
-    }
-  });
 </script>
 
 <svelte:head>
-  <link rel="icon" href={favicon} />
+  <link rel="icon" href={logo} />
+  <script>
+    try {
+      if (sessionStorage.getItem('fctactics_ui_dark') === '1') document.documentElement.classList.add('dark');
+    } catch (e) { /* session indisponible */ }
+  </script>
 </svelte:head>
 
 {@render children()}

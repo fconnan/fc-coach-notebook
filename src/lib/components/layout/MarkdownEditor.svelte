@@ -1,71 +1,77 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { Crepe, CrepeFeature } from '@milkdown/crepe';
   import type { Action } from 'svelte/action';
 
-  // Import Crepe styles
-  import '@milkdown/crepe/theme/common/style.css';
-  import '@milkdown/crepe/theme/frame.css';
-
-  // Svelte 5 props
-  let { 
-    value = $bindable(''), 
-    placeholder = 'Start typing...',
-    onchange 
+  let {
+    value = $bindable(''),
+    placeholder = 'Écrire…',
+    preview = false,
+    embedded = false,
+    onchange
   } = $props<{
     value: string;
     placeholder?: string;
+    preview?: boolean;
+    embedded?: boolean;
     onchange?: (markdown: string) => void;
   }>();
 
-  let editor: any = $state(null);
+  type Handle = {
+    setReadonly: (value: boolean) => unknown;
+    getMarkdown: () => string;
+    destroy: () => Promise<unknown>;
+  };
+
+  let handle = $state<Handle | null>(null);
 
   const milkdown: Action = (node) => {
-    const crepe = new Crepe({
-      root: node,
-      defaultValue: value,
-      features: {
-        [CrepeFeature.Table]: true, // Explicitly enable tables as requested
-      },
-      featureConfigs: {
-        // You can add more configurations here if needed
-      }
-    });
-
-    crepe.on((listener) => {
-      listener.markdownUpdated((_ctx: any, markdown: string) => {
-        if (value !== markdown) {
-          value = markdown;
-          if (onchange) onchange(markdown);
+    let dead = false;
+    let current: Handle | null = null;
+    const started = value;
+    void (async () => {
+      const [{ Crepe, CrepeFeature }] = await Promise.all([
+        import('@milkdown/crepe'),
+        import('@milkdown/crepe/theme/common/style.css'),
+        import('@milkdown/crepe/theme/frame.css')
+      ]);
+      if (dead) return;
+      const crepe = new Crepe({
+        root: node,
+        defaultValue: started,
+        featureConfigs: {
+          [CrepeFeature.Placeholder]: { text: placeholder }
         }
       });
-    });
-
-    crepe.create().then((instance) => {
-      editor = instance;
-    });
-
+      crepe.on(listener => {
+        listener.markdownUpdated((_ctx: unknown, markdown: string) => {
+          if (value === markdown) return;
+          value = markdown;
+          onchange?.(markdown);
+        });
+      });
+      await crepe.create();
+      if (dead) {
+        await crepe.destroy();
+        return;
+      }
+      crepe.setReadonly(preview);
+      current = crepe;
+      handle = crepe;
+    })();
     return {
       destroy() {
-        if (crepe) {
-          crepe.destroy();
-        }
+        dead = true;
+        handle = null;
+        void current?.destroy();
       }
     };
   };
 
-  // Sync external changes to the editor
   $effect(() => {
-    if (editor && value !== undefined) {
-      const currentMarkdown = editor.getMarkdown();
-      if (currentMarkdown !== value) {
-        editor.setMarkdown(value);
-      }
-    }
+    handle?.setReadonly(preview);
   });
 </script>
 
-<div class="editor-container">
+<div class="editor-container" class:embedded>
   <div use:milkdown class="milkdown-wrapper"></div>
 </div>
 
@@ -77,26 +83,24 @@
     border: 1px solid #e2e8f0;
     border-radius: 12px;
     background-color: #ffffff;
-    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-    transition: all 0.2s ease;
     overflow: hidden;
     display: flex;
     flex-direction: column;
   }
 
-  .editor-container:focus-within {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  .editor-container.embedded {
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
   }
 
   .milkdown-wrapper {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 1rem;
-    font-family: 'Inter', ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+    padding: 0.75rem 1rem 1rem;
   }
 
-  /* Customizing Milkdown's look and feel for a more premium experience */
   :global(.milkdown) {
     height: 100%;
     max-width: 100% !important;
@@ -107,7 +111,6 @@
     outline: none !important;
   }
 
-  /* Ensuring tables are well-styled */
   :global(.milkdown table) {
     border-collapse: collapse;
     width: 100%;
@@ -125,24 +128,4 @@
     background-color: #f8fafc;
     font-weight: 600;
   }
-
-  /* Scrollbar styling for better aesthetics */
-  .milkdown-wrapper::-webkit-scrollbar {
-    width: 8px;
-  }
-
-  .milkdown-wrapper::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .milkdown-wrapper::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
-    border-radius: 4px;
-  }
-
-  .milkdown-wrapper::-webkit-scrollbar-thumb:hover {
-    background: #94a3b8;
-  }
 </style>
-
-

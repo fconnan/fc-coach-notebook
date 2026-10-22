@@ -8,11 +8,11 @@ import {
 } from '$lib/stores/workspace';
 
 export const ODS_NAME = 'classeur-fff-ligue-bretagne.ods';
-export const PRODUCT = 'fc-tactics';
-export const WORKSPACE_TYPE = 'fc-tactics-workspace';
-export const CATEGORY_TYPE = 'fc-tactics-category';
-export const SEANCE_TYPE = 'fc-tactics-seance';
-export const EXERCISE_TYPE = 'fc-tactics-exercise';
+export const PRODUCT = 'fc-coach-notebook';
+export const WORKSPACE_TYPE = 'fccn-workspace:0';
+export const CATEGORY_TYPE = 'fccn-category:0';
+export const SEANCE_TYPE = 'fccn-session:0';
+export const EXERCISE_TYPE = 'fccn-exercise:0';
 
 export const PHASES = [
   'Conserver-progresser',
@@ -64,11 +64,14 @@ export type SectionKey = (typeof KNOWN)[number]['key'];
 export interface TrainerInfo {
   type?: string;
   name: string;
+  sport: string;
 }
 
 export interface CategoryInfo {
   id: string;
   name: string;
+  audience?: string;
+  uuid?: string;
 }
 
 export interface SeanceHeader {
@@ -79,6 +82,7 @@ export interface SeanceHeader {
   phase: string;
   principle: string;
   means: string;
+  markdown?: string;
 }
 
 export interface SeanceFile extends SeanceHeader {
@@ -103,20 +107,22 @@ export interface PageStyle {
   morphology: PageMorphology;
 }
 
+export const DEFAULT_SPORT = 'soccer';
+
 export function emptyTrainer(): TrainerInfo {
-  return { type: WORKSPACE_TYPE, name: '' };
+  return { type: WORKSPACE_TYPE, name: '', sport: DEFAULT_SPORT };
 }
 
 type LegacyTrainer = Partial<TrainerInfo> & { produit?: string; prenom?: string; nom?: string; product?: string };
 
 export function trainerFromJson(info: LegacyTrainer | null | undefined): TrainerInfo {
   const legacy = [info?.prenom, info?.nom].filter(Boolean).join(' ');
-  return { type: WORKSPACE_TYPE, name: (info?.name || legacy).trim() };
+  return { type: WORKSPACE_TYPE, name: (info?.name || legacy).trim(), sport: info?.sport?.trim() || DEFAULT_SPORT };
 }
 
 export function isWorkspaceIndex(info: LegacyTrainer | null | undefined): boolean {
   if (!info) return false;
-  return info.type === WORKSPACE_TYPE || info.product === PRODUCT || info.produit === PRODUCT || Boolean(info.name || info.prenom || info.nom);
+  return info.type === WORKSPACE_TYPE || info.type === 'fc-tactics-workspace' || info.product === PRODUCT || info.product === 'fc-tactics' || info.produit === PRODUCT || info.produit === 'fc-tactics' || Boolean(info.name || info.prenom || info.nom);
 }
 
 export function trainerLabel(t: TrainerInfo): string {
@@ -262,32 +268,7 @@ export function drillFromBlock(block: {
   };
 }
 
-/** Turn the previous single-page localStorage document into a séance, when it has content. */
+/** L’ancienne copie navigateur n’est plus reprise. */
 export function legacySeance(): { seance: SeanceFile; style: PageStyle } | null {
-  if (typeof localStorage === 'undefined') return null;
-  let raw: string | null = null;
-  try { raw = localStorage.getItem('fctactics_session'); } catch { return null; }
-  if (!raw) return null;
-  let data: { name?: string; page?: Partial<Page> };
-  try { data = JSON.parse(raw); } catch { return null; }
-  if (!data?.page) return null;
-  const page = migratePage(data.page);
-  const hasContent = page.elements.length > 0 || (page.markdownContent || '').trim() || (data.name && data.name !== 'Sans titre');
-  if (!hasContent) return null;
-  const style = styleFromPage(page, 'style-1', 'Style 1');
-  page.styleId = style.id;
-  page.name = page.name || 'Exercice 1';
-  return {
-    style,
-    seance: {
-      id: crypto.randomUUID(),
-      name: data.name || page.name || 'Séance',
-      sheet: 'S1',
-      date: page.session?.date || '',
-      phase: '',
-      principle: '',
-      means: '',
-      exercises: [page]
-    }
-  };
+  return null;
 }

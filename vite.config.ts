@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
@@ -32,7 +33,7 @@ export const win32 = posix.win32;`
 };
 
 export default defineConfig({
-	plugins: [sveltekit(), pathBrowserifyEsm],
+	plugins: [tailwindcss(), sveltekit(), pathBrowserifyEsm],
 	resolve: {
 		alias: [
 			{ find: /^monaco-editor\/(.*)/, replacement: `${monacoRoot}/$1` }

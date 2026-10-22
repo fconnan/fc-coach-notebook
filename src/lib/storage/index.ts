@@ -1,4 +1,5 @@
 import { get, writable } from 'svelte/store';
+import { saveExerciseDraft } from '$lib/workspace/exerciseDraft';
 import { saveOpenSeance, workspaceOpen } from '$lib/workspace/state';
 import {
   currentPage,

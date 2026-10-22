@@ -1098,7 +1098,7 @@ function writeJson(file, data) {
 }
 
 fs.mkdirSync(root, { recursive: true });
-writeJson(path.join(root, 'index.json'), { type: 'fc-tactics-category', name: 'U14 Garçons' });
+writeJson(path.join(root, 'index.json'), { type: 'fccn-category:0', name: 'U14 Garçons' });
 fs.rmSync(path.join(root, 'seances'), { recursive: true, force: true });
 
 placed.forEach((entry, index) => {
@@ -1107,7 +1107,7 @@ placed.forEach((entry, index) => {
   const dir = path.join(root, 'seances', dirName);
   const date = formatDate.format(entry.date);
   writeJson(path.join(dir, 'index.json'), {
-    type: 'fc-tactics-seance',
+    type: 'fccn-session:0',
     name: `${entry.theme.name} — ${entry.levelIndex + 1}/5 — ${entry.item.step}`,
     sheet: `S${sheet}`,
     date,
@@ -1118,7 +1118,7 @@ placed.forEach((entry, index) => {
   entry.item.blocks.forEach((block, blockIndex) => {
     const [id, name, role] = roles[blockIndex];
     writeJson(path.join(dir, id, 'index.json'), {
-      type: 'fc-tactics-exercise',
+      type: 'fccn-exercise:0',
       id,
       name,
       ...PAGE,

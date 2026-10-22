@@ -1,10 +1,11 @@
 {
-	"name": "app",
+	"name": "fc-coach-notebook",
 	"private": true,
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
+		"postinstall": "node scripts/patch-vite-filter.mjs",
 		"build": "vite build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
@@ -17,9 +18,14 @@
 		"@sveltejs/adapter-auto": "^7.0.0",
 		"@sveltejs/kit": "^2.50.2",
 		"@sveltejs/vite-plugin-svelte": "^6.2.4",
+		"@tailwindcss/vite": "^4.3.3",
 		"@types/node": "^26.0.1",
+		"flowbite": "^4.0.2",
+		"flowbite-svelte": "^2.0.0-next.14",
+		"flowbite-svelte-icons": "^3.1.0",
 		"svelte": "^5.54.0",
 		"svelte-check": "^4.4.2",
+		"tailwindcss": "^4.3.3",
 		"typescript": "^5.9.3",
 		"vite": "^7.3.1"
 	},

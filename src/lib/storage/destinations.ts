@@ -14,9 +14,9 @@ const DEFAULTS: Destinations = {
 const KEY = 'fctactics_destinations';
 
 function load(): Destinations {
-  if (typeof localStorage === 'undefined') return structuredClone(DEFAULTS);
+  if (typeof sessionStorage === 'undefined') return structuredClone(DEFAULTS);
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = sessionStorage.getItem(KEY);
     if (!raw) return structuredClone(DEFAULTS);
     const p = JSON.parse(raw);
     return {
@@ -31,7 +31,6 @@ function load(): Destinations {
 export const destinations = writable<Destinations>(load());
 
 destinations.subscribe(v => {
-  if (typeof localStorage !== 'undefined') {
-    try { localStorage.setItem(KEY, JSON.stringify(v)); } catch { /* ignore */ }
-  }
+  if (typeof sessionStorage === 'undefined') return;
+  try { sessionStorage.setItem(KEY, JSON.stringify(v)); } catch { /* ignore */ }
 });

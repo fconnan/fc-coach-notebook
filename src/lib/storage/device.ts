@@ -4,7 +4,7 @@ export function supportsFS(): boolean {
   return typeof (window as any).showSaveFilePicker === 'function';
 }
 
-const JSON_TYPES = [{ description: 'Tactique FC Tactics', accept: { 'application/json': ['.json'] } }];
+const JSON_TYPES = [{ description: 'FC Coach Notebook', accept: { 'application/json': ['.json'] } }];
 
 export async function saveDeviceNew(name: string, content: string): Promise<any | null> {
   if (!supportsFS()) {

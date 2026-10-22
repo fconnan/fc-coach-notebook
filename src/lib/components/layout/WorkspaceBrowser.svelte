@@ -1,39 +1,108 @@
 <script lang="ts">
   import SeanceBoard from './SeanceBoard.svelte';
+  import ExerciseEditor from './ExerciseEditor.svelte';
+  import { currentPage } from '$lib/stores/workspace';
   import {
-    trainer, categories, styles, categoryInfo, seanceList, seanceFile, screen,
-    createCategory, commitTrainerName, showHome, showCategory, showSeance, createSeance,
-    createStyle, updateStyle
+    trainer, categories, styles, seasons, themes, libraryItems, screen, portraitUrl,
+    exercisePaths,
+    navDoor, navArea, navItem, navChild,
+    createCategory, commitTrainerName, commitTrainerSport, savePortrait, openDoor, openArea, openNavItem, openNavChild, createSeance,
+    createStyle, updateStyle, createSeason, createSlot, createTheme, createThemeSession, createLibraryItem
   } from '$lib/workspace/state';
-  import type { PageStyle } from '$lib/workspace/model';
+  import { LIBRARY_KINDS, WORKSPACE_DOORS, type LibraryKind, type WorkspaceArea, type WorkspaceDoor } from '$lib/workspace/catalog';
+  import seancesArt from '$lib/assets/door-seances.jpg';
+  import seasonArt from '$lib/assets/door-season.jpg';
+  import atelierArt from '$lib/assets/door-atelier.jpg';
+  import { DEFAULT_SPORT, type PageStyle } from '$lib/workspace/model';
+  import {
+    Alert, Avatar, Button, Card, Heading, Input, Label, Modal, Select,
+    Table, TableBody, TableBodyCell, TableBodyRow, TableHead, TableHeadCell, TableSearch
+  } from 'flowbite-svelte';
 
-  let catId = $state('');
-  let styleId = $state('');
-  let styleOpen = $state('');
-  let seancePick = $state('');
-  let dialog = $state<'category' | 'style' | 'seance' | null>(null);
+  let dialog = $state<'category' | 'style' | 'seance' | 'season' | 'slot' | 'theme' | 'session' | 'library' | null>(null);
+  let entryOpen = $state(false);
   let entryName = $state('');
   let plainName = $state('');
+  let zone = $state('');
+  let from = $state('');
+  let to = $state('');
+  let categoryId = $state('');
+  let sessionId = $state('');
   let dialogError = $state('');
+  let portraitError = $state('');
+  let themeQuery = $state('');
 
-  const openedStyle = $derived($styles.find(style => style.id === styleOpen) ?? null);
+  const openedStyle = $derived($styles.find(style => style.id === $navItem) ?? null);
+  const openedSeason = $derived($seasons.find(season => season.id === $navItem) ?? null);
+  const openedTheme = $derived($themes.find(theme => theme.id === $navItem) ?? null);
+  const domains = $derived([...new Set($libraryItems.map(item => item.domain))].sort((a, b) => a.localeCompare(b, 'fr')));
+  const files = $derived($libraryItems.filter(item => item.domain === $navItem && item.kind === $navChild));
+  const sessionChoices = $derived($themes.flatMap(theme => theme.sessions.map(session => ({
+    id: session.id,
+    label: `${theme.name} — ${session.name || session.folder}`
+  }))));
+  const showingBoard = $derived($screen === 'seance' && $navArea === 'themes' && Boolean($navChild));
+  const visibleThemes = $derived($themes.filter(theme => {
+    const query = themeQuery.trim().toLocaleLowerCase('fr');
+    return !query || theme.name.toLocaleLowerCase('fr').includes(query);
+  }));
+  const editingExercise = $derived($screen === 'exercise' && Boolean($currentPage));
 
-  $effect(() => {
-    if (!$categories.some(cat => cat.id === catId)) catId = $categories[0]?.id ?? '';
-  });
-  $effect(() => {
-    if (!$styles.some(style => style.id === styleId)) styleId = $styles[0]?.id ?? '';
-    if (styleOpen && !$styles.some(style => style.id === styleOpen)) styleOpen = '';
-  });
-  $effect(() => {
-    if (!$seanceList.some(item => item.file === seancePick)) seancePick = $seanceList[0]?.file ?? '';
-  });
+  function schemaAt(id: string): string {
+    return $exercisePaths[id] || '';
+  }
+  const door = $derived(WORKSPACE_DOORS.find(item => item.id === $navDoor) ?? null);
+  const sports = [{ value: DEFAULT_SPORT, name: 'Soccer' }];
+  const dialogTitle = $derived(dialog === 'category' ? 'Nouvelle catégorie'
+    : dialog === 'seance' || dialog === 'session' ? 'Nouvelle séance'
+    : dialog === 'style' ? 'Nouveau style'
+    : dialog === 'season' ? 'Nouvelle saison'
+    : dialog === 'slot' ? 'Nouveau créneau'
+    : dialog === 'theme' ? 'Nouveau thème'
+    : 'Nouveau fichier');
 
-  function openDialog(kind: 'category' | 'style' | 'seance') {
+  const doorArt: Record<WorkspaceDoor, string> = {
+    repertoire: seancesArt,
+    season: seasonArt,
+    studio: atelierArt
+  };
+
+  function initials(name: string): string {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    return parts.slice(0, 2).map(part => part[0]?.toLocaleUpperCase('fr') || '').join('');
+  }
+
+  function closeDialog() {
+    dialog = null;
+    entryOpen = false;
+  }
+
+  function openDialog(kind: NonNullable<typeof dialog>) {
     dialog = kind;
     entryName = '';
     plainName = '';
+    zone = '';
+    from = '';
+    to = '';
+    categoryId = $categories[0]?.id ?? '';
+    sessionId = sessionChoices[0]?.id ?? '';
     dialogError = '';
+    entryOpen = true;
+  }
+
+  function fieldValue(event: Event): string {
+    const target = event.currentTarget;
+    return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
+      ? target.value
+      : '';
+  }
+
+  async function onPortrait(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    portraitError = (await savePortrait(file)) || '';
   }
 
   async function confirmDialog() {
@@ -41,199 +110,344 @@
       const id = entryName.trim();
       dialogError = (await createCategory(entryName, plainName)) || '';
       if (dialogError) return;
-      dialog = null;
-      await showCategory(id);
+      closeDialog();
+      await openNavItem(id);
       return;
     }
     if (dialog === 'seance') {
       dialogError = (await createSeance(entryName, plainName)) || '';
-      if (!dialogError) dialog = null;
+      if (!dialogError) closeDialog();
       return;
     }
-    const id = entryName.trim();
-    dialogError = (await createStyle(entryName, plainName)) || '';
-    if (dialogError) return;
-    dialog = null;
-    styleId = id;
-    styleOpen = id;
+    if (dialog === 'style') {
+      const id = entryName.trim();
+      dialogError = (await createStyle(entryName, plainName)) || '';
+      if (dialogError) return;
+      closeDialog();
+      await openNavItem(id);
+      return;
+    }
+    if (dialog === 'season') {
+      dialogError = (await createSeason(entryName, categoryId, zone, from, to)) || '';
+      if (!dialogError) closeDialog();
+      return;
+    }
+    if (dialog === 'slot') {
+      dialogError = (await createSlot(entryName, plainName, sessionId)) || '';
+      if (!dialogError) closeDialog();
+      return;
+    }
+    if (dialog === 'theme') {
+      const id = entryName.trim();
+      dialogError = (await createTheme(entryName, plainName)) || '';
+      if (dialogError) return;
+      closeDialog();
+      await openNavItem(id);
+      return;
+    }
+    if (dialog === 'session') {
+      dialogError = (await createThemeSession(entryName, plainName)) || '';
+      if (!dialogError) closeDialog();
+      return;
+    }
+    dialogError = (await createLibraryItem(entryName)) || '';
+    if (!dialogError) closeDialog();
   }
 
+  $effect(() => {
+    if (!entryOpen) dialog = null;
+  });
+
+  function kindCount(domain: string, kind: LibraryKind) {
+    return $libraryItems.filter(item => item.domain === domain && item.kind === kind).length;
+  }
 </script>
 
-<div class="browser">
-  {#if $screen !== 'home'}
-    <nav class="path">
-      <button type="button" class="back" onclick={showHome}>Espace de travail</button>
-      {#if $categoryInfo}
-        <span class="sep">/</span>
-        <select aria-label="Catégorie" value={$categoryInfo.id} onchange={(e) => showCategory(e.currentTarget.value)}>
-          {#each $categories as cat (cat.id)}
-            <option value={cat.id}>{cat.name}</option>
-          {/each}
-        </select>
-      {/if}
-      {#if $screen === 'seance'}
-        <span class="sep">/</span>
-        <select aria-label="Séance" value={$seanceFile ?? ''} onchange={(e) => showSeance(e.currentTarget.value)}>
-          {#each $seanceList as item (item.file)}
-            <option value={item.file}>{item.name || item.sheet}</option>
-          {/each}
-        </select>
-      {/if}
-    </nav>
-  {/if}
+{#snippet addButton(kind: NonNullable<typeof dialog>)}
+  <div class="mb-3 flex justify-end">
+    <Button size="sm" color="brand" onclick={() => openDialog(kind)}>Ajouter</Button>
+  </div>
+{/snippet}
 
-  {#if $screen === 'home'}
-    <section>
-      <h1>Espace de travail</h1>
-      <label class="name-field">Nom
-        <input value={$trainer.name} oninput={(e) => commitTrainerName(e.currentTarget.value)} />
-      </label>
+{#snippet themeHeader()}
+  <Button size="sm" color="brand" onclick={() => openDialog('theme')}>Ajouter un thème</Button>
+{/snippet}
 
-      <div class="pick">
-        <label>Catégories
-          <select bind:value={catId} disabled={$categories.length === 0}>
-            {#if $categories.length === 0}
-              <option value="">Aucune catégorie</option>
-            {/if}
-            {#each $categories as cat (cat.id)}
-              <option value={cat.id}>{cat.name}</option>
-            {/each}
-          </select>
-        </label>
-        <button type="button" class="quiet" disabled={!catId} onclick={() => showCategory(catId)}>Ouvrir</button>
-        <button type="button" onclick={() => openDialog('category')}>Ajouter</button>
+{#snippet panelTitle(title: string)}
+  <Heading tag="h2" class="mb-3 text-xl">{title}</Heading>
+{/snippet}
+
+<div class={editingExercise ? 'flex h-full min-h-0 flex-col' : ''}>
+  {#if $screen === 'exercise' && $currentPage}
+    {#key `${schemaAt($currentPage.id)}/${$currentPage.id}`}
+      <div class="min-h-0 flex-1">
+        <ExerciseEditor at={schemaAt($currentPage.id)} exerciseId={$currentPage.id} />
       </div>
-
-      <div class="pick">
-        <label>Styles
-          <select bind:value={styleId} disabled={$styles.length === 0}>
-            {#if $styles.length === 0}
-              <option value="">Aucun style</option>
-            {/if}
-            {#each $styles as style (style.id)}
-              <option value={style.id}>{style.name}</option>
-            {/each}
-          </select>
-        </label>
-        <button type="button" class="quiet" disabled={!styleId} onclick={() => styleOpen = styleId}>Ouvrir</button>
-        <button type="button" onclick={() => openDialog('style')}>Ajouter</button>
-      </div>
-
-      {#if openedStyle}
-        <div class="style-edit">
-          <p class="style-title">{openedStyle.name}</p>
-          <label>Équipe 1 <input type="color" value={openedStyle.team1Color} onchange={(e) => updateStyle(openedStyle.id, { team1Color: e.currentTarget.value })} /></label>
-          <label>Taille <input type="number" value={openedStyle.team1Size} onchange={(e) => updateStyle(openedStyle.id, { team1Size: Number(e.currentTarget.value) })} /></label>
-          <label>Équipe 2 <input type="color" value={openedStyle.team2Color} onchange={(e) => updateStyle(openedStyle.id, { team2Color: e.currentTarget.value })} /></label>
-          <label>Taille <input type="number" value={openedStyle.team2Size} onchange={(e) => updateStyle(openedStyle.id, { team2Size: Number(e.currentTarget.value) })} /></label>
-          <label>Ballon <input type="color" value={openedStyle.ballColor} onchange={(e) => updateStyle(openedStyle.id, { ballColor: e.currentTarget.value })} /></label>
-          <label>Herbe <input type="color" value={openedStyle.backgroundColor} onchange={(e) => updateStyle(openedStyle.id, { backgroundColor: e.currentTarget.value })} /></label>
-          <label>Pelouse
-            <select value={openedStyle.grassType} onchange={(e) => updateStyle(openedStyle.id, { grassType: e.currentTarget.value } as Partial<PageStyle>)}>
-              <option value="stripes">Rayée</option>
-              <option value="solid">Unie</option>
-            </select>
-          </label>
-        </div>
-      {/if}
-    </section>
-  {:else if $screen === 'category'}
-    <section>
-      <h1>{$categoryInfo?.name}</h1>
-      <div class="pick">
-        <label>Séances
-          <select bind:value={seancePick} disabled={$seanceList.length === 0}>
-            {#if $seanceList.length === 0}
-              <option value="">Aucune séance</option>
-            {/if}
-            {#each $seanceList as item (item.file)}
-              <option value={item.file}>{item.name || item.sheet}</option>
-            {/each}
-          </select>
-        </label>
-        <button type="button" class="quiet" disabled={!seancePick} onclick={() => showSeance(seancePick)}>Ouvrir</button>
-        <button type="button" onclick={() => openDialog('seance')}>Ajouter</button>
-      </div>
-    </section>
-  {:else if $screen === 'seance'}
+    {/key}
+  {:else if showingBoard}
     <SeanceBoard />
+  {:else if !$navDoor}
+    <div class="mb-6 grid items-start gap-3 sm:grid-cols-3">
+      {#each WORKSPACE_DOORS as item (item.id)}
+        <div class="min-w-0">
+          {@render panelTitle(item.label)}
+          <Card size="xl" class="aspect-square cursor-pointer overflow-hidden p-0" onclick={() => openDoor(item.id)}>
+            <img src={doorArt[item.id]} alt="" class="h-0 min-h-0 w-full flex-1 object-cover" />
+            <div class="px-5 pt-3 pb-4">
+              <p class="text-sm text-gray-500 dark:text-gray-400">{item.line}</p>
+            </div>
+          </Card>
+        </div>
+      {/each}
+    </div>
+    {@render panelTitle('Entraîneur')}
+    <Card size="xl" class="p-6">
+      <div class="flex items-center gap-8">
+        <div class="grid w-full max-w-sm gap-4">
+          <Label>Nom
+            <Input class="mt-1" value={$trainer.name} oninput={(e) => commitTrainerName(fieldValue(e))} />
+          </Label>
+          <Label>Sport
+            <Select class="mt-1" placeholder="" items={sports} value={$trainer.sport || DEFAULT_SPORT} onchange={(e) => commitTrainerSport(fieldValue(e))} />
+          </Label>
+        </div>
+        <label class="ms-auto shrink-0 cursor-pointer">
+          {#if $portraitUrl}
+            <Avatar src={$portraitUrl} cornerStyle="rounded" size="xl" class="h-44 w-44 rounded-2xl object-cover" alt={$trainer.name || 'Photo'} />
+          {:else}
+            <Avatar cornerStyle="rounded" size="xl" class="h-44 w-44 overflow-hidden rounded-2xl text-3xl" alt={$trainer.name || 'Photo'}>{initials($trainer.name) || '?'}</Avatar>
+          {/if}
+          <input class="hidden" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange={onPortrait} />
+          {#if portraitError}<p class="mt-2 max-w-44 text-center text-xs text-red-600">{portraitError}</p>{/if}
+        </label>
+      </div>
+    </Card>
+  {:else if !$navArea}
+    <div class="flex flex-wrap gap-2">
+      {#each door?.children || [] as child (child.id)}
+        <Button color="alternative" onclick={() => openArea(child.id)}>{child.label}</Button>
+      {/each}
+    </div>
+  {:else if $navArea === 'seasons' && !openedSeason}
+    {@render panelTitle('Saisons')}
+    <Card size="xl" class="p-6">
+      {@render addButton('season')}
+      <Table hoverable>
+        <TableHead>
+          <TableHeadCell>Nom</TableHeadCell>
+          <TableHeadCell>Zone</TableHeadCell>
+          <TableHeadCell>Du</TableHeadCell>
+          <TableHeadCell>Au</TableHeadCell>
+          <TableHeadCell>Catégorie</TableHeadCell>
+        </TableHead>
+        <TableBody>
+          {#each $seasons as season (season.id)}
+            <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(season.id)}>
+              <TableBodyCell>{season.name}</TableBodyCell>
+              <TableBodyCell>{season.zone}</TableBodyCell>
+              <TableBodyCell>{season.from}</TableBodyCell>
+              <TableBodyCell>{season.to}</TableBodyCell>
+              <TableBodyCell>{season.categoryName}</TableBodyCell>
+            </TableBodyRow>
+          {:else}
+            <TableBodyRow><TableBodyCell colspan={5}>Aucune saison</TableBodyCell></TableBodyRow>
+          {/each}
+        </TableBody>
+      </Table>
+    </Card>
+  {:else if openedSeason}
+    {@render panelTitle(openedSeason.name)}
+    <Card size="xl" class="p-6">
+      {@render addButton('slot')}
+      <Table hoverable>
+        <TableHead>
+          <TableHeadCell>Fiche</TableHeadCell>
+          <TableHeadCell>Date</TableHeadCell>
+          <TableHeadCell>Séance</TableHeadCell>
+        </TableHead>
+        <TableBody>
+          {#each openedSeason.slots as slot (`${slot.sheet}-${slot.session}`)}
+            <TableBodyRow>
+              <TableBodyCell>{slot.sheet}</TableBodyCell>
+              <TableBodyCell>{slot.date}</TableBodyCell>
+              <TableBodyCell>{slot.sessionName}</TableBodyCell>
+            </TableBodyRow>
+          {:else}
+            <TableBodyRow><TableBodyCell colspan={3}>Aucun créneau</TableBodyCell></TableBodyRow>
+          {/each}
+        </TableBody>
+      </Table>
+    </Card>
+  {:else if $navArea === 'themes' && !openedTheme}
+    <Heading tag="h1" class="mb-3 text-xl">Thèmes de séances</Heading>
+    <Card size="xl" class="p-6">
+    <TableSearch
+      placeholder="Rechercher un thème"
+      hoverable
+      bind:inputValue={themeQuery}
+      header={themeHeader}
+      class="overflow-visible rounded-none shadow-none"
+      classes={{ inner: "mb-3 flex items-center justify-between gap-3 p-0", search: "mt-0" }}
+    >
+      <TableHead><TableHeadCell>Nom</TableHeadCell></TableHead>
+      <TableBody>
+        {#each visibleThemes as theme (theme.id)}
+          <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(theme.id)}>
+            <TableBodyCell>{theme.name}</TableBodyCell>
+          </TableBodyRow>
+        {:else}
+          <TableBodyRow><TableBodyCell>{themeQuery.trim() ? 'Aucun résultat' : 'Aucun thème'}</TableBodyCell></TableBodyRow>
+        {/each}
+      </TableBody>
+    </TableSearch>
+    </Card>
+  {:else if openedTheme}
+    {@render panelTitle(openedTheme.name)}
+    <Card size="xl" class="p-6">
+      {@render addButton('session')}
+      <Table hoverable>
+        <TableHead>
+          <TableHeadCell>Ordre</TableHeadCell>
+          <TableHeadCell>Nom</TableHeadCell>
+          <TableHeadCell>Public</TableHeadCell>
+          <TableHeadCell>Phase</TableHeadCell>
+        </TableHead>
+        <TableBody>
+          {#each openedTheme.sessions as session (session.id)}
+            <TableBodyRow class="cursor-pointer" onclick={() => openNavChild(session.id)}>
+              <TableBodyCell>{session.order || ''}</TableBodyCell>
+              <TableBodyCell>{session.name}</TableBodyCell>
+              <TableBodyCell>{session.audience}</TableBodyCell>
+              <TableBodyCell>{session.phase}</TableBodyCell>
+            </TableBodyRow>
+          {:else}
+            <TableBodyRow><TableBodyCell colspan={4}>Aucune séance</TableBodyCell></TableBodyRow>
+          {/each}
+        </TableBody>
+      </Table>
+    </Card>
+  {:else if $navArea === 'styles' && !openedStyle}
+    {@render panelTitle('Styles')}
+    <Card size="xl" class="p-6">
+      {@render addButton('style')}
+      <Table hoverable>
+        <TableHead><TableHeadCell>Nom</TableHeadCell></TableHead>
+        <TableBody>
+          {#each $styles as style (style.id)}
+            <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(style.id)}>
+              <TableBodyCell>{style.name}</TableBodyCell>
+            </TableBodyRow>
+          {:else}
+            <TableBodyRow><TableBodyCell>Aucun style</TableBodyCell></TableBodyRow>
+          {/each}
+        </TableBody>
+      </Table>
+    </Card>
+  {:else if openedStyle}
+    {@render panelTitle(openedStyle.name)}
+    <Card size="xl" class="p-6">
+      <div class="flex flex-wrap items-end gap-3">
+        <Label>Équipe 1 <Input type="color" class="mt-1 h-10 w-16 p-1" value={openedStyle.team1Color} onchange={(e) => updateStyle(openedStyle.id, { team1Color: fieldValue(e) })} /></Label>
+        <Label>Taille <Input type="number" class="mt-1 w-24" value={openedStyle.team1Size} onchange={(e) => updateStyle(openedStyle.id, { team1Size: Number(fieldValue(e)) })} /></Label>
+        <Label>Équipe 2 <Input type="color" class="mt-1 h-10 w-16 p-1" value={openedStyle.team2Color} onchange={(e) => updateStyle(openedStyle.id, { team2Color: fieldValue(e) })} /></Label>
+        <Label>Taille <Input type="number" class="mt-1 w-24" value={openedStyle.team2Size} onchange={(e) => updateStyle(openedStyle.id, { team2Size: Number(fieldValue(e)) })} /></Label>
+        <Label>Ballon <Input type="color" class="mt-1 h-10 w-16 p-1" value={openedStyle.ballColor} onchange={(e) => updateStyle(openedStyle.id, { ballColor: fieldValue(e) })} /></Label>
+        <Label>Herbe <Input type="color" class="mt-1 h-10 w-16 p-1" value={openedStyle.backgroundColor} onchange={(e) => updateStyle(openedStyle.id, { backgroundColor: fieldValue(e) })} /></Label>
+        <Label>Pelouse
+          <Select class="mt-1" placeholder="" value={openedStyle.grassType} items={[{ value: 'stripes', name: 'Rayée' }, { value: 'solid', name: 'Unie' }]} onchange={(e) => updateStyle(openedStyle.id, { grassType: fieldValue(e) } as Partial<PageStyle>)} />
+        </Label>
+      </div>
+    </Card>
+  {:else if $navArea === 'library' && !$navItem}
+    {@render panelTitle('Bibliothèque')}
+    <Card size="xl" class="p-6">
+      <Table hoverable>
+        <TableHead>
+          <TableHeadCell>Domaine</TableHeadCell>
+          <TableHeadCell>Objets</TableHeadCell>
+          <TableHeadCell>Terrains</TableHeadCell>
+          <TableHeadCell>Formes</TableHeadCell>
+        </TableHead>
+        <TableBody>
+          {#each domains as domain (domain)}
+            <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(domain)}>
+              <TableBodyCell>{domain}</TableBodyCell>
+              <TableBodyCell>{kindCount(domain, 'objects')}</TableBodyCell>
+              <TableBodyCell>{kindCount(domain, 'pitches')}</TableBodyCell>
+              <TableBodyCell>{kindCount(domain, 'shapes')}</TableBodyCell>
+            </TableBodyRow>
+          {:else}
+            <TableBodyRow><TableBodyCell colspan={4}>Aucun domaine</TableBodyCell></TableBodyRow>
+          {/each}
+        </TableBody>
+      </Table>
+    </Card>
+  {:else if $navArea === 'library' && !$navChild}
+    {@render panelTitle($navItem)}
+    <Card size="xl" class="p-6">
+      <Table hoverable>
+        <TableHead>
+          <TableHeadCell>Dossier</TableHeadCell>
+          <TableHeadCell>Fichiers</TableHeadCell>
+        </TableHead>
+        <TableBody>
+          {#each LIBRARY_KINDS as kind (kind.id)}
+            <TableBodyRow class="cursor-pointer" onclick={() => openNavChild(kind.id)}>
+              <TableBodyCell>{kind.label}</TableBodyCell>
+              <TableBodyCell>{kindCount($navItem, kind.id)}</TableBodyCell>
+            </TableBodyRow>
+          {/each}
+        </TableBody>
+      </Table>
+    </Card>
+  {:else if $navArea === 'library'}
+    {@render panelTitle(LIBRARY_KINDS.find(kind => kind.id === $navChild)?.label || 'Fichiers')}
+    <Card size="xl" class="p-6">
+      {@render addButton('library')}
+      <Table hoverable>
+        <TableHead><TableHeadCell>Nom</TableHeadCell></TableHead>
+        <TableBody>
+          {#each files as item (item.file)}
+            <TableBodyRow><TableBodyCell>{item.name}</TableBodyCell></TableBodyRow>
+          {:else}
+            <TableBodyRow><TableBodyCell>Aucun fichier</TableBodyCell></TableBodyRow>
+          {/each}
+        </TableBody>
+      </Table>
+    </Card>
   {/if}
 </div>
 
-<svelte:window onkeydown={(e) => { if (dialog && e.key === 'Escape') dialog = null; }} />
+<svelte:window onkeydown={(e) => { if (entryOpen && e.key === 'Escape') closeDialog(); }} />
 
-{#if dialog}
-  <div class="overlay">
-    <form class="dialog" aria-labelledby="entry-title" onsubmit={(e) => { e.preventDefault(); void confirmDialog(); }}>
-      <h2 id="entry-title">{dialog === 'category' ? 'Nouvelle catégorie' : dialog === 'seance' ? 'Nouvelle séance' : 'Nouveau style'}</h2>
-      <label>{dialog === 'style' ? 'Fichier' : 'Répertoire'}
-        <input bind:value={entryName} />
-      </label>
-      <label>Nom
-        <input bind:value={plainName} />
-      </label>
-      {#if dialogError}<p class="error">{dialogError}</p>{/if}
-      <div class="dialog-actions">
-        <button type="button" class="quiet" onclick={() => dialog = null}>Annuler</button>
-        <button type="submit">OK</button>
-      </div>
-    </form>
-  </div>
-{/if}
-
-<style>
-  .browser { color: #0f172a; }
-  .path { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
-  .path .back {
-    border: none; background: transparent; color: #0f172a;
-    font-size: 14px; font-weight: 600; cursor: pointer; padding: 4px 2px;
-  }
-  .path .back:hover { color: #2563eb; }
-  .sep { color: #94a3b8; }
-  section {
-    display: flex; flex-direction: column; gap: 10px;
-    margin-bottom: 16px; padding: 16px;
-    border: 1px solid #e2e8f0; border-radius: 16px; background: #fff;
-  }
-  h1 { margin: 0; font-size: 20px; font-weight: 600; }
-  h2 { margin: 0; font-size: 16px; font-weight: 600; }
-  .pick { display: flex; align-items: flex-end; gap: 8px; }
-  .pick label { flex: 0 0 auto; align-items: flex-start; }
-  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #64748b; }
-  .name-field { align-self: flex-start; }
-  .name-field input { width: 18rem; }
-  input, select {
-    font: inherit; font-size: 14px; color: #0f172a;
-    background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 10px;
-  }
-  select { field-sizing: content; width: auto; max-width: 100%; }
-  section button[type='button']:not(.quiet),
-  .dialog button[type='submit'] {
-    border: none; background: #2563eb; color: #fff;
-    border-radius: 8px; padding: 6px 12px; cursor: pointer; font-weight: 500; letter-spacing: 0;
-  }
-  section button[type='button']:not(.quiet):hover,
-  .dialog button[type='submit']:hover { background: #1d4ed8; }
-  .quiet {
-    border: 1px solid #d4d4d4; background: #fff; color: #374151;
-    border-radius: 8px; padding: 6px 12px; cursor: pointer; font-weight: 500;
-  }
-  .quiet:hover { background: #f8fafc; border-color: #94a3b8; }
-  button:disabled { opacity: 0.45; cursor: default; }
-  .style-edit { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px; background: #f8fafc; }
-  .style-title { margin: 0; width: 100%; font-size: 14px; font-weight: 600; color: #0f172a; }
-  .overlay {
-    position: fixed; inset: 0; z-index: 20;
-    display: flex; align-items: center; justify-content: center;
-    background: rgba(15, 23, 42, 0.35);
-  }
-  .dialog {
-    display: flex; flex-direction: column; gap: 12px;
-    width: min(24rem, calc(100% - 32px));
-    padding: 16px; border-radius: 16px; background: #fff;
-    border: 1px solid #e2e8f0;
-  }
-  .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
-  .error { margin: 0; font-size: 13px; color: #b91c1c; }
-</style>
+<Modal title={dialogTitle} bind:open={entryOpen} size="md">
+  <form id="entry-form" class="space-y-3" onsubmit={(e) => { e.preventDefault(); void confirmDialog(); }}>
+    {#if dialog === 'season'}
+      <Label>Nom <Input class="mt-1" bind:value={entryName} /></Label>
+      <Label>Catégorie
+        <Select class="mt-1" bind:value={categoryId} items={$categories.map(cat => ({ value: cat.id, name: cat.name }))} />
+      </Label>
+      <Label>Zone <Input class="mt-1" bind:value={zone} /></Label>
+      <Label>Du <Input class="mt-1" type="date" bind:value={from} /></Label>
+      <Label>Au <Input class="mt-1" type="date" bind:value={to} /></Label>
+    {:else if dialog === 'slot'}
+      <Label>Fiche <Input class="mt-1" bind:value={entryName} /></Label>
+      <Label>Date <Input class="mt-1" bind:value={plainName} /></Label>
+      <Label>Séance
+        <Select class="mt-1" bind:value={sessionId} items={sessionChoices.map(session => ({ value: session.id, name: session.label }))} />
+      </Label>
+    {:else if dialog === 'library'}
+      <Label>Nom <Input class="mt-1" bind:value={entryName} /></Label>
+    {:else}
+      <Label>{dialog === 'style' ? 'Fichier' : 'Répertoire'}
+        <Input class="mt-1" bind:value={entryName} />
+      </Label>
+      <Label>Nom <Input class="mt-1" bind:value={plainName} /></Label>
+    {/if}
+    {#if dialogError}<Alert color="red">{dialogError}</Alert>{/if}
+  </form>
+  {#snippet footer()}
+    <Button color="alternative" onclick={closeDialog}>Annuler</Button>
+    <Button color="brand" type="submit" form="entry-form">OK</Button>
+  {/snippet}
+</Modal>

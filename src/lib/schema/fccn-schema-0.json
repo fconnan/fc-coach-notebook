@@ -1,0 +1,276 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Schéma d'exercice",
+  "type": "object",
+  "required": ["type", "name"],
+  "properties": {
+    "type": {
+      "const": "fccn-schema:0",
+      "description": "Type du document."
+    },
+    "name": {
+      "type": "string",
+      "description": "Nom du schéma."
+    },
+    "units": {
+      "enum": ["meters", "relative"],
+      "description": "Unité des coordonnées."
+    },
+    "svg": {
+      "type": "string",
+      "description": "Dessin fourni par la bibliothèque."
+    },
+    "pitch": {
+      "type": "object",
+      "description": "Terrain.",
+      "properties": {
+        "template": {
+          "type": "string",
+          "description": "Modèle de terrain."
+        },
+        "width": {
+          "type": "number",
+          "description": "Largeur, en mètres."
+        },
+        "length": {
+          "type": "number",
+          "description": "Longueur, en mètres."
+        },
+        "margin": {
+          "type": "number",
+          "description": "Marge autour du terrain, en mètres."
+        },
+        "boundary": {
+          "type": "string",
+          "description": "Limite dessinée."
+        }
+      }
+    },
+    "lines": {
+      "type": "array",
+      "description": "Traits.",
+      "items": { "$ref": "#/definitions/segment" }
+    },
+    "players": {
+      "type": "array",
+      "description": "Joueurs placés.",
+      "items": { "$ref": "#/definitions/player" }
+    },
+    "zones": {
+      "type": "array",
+      "description": "Zones.",
+      "items": { "$ref": "#/definitions/zone" }
+    },
+    "items": {
+      "type": "array",
+      "description": "Joueurs, objets et ballon.",
+      "items": { "$ref": "#/definitions/item" }
+    },
+    "phases": {
+      "type": "array",
+      "description": "Phases de l'animation.",
+      "items": { "$ref": "#/definitions/phase" }
+    }
+  },
+  "definitions": {
+    "point": {
+      "description": "Position. Préférer x et y.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["x", "y"],
+          "additionalProperties": false,
+          "properties": {
+            "x": { "type": "number", "description": "Abscisse." },
+            "y": { "type": "number", "description": "Ordonnée." }
+          }
+        },
+        {
+          "type": "array",
+          "description": "Ancienne position [x, y].",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      ]
+    },
+    "segment": {
+      "description": "Segment. Préférer x1, y1, x2, y2.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["x1", "y1", "x2", "y2"],
+          "additionalProperties": false,
+          "properties": {
+            "x1": { "type": "number", "description": "Abscisse de départ." },
+            "y1": { "type": "number", "description": "Ordonnée de départ." },
+            "x2": { "type": "number", "description": "Abscisse d'arrivée." },
+            "y2": { "type": "number", "description": "Ordonnée d'arrivée." }
+          }
+        },
+        {
+          "type": "array",
+          "description": "Ancien segment [x1, y1, x2, y2].",
+          "items": { "type": "number" },
+          "minItems": 4,
+          "maxItems": 4
+        }
+      ]
+    },
+    "player": {
+      "type": "object",
+      "description": "Joueur.",
+      "properties": {
+        "number": {
+          "type": ["string", "number"],
+          "description": "Numéro."
+        },
+        "team": {
+          "type": "string",
+          "description": "Équipe."
+        },
+        "x": { "type": "number", "description": "Abscisse." },
+        "y": { "type": "number", "description": "Ordonnée." },
+        "at": {
+          "description": "Ancienne position.",
+          "allOf": [{ "$ref": "#/definitions/point" }]
+        }
+      }
+    },
+    "zone": {
+      "type": "object",
+      "description": "Rectangle nommé.",
+      "properties": {
+        "name": { "type": "string", "description": "Nom." },
+        "x": { "type": "number", "description": "Abscisse." },
+        "y": { "type": "number", "description": "Ordonnée." },
+        "w": { "type": "number", "description": "Largeur." },
+        "h": { "type": "number", "description": "Hauteur." },
+        "width": { "type": "number", "description": "Ancien nom de w." },
+        "height": { "type": "number", "description": "Ancien nom de h." },
+        "box": {
+          "description": "Ancien rectangle.",
+          "allOf": [{ "$ref": "#/definitions/box" }]
+        },
+        "items": {
+          "type": "array",
+          "description": "Éléments dans la zone.",
+          "items": { "$ref": "#/definitions/item" }
+        },
+        "zones": {
+          "type": "array",
+          "description": "Zones imbriquées.",
+          "items": { "$ref": "#/definitions/zone" }
+        }
+      }
+    },
+    "box": {
+      "description": "Rectangle. Préférer x, y, w et h sur la zone.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "x": { "type": "number", "description": "Abscisse." },
+            "y": { "type": "number", "description": "Ordonnée." },
+            "w": { "type": "number", "description": "Largeur." },
+            "h": { "type": "number", "description": "Hauteur." },
+            "width": { "type": "number", "description": "Ancien nom de w." },
+            "height": { "type": "number", "description": "Ancien nom de h." }
+          }
+        },
+        {
+          "type": "array",
+          "description": "Ancien rectangle [x, y, w, h].",
+          "items": { "type": "number" },
+          "minItems": 4,
+          "maxItems": 4
+        }
+      ]
+    },
+    "item": {
+      "type": "object",
+      "description": "Joueur, objet ou ballon.",
+      "properties": {
+        "team": {
+          "type": "string",
+          "enum": ["blue", "red", "white", "yellow"],
+          "description": "Équipe."
+        },
+        "player": {
+          "type": ["string", "number"],
+          "description": "Numéro du joueur."
+        },
+        "object": {
+          "type": "string",
+          "description": "Objet de la bibliothèque."
+        },
+        "x": { "type": "number", "description": "Abscisse." },
+        "y": { "type": "number", "description": "Ordonnée." },
+        "ball": {
+          "description": "Numéro du joueur qui a le ballon, ou position.",
+          "oneOf": [
+            { "type": "number" },
+            { "$ref": "#/definitions/point" },
+            { "type": "string" }
+          ]
+        },
+        "shape": {
+          "type": "string",
+          "description": "Forme de la bibliothèque."
+        },
+        "goal": {
+          "description": "But.",
+          "type": ["array", "boolean"]
+        },
+        "at": {
+          "description": "Ancienne position.",
+          "allOf": [{ "$ref": "#/definitions/point" }]
+        }
+      }
+    },
+    "phase": {
+      "type": "object",
+      "description": "Phase.",
+      "properties": {
+        "name": { "type": "string", "description": "Nom." },
+        "duration": { "type": "number", "description": "Durée, en secondes." },
+        "moves": {
+          "type": "array",
+          "description": "Déplacements.",
+          "items": { "$ref": "#/definitions/move" }
+        }
+      }
+    },
+    "move": {
+      "type": "object",
+      "description": "Déplacement ou passe.",
+      "properties": {
+        "player": {
+          "type": ["string", "number"],
+          "description": "Joueur qui se déplace."
+        },
+        "run": {
+          "description": "Course vers un point.",
+          "allOf": [{ "$ref": "#/definitions/point" }]
+        },
+        "dribble": {
+          "description": "Conduite de balle vers un point.",
+          "allOf": [{ "$ref": "#/definitions/point" }]
+        },
+        "from": {
+          "type": ["string", "number"],
+          "description": "Joueur qui passe."
+        },
+        "pass": {
+          "description": "Joueur qui reçoit, ou point d'arrivée.",
+          "oneOf": [
+            { "type": "number" },
+            { "type": "string" },
+            { "$ref": "#/definitions/point" }
+          ]
+        }
+      }
+    }
+  }
+}
