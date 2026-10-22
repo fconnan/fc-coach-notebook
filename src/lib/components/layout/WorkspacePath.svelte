@@ -1,11 +1,14 @@
 <script lang="ts">
   import { currentPage } from '$lib/stores/workspace';
   import {
-    breadcrumbEpoch, libraryItems, navArea, navChild, navDoor, navItem, screen, seasons, styles, themes,
+    breadcrumbEpoch, libraryItems, navArea, navChild, navDoor, navItem, screen, seanceHeader, seasons, styles, themes,
     openArea, openDoor, openNavChild, openNavItem, showHome, showSeanceScreen
   } from '$lib/workspace/state';
   import { LIBRARY_KINDS, WORKSPACE_DOORS, type WorkspaceArea, type WorkspaceDoor } from '$lib/workspace/catalog';
+  import { currentAddress } from '$lib/workspace/address';
+  import { addBookmark, bookmarks, removeBookmark } from '$lib/stores/bookmarks';
   import { Select } from 'flowbite-svelte';
+  import { HeartOutline, HeartSolid, TrashBinOutline } from 'flowbite-svelte-icons';
 
   type Choice = { value: string; label: string };
   type Step = {
@@ -20,7 +23,17 @@
   };
 
   const openedTheme = $derived($themes.find(theme => theme.id === $navItem) ?? null);
+  const openedSeason = $derived($seasons.find(season => season.id === $navItem) ?? null);
   const door = $derived(WORKSPACE_DOORS.find(item => item.id === $navDoor) ?? null);
+  const seasonChoices = $derived.by(() => {
+    const sheets = new Map<string, { sheets: string[]; name: string }>();
+    for (const slot of openedSeason?.slots || []) {
+      const entry = sheets.get(slot.session) ?? { sheets: [], name: slot.sessionName };
+      entry.sheets.push(slot.sheet);
+      sheets.set(slot.session, entry);
+    }
+    return [...sheets].map(([value, entry]) => ({ value, label: `${entry.sheets.join(', ')} · ${entry.name}` }));
+  });
   const domains = $derived([...new Set($libraryItems.map(item => item.domain))].sort((a, b) => a.localeCompare(b, 'fr')));
 
   function fieldValue(event: Event): string {
@@ -65,6 +78,15 @@
         change: (value) => { void openNavItem(value); }
       }, () => openNavItem(''), `Revenir à ${door.label}`);
     }
+    if ($navArea === 'seasons' && $navChild) {
+      add({
+        key: 'session',
+        label: 'Séance',
+        value: $navChild,
+        choices: seasonChoices,
+        change: (value) => { void openNavChild(value); }
+      }, () => openNavChild(''), `Revenir à ${openedSeason?.name || 'Saison'}`);
+    }
     if ($navArea === 'themes' && $navItem) {
       add({
         key: 'theme',
@@ -84,12 +106,11 @@
       }, () => openNavChild(''), `Revenir à ${openedTheme?.name || 'Thème'}`);
     }
     if ($screen === 'exercise' && $currentPage) {
-      const session = openedTheme?.sessions.find(item => item.id === $navChild);
       add({
         key: 'exercise',
         label: 'Schéma',
         text: $currentPage.name || 'Schéma'
-      }, () => showSeanceScreen(), `Revenir à ${session?.name || 'Séance'}`);
+      }, () => showSeanceScreen(), `Revenir à ${$seanceHeader.name || 'Séance'}`);
     }
     if ($navArea === 'styles' && $navItem) {
       add({
@@ -120,6 +141,16 @@
     }
     return list;
   });
+
+  const label = $derived(steps
+    .map(step => step.choices?.find(choice => choice.value === step.value)?.label ?? step.text ?? '')
+    .filter(Boolean)
+    .join(' > ') || 'Accueil');
+  const here = $derived.by(() => {
+    void steps;
+    return currentAddress();
+  });
+  const marked = $derived($bookmarks.some(bookmark => bookmark.path === here));
 </script>
 
 {#snippet pathSelect(label: string, value: string, choices: { value: string; label: string }[], change: (value: string) => void)}
@@ -136,6 +167,7 @@
   {/key}
 {/snippet}
 
+<div class="flex w-full flex-col gap-1">
 <nav class="flex items-center gap-0.5" aria-label="Chemin">
   <button type="button" class="path-home" aria-label="Accueil" onclick={() => { void showHome(); }}>
     <svg class="size-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -156,4 +188,31 @@
       <span class="text-sm font-medium">{step.text}</span>
     {/if}
   {/each}
+  <button
+    type="button"
+    class="path-mark ms-auto"
+    aria-label="Ajouter aux favoris"
+    title={marked ? 'Déjà dans les favoris' : 'Ajouter aux favoris'}
+    disabled={marked}
+    onclick={() => addBookmark({ path: here, label })}
+  >
+    {#if marked}<HeartSolid class="size-4" />{:else}<HeartOutline class="size-4" />{/if}
+  </button>
 </nav>
+{#if $bookmarks.length}
+  <ul class="flex flex-col gap-0.5" aria-label="Favoris">
+    {#each $bookmarks as bookmark (bookmark.path)}
+      <li class="flex items-center gap-2">
+        <a href={bookmark.path} class="truncate text-sm font-medium text-fg-brand hover:underline">{bookmark.label}</a>
+        <button
+          type="button"
+          class={['path-mark ms-auto', bookmark.path === here && 'current']}
+          aria-label={`Retirer ${bookmark.label} des favoris`}
+          title="Retirer des favoris"
+          onclick={() => removeBookmark(bookmark.path)}
+        ><TrashBinOutline class="size-4" /></button>
+      </li>
+    {/each}
+  </ul>
+{/if}
+</div>

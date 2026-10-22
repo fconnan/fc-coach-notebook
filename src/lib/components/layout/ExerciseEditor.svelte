@@ -164,7 +164,8 @@
         )));
       }
       if (next.source) yamlDisk = yaml;
-      status = 'Enregistré';
+      const { warning } = await response.json() as { warning?: string };
+      status = warning ? `Enregistré (${warning})` : 'Enregistré';
       return true;
     } catch {
       status = 'Échec de l’enregistrement';

@@ -1,6 +1,6 @@
 import { writable, type Writable } from 'svelte/store';
 
-function persisted<T>(key: string, initial: T): Writable<T> {
+export function persisted<T>(key: string, initial: T): Writable<T> {
   let value = initial;
   if (typeof sessionStorage !== 'undefined') {
     try {

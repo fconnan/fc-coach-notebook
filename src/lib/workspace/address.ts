@@ -34,7 +34,7 @@ export function parseAddress(pathname: string): AddressTarget | null {
   const door = parts[0];
   if (!doors.has(door)) return null;
   if (door === 'season') {
-    return { door: 'season', area: 'seasons', item: parts[1] || '', child: '', exercise: '' };
+    return { door: 'season', area: 'seasons', item: parts[1] || '', child: parts[2] || '', exercise: parts[3] || '' };
   }
   if (door === 'repertoire') {
     let rest = parts.slice(1);
@@ -62,9 +62,7 @@ export function parseAddress(pathname: string): AddressTarget | null {
 export function addressPath(target: AddressTarget): string {
   if (!target.door) return '/';
   const parts: string[] = [target.door];
-  if (target.door === 'season') {
-    if (target.item) parts.push(target.item);
-  } else if (target.door === 'repertoire') {
+  if (target.door === 'season' || target.door === 'repertoire') {
     if (target.item) parts.push(target.item);
     if (target.child) parts.push(target.child);
     if (target.exercise) parts.push(target.exercise);
@@ -75,6 +73,10 @@ export function addressPath(target: AddressTarget): string {
     if (target.exercise) parts.push(target.exercise);
   }
   return `/${parts.join('/')}`;
+}
+
+export function currentAddress(): string {
+  return readAddress ? addressPath(readAddress()) : '/';
 }
 
 export function publishAddress(mode: 'push' | 'replace' = 'push') {

@@ -1,0 +1,7 @@
+{
+  "git.autoRepositoryDetection": "subFolders",
+  "git.repositoryScanMaxDepth": 0,
+  "git.scanRepositories": [
+    "data"
+  ],
+}

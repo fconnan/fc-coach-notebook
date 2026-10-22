@@ -3,8 +3,9 @@ import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 
 import path from 'node:path';
 import type { RequestHandler } from './$types';
 import { frenchDateOrder } from '$lib/workspace/calendar';
-import { applyExerciseDocument, exerciseFolder, exerciseOrder, isUuidFolder, orderByIds, splitExerciseRecord } from '$lib/workspace/exerciseFile';
+import { applyExerciseDocument, exerciseFolder, isUuidFolder, orderByIds, splitExerciseRecord } from '$lib/workspace/exerciseFile';
 import { fillTemplate, type TemplateName } from '$lib/workspace/templates';
+import { REPERTOIRE_TYPE, themeKey } from '$lib/workspace/catalog';
 
 const root = path.resolve('data');
 const file = path.join(root, 'index.json');
@@ -248,11 +249,11 @@ function rememberFolder(folders: Map<string, string>, id: string, name: string) 
 }
 
 async function keepSchema(fromDir: string, toDir: string) {
-  const from = path.join(fromDir, 'schema.yaml');
-  const to = path.join(toDir, 'schema.yaml');
-  if (!(await exists(from)) || await exists(to)) return;
+  if (!(await exists(path.join(fromDir, 'schema.yaml'))) || await exists(path.join(toDir, 'schema.yaml'))) return;
   await mkdir(toDir, { recursive: true });
-  await copyFile(from, to);
+  for (const name of ['schema.yaml', 'schema.svg']) {
+    if (await exists(path.join(fromDir, name))) await copyFile(path.join(fromDir, name), path.join(toDir, name));
+  }
 }
 
 async function writeExercises(absDir: string, relDir: string, exercises: Array<Record<string, unknown>>) {
@@ -268,16 +269,16 @@ async function writeExercises(absDir: string, relDir: string, exercises: Array<R
   const keep = new Set<string>();
   const paths: Record<string, string> = {};
   const used = new Set(folders.values());
-  for (const [index, page] of exercises.entries()) {
+  for (const page of exercises) {
     const exerciseId = String(page.id || '').trim();
     let folder = folders.get(exerciseId);
     if (!folder) {
       if (directoryIssue(exerciseId, 'répertoire')) continue;
       folder = exerciseId;
     }
-    const kind = page.drill && typeof page.drill === 'object' ? String((page.drill as { kind?: string }).kind || '') : '';
-    if (isUuidFolder(folder) && kind) {
-      const desired = exerciseFolder(index, kind);
+    const name = String(page.name || '').trim();
+    if (isUuidFolder(folder) && name) {
+      const desired = exerciseFolder(name);
       const from = path.join(absDir, folder);
       const to = path.join(absDir, desired);
       const owner = await exists(to) ? await exerciseIdOf(to) : '';
@@ -296,7 +297,7 @@ async function writeExercises(absDir: string, relDir: string, exercises: Array<R
     paths[exerciseId] = `${relDir}/${folder}`;
     const exerciseDir = path.join(absDir, folder);
     await mkdir(exerciseDir, { recursive: true });
-    const stored = splitExerciseRecord({ ...page, type: 'fccn-exercise:0', id: exerciseId }, exerciseOrder(folder, index));
+    const stored = splitExerciseRecord({ ...page, type: 'fccn-exercise:0', id: exerciseId });
     await writeFile(path.join(exerciseDir, 'index.json'), JSON.stringify(stored.index, null, 2) + '\n');
     await writeFile(path.join(exerciseDir, 'content.md'), stored.document);
   }
@@ -381,19 +382,48 @@ async function readBrowse() {
       slots
     };
   }).sort((a, b) => a.name.localeCompare(b.name, 'fr') || a.categoryName.localeCompare(b.categoryName, 'fr'));
+  return { seasons, themes: themesOf(entries), library: await readLibrary() };
+}
+
+function legacyOrder(entry: CatalogEntry): number {
+  return typeof entry.data.order === 'number' ? entry.data.order : 0;
+}
+
+function themesOf(entries: CatalogEntry[]) {
+  const repertoire = entries.find(entry => entry.dir === 'repertoire' && entry.data.type === REPERTOIRE_TYPE);
   const themes = entries.filter(entry => entry.data.type === 'fccn-theme:0' && entry.dir.split('/').length === 2 && entry.dir.startsWith('repertoire/')).map(entry => {
     const id = entry.dir.split('/')[1];
-    const sessions = entries.filter(item => item.data.type === 'fccn-session:0' && item.dir.startsWith(`repertoire/${id}/sessions/`) && item.dir.split('/').length === 4).map(item => ({
-      id: text(item.data.id) || item.dir.split('/').pop() || '',
-      folder: item.dir.split('/').pop() || '',
-      name: text(item.data.name),
-      order: typeof item.data.order === 'number' ? item.data.order : 0,
-      audience: text(item.data.audience),
-      phase: text(item.data.phase)
-    })).sort((a, b) => a.order - b.order || a.name.localeCompare(b.name, 'fr'));
-    return { id, name: text(entry.data.name) || id, uuid: text(entry.data.id), sessions };
+    const sessions = entries
+      .filter(item => item.data.type === 'fccn-session:0' && item.dir.startsWith(`repertoire/${id}/sessions/`) && item.dir.split('/').length === 4)
+      .sort((a, b) => legacyOrder(a) - legacyOrder(b) || text(a.data.name).localeCompare(text(b.data.name), 'fr'))
+      .map(item => ({
+        id: text(item.data.id) || item.dir.split('/').pop() || '',
+        folder: item.dir.split('/').pop() || '',
+        name: text(item.data.name),
+        audience: text(item.data.audience),
+        phase: text(item.data.phase)
+      }));
+    return { id, name: text(entry.data.name) || id, uuid: text(entry.data.id), sessions: orderByIds(sessions, entry.data.sessions) };
   }).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-  return { seasons, themes, library: await readLibrary() };
+  return orderByIds(themes, repertoire?.data.themes, themeKey);
+}
+
+function idList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string' && id !== '') : [];
+}
+
+async function writeThemeOrder(themes: string[]) {
+  const file = path.join(repertoireRoot, 'index.json');
+  let current: Record<string, unknown> = {};
+  try { current = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>; } catch { /* premier ordre enregistré */ }
+  await mkdir(repertoireRoot, { recursive: true });
+  await writeFile(file, JSON.stringify({ type: REPERTOIRE_TYPE, ...current, themes }, null, 2) + '\n');
+}
+
+async function writeSessionOrder(themeDir: string, sessions: string[]) {
+  const file = path.join(themeDir, 'index.json');
+  const current = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+  await writeFile(file, JSON.stringify({ ...current, sessions }, null, 2) + '\n');
 }
 
 export const GET: RequestHandler = async ({ url }) => {
@@ -439,6 +469,8 @@ export const POST: RequestHandler = async ({ request }) => {
     season?: string;
     session?: string;
     theme?: string;
+    themes?: unknown;
+    sessions?: unknown;
     domain?: string;
     kind?: string;
     markdown?: string;
@@ -552,9 +584,31 @@ export const POST: RequestHandler = async ({ request }) => {
     if (!name) return json({ error: 'Indique un nom.' }, { status: 400 });
     const dir = path.join(repertoireRoot, id);
     if (await exists(dir)) return json({ error: 'Ce répertoire existe déjà.' }, { status: 409 });
+    const listed = themesOf(await catalog()).map(themeKey);
     await mkdir(path.join(dir, 'sessions'), { recursive: true });
-    await writeFile(path.join(dir, 'index.json'), JSON.stringify({ type: 'fccn-theme:0', id: crypto.randomUUID(), name }, null, 2) + '\n');
+    const themeId = crypto.randomUUID();
+    await writeFile(path.join(dir, 'index.json'), JSON.stringify({ type: 'fccn-theme:0', id: themeId, name, sessions: [] }, null, 2) + '\n');
+    await writeThemeOrder([...listed, themeId]);
     return json({ id, name });
+  }
+  if (body.type === 'order-themes') {
+    await writeThemeOrder(idList(body.themes));
+    return json({ ok: true });
+  }
+  if (body.type === 'order-sessions') {
+    const theme = String(body.theme || '').trim();
+    const issue = directoryIssue(theme, 'répertoire');
+    if (issue) return json({ error: issue }, { status: 400 });
+    const themeDir = path.join(repertoireRoot, theme);
+    if (!(await exists(path.join(themeDir, 'index.json')))) return json({ error: 'Ce thème n’existe pas.' }, { status: 404 });
+    await writeSessionOrder(themeDir, idList(body.sessions));
+    return json({ ok: true });
+  }
+  if (body.type === 'order-exercises') {
+    const session = themeSession(await catalog(), String(body.id || '').trim());
+    if (!session) return json({ error: 'Cette séance n’existe pas.' }, { status: 404 });
+    await writeFile(path.join(session.absDir, 'index.json'), JSON.stringify({ ...session.data, exercises: idList(body.exercises) }, null, 2) + '\n');
+    return json({ ok: true });
   }
   if (body.type === 'session') {
     const theme = String(body.theme || '').trim();
@@ -568,22 +622,22 @@ export const POST: RequestHandler = async ({ request }) => {
     if (!(await exists(path.join(themeDir, 'index.json')))) return json({ error: 'Ce thème n’existe pas.' }, { status: 404 });
     const dir = path.join(themeDir, 'sessions', id);
     if (await exists(dir)) return json({ error: 'Ce répertoire existe déjà.' }, { status: 409 });
-    const entries = await catalog();
-    const order = entries.filter(entry => entry.data.type === 'fccn-session:0' && entry.dir.startsWith(`repertoire/${theme}/sessions/`) && entry.dir.split('/').length === 4).length + 1;
+    const listed = themesOf(await catalog()).find(item => item.id === theme)?.sessions.map(session => session.id) || [];
     await mkdir(dir, { recursive: true });
     const sessionId = crypto.randomUUID();
     await writeFile(path.join(dir, 'index.json'), JSON.stringify({
       type: 'fccn-session:0',
       id: sessionId,
       name,
-      order,
       audience: '',
       phase: '',
       principle: '',
-      means: ''
+      means: '',
+      exercises: []
     }, null, 2) + '\n');
     const markdown = fillTemplate(await readSettings('session'), { name });
     await writeFile(path.join(dir, 'content.md'), markdown.replace(/\n+$/, '') + '\n');
+    await writeSessionOrder(themeDir, [...listed, sessionId]);
     return json({ id: sessionId, name });
   }
   if (body.type === 'library') {

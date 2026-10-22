@@ -38,11 +38,13 @@ import {
   type TrainerInfo
 } from './model';
 import { frenchDateOrder } from './calendar';
-import { applyExerciseDocument, exerciseFolder, exerciseOrder, isUuidFolder, orderByIds, parseExerciseDocument, splitExerciseRecord } from './exerciseFile';
+import { applyExerciseDocument, exerciseFolder, isUuidFolder, orderByIds, parseExerciseDocument, splitExerciseRecord } from './exerciseFile';
 import { fillTemplate, readTemplate } from './templates';
 import {
   doorOf,
   LIBRARY_KINDS,
+  REPERTOIRE_TYPE,
+  themeKey,
   type LibraryItem,
   type LibraryKind,
   type SeasonInfo,
@@ -185,8 +187,8 @@ async function loadExercise(dir: Dir): Promise<(Page & { type?: string }) | null
   return applyExerciseDocument(page, await readText(dir, 'content.md')) as Page & { type?: string };
 }
 
-async function storeExercise(dir: Dir, page: Page, order?: number) {
-  const { index, document } = splitExerciseRecord({ type: EXERCISE_TYPE, ...page, id: page.id }, order);
+async function storeExercise(dir: Dir, page: Page) {
+  const { index, document } = splitExerciseRecord({ type: EXERCISE_TYPE, ...page, id: page.id });
   await writeJson(dir, 'index.json', index);
   await writeText(dir, 'content.md', document);
 }
@@ -640,7 +642,7 @@ async function writeSeanceTree(categoryDir: Dir, seanceId: string, seance: Seanc
     if (info?.type === EXERCISE_TYPE) await removeChild(dir, name);
   }
   for (const [index, page] of seance.exercises.entries()) {
-    await storeExercise(await childDir(dir, page.id, true), page, index);
+    await storeExercise(await childDir(dir, page.id, true), page);
   }
 }
 
@@ -713,6 +715,8 @@ type IndexNode = {
     to?: string;
     slots?: Array<{ sheet?: string; date?: string; session?: string }>;
     exercises?: string[];
+    sessions?: string[];
+    themes?: string[];
   };
 };
 
@@ -789,21 +793,39 @@ async function readHandleBrowse(dir: Dir) {
       slots
     };
   }).sort((a, b) => a.name.localeCompare(b.name, 'fr') || a.categoryName.localeCompare(b.categoryName, 'fr'));
-  const themeList: ThemeInfo[] = nodes.filter(node => node.data.type === 'fccn-theme:0' && node.segments[0] === 'repertoire' && node.segments.length === 2).map(node => {
-    const id = node.segments[1];
-    const sessions = nodes.filter(item => item.data.type === SEANCE_TYPE && item.segments[0] === 'repertoire' && item.segments[1] === id && item.segments[2] === 'sessions' && item.segments.length === 4).map(item => ({
-      id: item.data.id || item.segments[3] || '',
-      folder: item.segments[3] || '',
-      name: item.data.name || '',
-      order: item.data.order || 0,
-      audience: item.data.audience || '',
-      phase: item.data.phase || ''
-    })).sort((a, b) => a.order - b.order || a.name.localeCompare(b.name, 'fr'));
-    return { id, name: node.data.name || id, uuid: node.data.id || '', sessions };
-  }).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   seasons.set(seasonList);
-  themes.set(themeList);
+  themes.set(themesOf(nodes));
   libraryItems.set(await listLibrary(dir));
+}
+
+function themesOf(nodes: IndexNode[]): ThemeInfo[] {
+  const repertoire = nodes.find(node => node.data.type === REPERTOIRE_TYPE && node.segments.join('/') === 'repertoire');
+  const list = nodes.filter(node => node.data.type === 'fccn-theme:0' && node.segments[0] === 'repertoire' && node.segments.length === 2).map(node => {
+    const id = node.segments[1];
+    const sessions = nodes
+      .filter(item => item.data.type === SEANCE_TYPE && item.segments[0] === 'repertoire' && item.segments[1] === id && item.segments[2] === 'sessions' && item.segments.length === 4)
+      .sort((a, b) => (a.data.order || 0) - (b.data.order || 0) || (a.data.name || '').localeCompare(b.data.name || '', 'fr'))
+      .map(item => ({
+        id: item.data.id || item.segments[3] || '',
+        folder: item.segments[3] || '',
+        name: item.data.name || '',
+        audience: item.data.audience || '',
+        phase: item.data.phase || ''
+      }));
+    return { id, name: node.data.name || id, uuid: node.data.id || '', sessions: orderByIds(sessions, node.data.sessions) };
+  }).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  return orderByIds(list, repertoire?.data.themes, themeKey);
+}
+
+async function writeThemeOrder(workspace: Dir, keys: string[]) {
+  const dir = await under(workspace, ['repertoire'], true);
+  const current = await readJson<Record<string, unknown>>(dir, 'index.json');
+  await writeJson(dir, 'index.json', { type: REPERTOIRE_TYPE, ...current, themes: keys });
+}
+
+async function writeSessionOrder(themeDir: Dir, keys: string[]) {
+  const current = await readJson<Record<string, unknown>>(themeDir, 'index.json');
+  await writeJson(themeDir, 'index.json', { ...current, sessions: keys });
 }
 
 function seasonsFor(nodes: IndexNode[], categoryId: string, categoryUuid: string) {
@@ -904,6 +926,8 @@ async function keepSchema(from: Dir, to: Dir) {
   const schema = await readText(from, 'schema.yaml');
   if (schema === null || await readText(to, 'schema.yaml') !== null) return;
   await writeText(to, 'schema.yaml', schema);
+  const svg = await readText(from, 'schema.svg');
+  if (svg !== null) await writeText(to, 'schema.svg', svg);
 }
 
 async function writeExerciseFolders(dir: Dir, exercises: Page[], prefix: string): Promise<Record<string, string>> {
@@ -916,13 +940,13 @@ async function writeExerciseFolders(dir: Dir, exercises: Page[], prefix: string)
   const keep = new Set<string>();
   const paths: Record<string, string> = {};
   const used = new Set(folders.values());
-  for (const [index, page] of exercises.entries()) {
+  for (const page of exercises) {
     let folder = folders.get(page.id);
     if (!folder) {
       if (directoryNameIssue(page.id, 'répertoire')) continue;
       folder = page.id;
     }
-    const desired = page.drill?.kind ? exerciseFolder(index, page.drill.kind) : '';
+    const desired = page.name?.trim() ? exerciseFolder(page.name) : '';
     if (isUuidFolder(folder) && desired && desired !== folder && await hasDirectory(dir, desired)) {
       const owner = await readJson<{ id?: string }>(await childDir(dir, desired), 'index.json');
       if (!owner?.id || owner.id === page.id) {
@@ -944,7 +968,7 @@ async function writeExerciseFolders(dir: Dir, exercises: Page[], prefix: string)
     }
     keep.add(folder);
     paths[page.id] = `${prefix}/${folder}`;
-    await storeExercise(await childDir(dir, folder, true), page, exerciseOrder(folder, index));
+    await storeExercise(await childDir(dir, folder, true), page);
   }
   for await (const [name, handle] of dir.entries()) {
     if (handle.kind !== 'directory' || keep.has(name)) continue;
@@ -1044,8 +1068,10 @@ function uniqueSlug(base: string, used: Set<string>): string {
 }
 
 export const breadcrumbEpoch = writable(0);
+export const missingPage = writable('');
 
 async function releaseExercise(): Promise<boolean> {
+  missingPage.set('');
   if (get(screen) !== 'exercise') return true;
   const ok = await confirmLeaveExercise();
   if (!ok) breadcrumbEpoch.update(n => n + 1);
@@ -1112,15 +1138,27 @@ export async function openNavChild(id: string) {
     await openThemeSession(id);
     return;
   }
+  if (area === 'seasons') {
+    await openSeasonSession(id);
+    return;
+  }
   screen.set('home');
   persistCursor();
 }
 
 async function openThemeSession(file: string) {
   const theme = get(themes).find(item => item.id === get(navItem));
-  const session = theme?.sessions.find(item => item.id === file);
-  if (!session) return;
-  const season = get(seasons).find(item => item.slots.some(slot => slot.session === file));
+  if (!theme?.sessions.some(item => item.id === file)) return;
+  await loadSessionScreen(file, get(seasons).find(item => item.slots.some(slot => slot.session === file)));
+}
+
+async function openSeasonSession(file: string) {
+  const season = get(seasons).find(item => item.id === get(navItem));
+  if (!season?.slots.some(slot => slot.session === file)) return;
+  await loadSessionScreen(file, season);
+}
+
+async function loadSessionScreen(file: string, season: SeasonInfo | undefined) {
   if (season) {
     categoryInfo.set({ id: season.categoryFolder, name: season.categoryName, uuid: '' });
   }
@@ -1434,8 +1472,10 @@ export async function createTheme(dirName: string, displayName: string): Promise
       return 'Ce répertoire existe déjà.';
     } catch { /* le répertoire n'existe pas */ }
     const folder = await childDir(parent, id, true);
-    await writeJson(folder, 'index.json', { type: 'fccn-theme:0', id: crypto.randomUUID(), name: label });
+    const themeId = crypto.randomUUID();
+    await writeJson(folder, 'index.json', { type: 'fccn-theme:0', id: themeId, name: label, sessions: [] });
     await childDir(folder, 'sessions', true);
+    await writeThemeOrder(root, [...get(themes).map(themeKey), themeId]);
   } else {
     const error = await postShared({ type: 'theme', id, name: label });
     if (error) return error;
@@ -1455,32 +1495,80 @@ export async function createThemeSession(dirName: string, displayName: string): 
   if (!label) return 'Indique un nom.';
   const folder = dirName.trim();
   if (theme.sessions.some(item => item.folder === folder)) return 'Ce répertoire existe déjà.';
-  const order = theme.sessions.length + 1;
   if (root && await ensureAccess(true)) {
-    const parent = await under(root, ['repertoire', theme.id, 'sessions'], true);
+    const themeDir = await under(root, ['repertoire', theme.id]);
+    const parent = await childDir(themeDir, 'sessions', true);
     try {
       await parent.getDirectoryHandle(folder);
       return 'Ce répertoire existe déjà.';
     } catch { /* le répertoire n'existe pas */ }
     const sessionDir = await childDir(parent, folder, true);
+    const sessionId = crypto.randomUUID();
     await writeJson(sessionDir, 'index.json', {
       type: SEANCE_TYPE,
-      id: crypto.randomUUID(),
+      id: sessionId,
       name: label,
-      order,
       audience: '',
       phase: '',
       principle: '',
-      means: ''
+      means: '',
+      exercises: []
     });
     const markdown = fillTemplate(await readTemplate('session'), { name: label });
     await writeText(sessionDir, 'content.md', `${markdown.replace(/\n+$/, '')}\n`);
+    await writeSessionOrder(themeDir, [...theme.sessions.map(item => item.id), sessionId]);
   } else {
     const error = await postShared({ type: 'session', theme: theme.id, id: folder, name: label });
     if (error) return error;
   }
   await reloadBrowse();
   return null;
+}
+
+export async function reorderThemes(ids: string[]): Promise<string | null> {
+  const byId = new Map(get(themes).map(theme => [theme.id, theme]));
+  const next = ids.flatMap(id => byId.get(id) ?? []);
+  themes.set(next);
+  const keys = next.map(themeKey);
+  if (root && await ensureAccess(true)) {
+    await writeThemeOrder(root, keys);
+    return null;
+  }
+  const error = await postShared({ type: 'order-themes', themes: keys });
+  if (error) await reloadBrowse();
+  return error;
+}
+
+export async function reorderThemeSessions(themeId: string, ids: string[]): Promise<string | null> {
+  const theme = get(themes).find(item => item.id === themeId);
+  if (!theme) return 'Ouvre un thème.';
+  const byId = new Map(theme.sessions.map(session => [session.id, session]));
+  const sessions = ids.flatMap(id => byId.get(id) ?? []);
+  themes.update(list => list.map(item => (item.id === themeId ? { ...item, sessions } : item)));
+  const keys = sessions.map(session => session.id);
+  if (root && await ensureAccess(true)) {
+    await writeSessionOrder(await under(root, ['repertoire', themeId]), keys);
+    return null;
+  }
+  const error = await postShared({ type: 'order-sessions', theme: themeId, sessions: keys });
+  if (error) await reloadBrowse();
+  return error;
+}
+
+export async function reorderExercises(ids: string[]): Promise<string | null> {
+  const id = get(seanceHeader).id;
+  if (!id) return 'Ouvre une séance.';
+  const byId = new Map(get(pages).map(page => [page.id, page]));
+  pages.set(ids.flatMap(key => byId.get(key) ?? []));
+  if (root && await ensureAccess(true)) {
+    const nodes: IndexNode[] = [];
+    await collectIndexes(root, [], nodes);
+    const session = nodes.find(node => node.data.type === SEANCE_TYPE && node.data.id === id && node.segments[0] === 'repertoire' && node.segments[2] === 'sessions');
+    if (!session) return 'Cette séance n’existe pas.';
+    await writeJson(await dirAt(root, session.segments), 'index.json', { ...session.data, exercises: ids });
+    return null;
+  }
+  return postShared({ type: 'order-exercises', id, exercises: ids });
 }
 
 export async function createLibraryItem(fileName: string): Promise<string | null> {
@@ -1854,8 +1942,30 @@ function resolveChild(area: WorkspaceArea | '', item: string, token: string): st
   return token;
 }
 
+function missingItem(area: WorkspaceArea | '', item: string): string {
+  if (area === 'themes' && !get(themes).some(theme => theme.id === item)) return 'Ce thème n’existe plus.';
+  if (area === 'seasons' && !get(seasons).some(season => season.id === item)) return 'Cette saison n’existe plus.';
+  if (area === 'styles' && !get(styles).some(style => style.id === item)) return 'Ce style n’existe plus.';
+  if (area === 'library' && !get(libraryItems).some(entry => entry.domain === item)) return 'Ce domaine de la bibliothèque n’existe plus.';
+  return '';
+}
+
+function missingChild(area: WorkspaceArea | '', item: string, child: string): string {
+  if (area === 'themes') {
+    const theme = get(themes).find(entry => entry.id === item);
+    if (!theme?.sessions.some(session => session.id === child)) return `Cette séance n’existe plus dans le thème « ${theme?.name || item} ».`;
+  }
+  if (area === 'seasons') {
+    const season = get(seasons).find(entry => entry.id === item);
+    if (!season?.slots.some(slot => slot.session === child)) return `Cette séance ne fait plus partie du planning de la saison « ${season?.name || item} ».`;
+  }
+  if (area === 'library' && !LIBRARY_KINDS.some(kind => kind.id === child)) return 'Ce dossier de la bibliothèque n’existe plus.';
+  return '';
+}
+
 async function goToAddress(target: AddressTarget) {
   if (!get(workspaceOpen)) return;
+  missingPage.set('');
   if (!target.door) {
     if (get(navDoor) || get(screen) !== 'home') await showHome();
     return;
@@ -1875,16 +1985,32 @@ async function goToAddress(target: AddressTarget) {
   }
   if (!target.item) return;
   const item = resolveItem(target.area, target.item);
+  const lostItem = missingItem(target.area, item);
+  if (lostItem) {
+    missingPage.set(lostItem);
+    return;
+  }
   const child = target.child ? resolveChild(target.area, item, target.child) : '';
   const here = get(screen);
   const itemOpen = get(navItem) === item && (target.area !== 'categories' || Boolean(child) || here === 'category');
   if (!itemOpen) await openNavItem(item);
   if (!child) return;
+  const lostChild = missingChild(target.area, item, child);
+  if (lostChild) {
+    if (get(navChild)) await openNavChild('');
+    missingPage.set(lostChild);
+    return;
+  }
   const knownPaths = get(exercisePaths);
   const openPages = get(pages);
-  const pathsReady = target.area !== 'themes' || (openPages.length > 0 && openPages.every(page => page.id && knownPaths[page.id]));
+  const pathsReady = (target.area !== 'themes' && target.area !== 'seasons') || (openPages.length > 0 && openPages.every(page => page.id && knownPaths[page.id]));
   const childOpen = pathsReady && get(navChild) === child && (get(screen) === 'seance' || get(screen) === 'exercise' || target.area === 'library' || target.area === 'styles');
   if (!childOpen) await openNavChild(child);
+  if (target.exercise && !get(pages).some(page => page.id === target.exercise)) {
+    if (get(screen) === 'exercise') await showSeanceScreen();
+    missingPage.set(`Cet exercice n’existe plus dans la séance « ${get(seanceHeader).name || 'Séance'} ».`);
+    return;
+  }
   if (target.exercise && (get(screen) !== 'exercise' || get(currentPageId) !== target.exercise)) await showExercise(target.exercise);
   else if (!target.exercise && get(screen) === 'exercise') await showSeanceScreen();
 }

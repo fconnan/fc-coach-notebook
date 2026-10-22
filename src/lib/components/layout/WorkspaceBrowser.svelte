@@ -1,14 +1,19 @@
 <script lang="ts">
   import SeanceBoard from './SeanceBoard.svelte';
   import ExerciseEditor from './ExerciseEditor.svelte';
+  import { RowDrag } from '$lib/utils/rowDrag.svelte';
+  import { matches } from '$lib/utils/search';
+  import SearchTable from './SearchTable.svelte';
   import { currentPage } from '$lib/stores/workspace';
   import {
     trainer, categories, styles, seasons, themes, libraryItems, screen, portraitUrl,
     exercisePaths,
-    navDoor, navArea, navItem, navChild,
-    createCategory, commitTrainerName, commitTrainerSport, savePortrait, openDoor, openArea, openNavItem, openNavChild, createSeance,
-    createStyle, updateStyle, createSeason, createSlot, createTheme, createThemeSession, createLibraryItem
+    navDoor, navArea, navItem, navChild, missingPage,
+    showHome, createCategory, commitTrainerName, commitTrainerSport, savePortrait, openDoor, openArea, openNavItem, openNavChild, createSeance,
+    createStyle, updateStyle, createSeason, createSlot, createTheme, createThemeSession, createLibraryItem,
+    reorderThemes, reorderThemeSessions
   } from '$lib/workspace/state';
+  import { BarsOutline } from 'flowbite-svelte-icons';
   import { LIBRARY_KINDS, WORKSPACE_DOORS, type LibraryKind, type WorkspaceArea, type WorkspaceDoor } from '$lib/workspace/catalog';
   import seancesArt from '$lib/assets/door-seances.jpg';
   import seasonArt from '$lib/assets/door-season.jpg';
@@ -16,7 +21,7 @@
   import { DEFAULT_SPORT, type PageStyle } from '$lib/workspace/model';
   import {
     Alert, Avatar, Button, Card, Heading, Input, Label, Modal, Select,
-    Table, TableBody, TableBodyCell, TableBodyRow, TableHead, TableHeadCell, TableSearch
+    TableBody, TableBodyCell, TableBodyRow, TableHead, TableHeadCell
   } from 'flowbite-svelte';
 
   let dialog = $state<'category' | 'style' | 'seance' | 'season' | 'slot' | 'theme' | 'session' | 'library' | null>(null);
@@ -30,7 +35,8 @@
   let sessionId = $state('');
   let dialogError = $state('');
   let portraitError = $state('');
-  let themeQuery = $state('');
+  let query = $state('');
+  const drag = new RowDrag();
 
   const openedStyle = $derived($styles.find(style => style.id === $navItem) ?? null);
   const openedSeason = $derived($seasons.find(season => season.id === $navItem) ?? null);
@@ -41,11 +47,17 @@
     id: session.id,
     label: `${theme.name} — ${session.name || session.folder}`
   }))));
-  const showingBoard = $derived($screen === 'seance' && $navArea === 'themes' && Boolean($navChild));
-  const visibleThemes = $derived($themes.filter(theme => {
-    const query = themeQuery.trim().toLocaleLowerCase('fr');
-    return !query || theme.name.toLocaleLowerCase('fr').includes(query);
-  }));
+  const showingBoard = $derived($screen === 'seance' && ($navArea === 'themes' || $navArea === 'seasons') && Boolean($navChild));
+  const visibleSeasons = $derived($seasons.filter(season => matches(query, season.name, season.zone, season.from, season.to, season.categoryName)));
+  const visibleSlots = $derived(openedSeason?.slots.filter(slot => matches(query, slot.sheet, slot.date, slot.sessionName)) ?? []);
+  const visibleThemes = $derived($themes.filter(theme => matches(query, theme.name)));
+  const visibleSessions = $derived(openedTheme?.sessions.filter(session => matches(query, session.name, session.audience, session.phase)) ?? []);
+  const visibleStyles = $derived($styles.filter(style => matches(query, style.name)));
+  const visibleDomains = $derived(domains.filter(domain => matches(query, domain)));
+  const visibleKinds = $derived(LIBRARY_KINDS.filter(kind => matches(query, kind.label)));
+  const visibleFiles = $derived(files.filter(item => matches(query, item.name)));
+  const themeIds = $derived($themes.map(theme => theme.id));
+  const sessionIds = $derived(openedTheme?.sessions.map(session => session.id) ?? []);
   const editingExercise = $derived($screen === 'exercise' && Boolean($currentPage));
 
   function schemaAt(id: string): string {
@@ -158,19 +170,27 @@
     if (!entryOpen) dialog = null;
   });
 
+  $effect(() => {
+    void $navItem;
+    drag.error = '';
+  });
+
+  $effect(() => {
+    void [$navArea, $navItem, $navChild];
+    query = '';
+  });
+
+  function emptyText(none: string): string {
+    return query.trim() ? 'Aucun résultat' : none;
+  }
+
   function kindCount(domain: string, kind: LibraryKind) {
     return $libraryItems.filter(item => item.domain === domain && item.kind === kind).length;
   }
 </script>
 
-{#snippet addButton(kind: NonNullable<typeof dialog>)}
-  <div class="mb-3 flex justify-end">
-    <Button size="sm" color="brand" onclick={() => openDialog(kind)}>Ajouter</Button>
-  </div>
-{/snippet}
-
-{#snippet themeHeader()}
-  <Button size="sm" color="brand" onclick={() => openDialog('theme')}>Ajouter un thème</Button>
+{#snippet orderAlert()}
+  {#if drag.error}<Alert color="red" class="mb-3">{drag.error}</Alert>{/if}
 {/snippet}
 
 {#snippet panelTitle(title: string)}
@@ -178,7 +198,16 @@
 {/snippet}
 
 <div class={editingExercise ? 'flex h-full min-h-0 flex-col' : ''}>
-  {#if $screen === 'exercise' && $currentPage}
+  {#if $missingPage}
+    {@render panelTitle('Page introuvable')}
+    <Card size="xl" class="p-6">
+      <p class="font-medium text-heading">{$missingPage}</p>
+      <p class="mt-2 text-sm text-body">Elle a peut-être été supprimée ou déplacée. Le lien ou le favori utilisé n’est plus valable.</p>
+      <div class="mt-4">
+        <Button color="brand" onclick={() => showHome()}>Aller à l’accueil</Button>
+      </div>
+    </Card>
+  {:else if $screen === 'exercise' && $currentPage}
     {#key `${schemaAt($currentPage.id)}/${$currentPage.id}`}
       <div class="min-h-0 flex-1">
         <ExerciseEditor at={schemaAt($currentPage.id)} exerciseId={$currentPage.id} />
@@ -231,8 +260,7 @@
   {:else if $navArea === 'seasons' && !openedSeason}
     {@render panelTitle('Saisons')}
     <Card size="xl" class="p-6">
-      {@render addButton('season')}
-      <Table hoverable>
+      <SearchTable bind:query placeholder="Rechercher une saison" onadd={() => openDialog('season')}>
         <TableHead>
           <TableHeadCell>Nom</TableHeadCell>
           <TableHeadCell>Zone</TableHeadCell>
@@ -241,7 +269,7 @@
           <TableHeadCell>Catégorie</TableHeadCell>
         </TableHead>
         <TableBody>
-          {#each $seasons as season (season.id)}
+          {#each visibleSeasons as season (season.id)}
             <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(season.id)}>
               <TableBodyCell>{season.name}</TableBodyCell>
               <TableBodyCell>{season.zone}</TableBodyCell>
@@ -250,98 +278,114 @@
               <TableBodyCell>{season.categoryName}</TableBodyCell>
             </TableBodyRow>
           {:else}
-            <TableBodyRow><TableBodyCell colspan={5}>Aucune saison</TableBodyCell></TableBodyRow>
+            <TableBodyRow><TableBodyCell colspan={5}>{emptyText('Aucune saison')}</TableBodyCell></TableBodyRow>
           {/each}
         </TableBody>
-      </Table>
+      </SearchTable>
     </Card>
   {:else if openedSeason}
     {@render panelTitle(openedSeason.name)}
     <Card size="xl" class="p-6">
-      {@render addButton('slot')}
-      <Table hoverable>
+      <SearchTable bind:query placeholder="Rechercher un créneau" onadd={() => openDialog('slot')}>
         <TableHead>
           <TableHeadCell>Fiche</TableHeadCell>
           <TableHeadCell>Date</TableHeadCell>
           <TableHeadCell>Séance</TableHeadCell>
         </TableHead>
         <TableBody>
-          {#each openedSeason.slots as slot (`${slot.sheet}-${slot.session}`)}
-            <TableBodyRow>
+          {#each visibleSlots as slot (`${slot.sheet}-${slot.session}`)}
+            <TableBodyRow class="cursor-pointer" onclick={() => openNavChild(slot.session)}>
               <TableBodyCell>{slot.sheet}</TableBodyCell>
               <TableBodyCell>{slot.date}</TableBodyCell>
               <TableBodyCell>{slot.sessionName}</TableBodyCell>
             </TableBodyRow>
           {:else}
-            <TableBodyRow><TableBodyCell colspan={3}>Aucun créneau</TableBodyCell></TableBodyRow>
+            <TableBodyRow><TableBodyCell colspan={3}>{emptyText('Aucun créneau')}</TableBodyCell></TableBodyRow>
           {/each}
         </TableBody>
-      </Table>
+      </SearchTable>
     </Card>
   {:else if $navArea === 'themes' && !openedTheme}
     <Heading tag="h1" class="mb-3 text-xl">Thèmes de séances</Heading>
     <Card size="xl" class="p-6">
-    <TableSearch
-      placeholder="Rechercher un thème"
-      hoverable
-      bind:inputValue={themeQuery}
-      header={themeHeader}
-      class="overflow-visible rounded-none shadow-none"
-      classes={{ inner: "mb-3 flex items-center justify-between gap-3 p-0", search: "mt-0" }}
-    >
-      <TableHead><TableHeadCell>Nom</TableHeadCell></TableHead>
+    {@render orderAlert()}
+    <SearchTable bind:query placeholder="Rechercher un thème" addLabel="Ajouter un thème" onadd={() => openDialog('theme')}>
+      <TableHead>
+        <TableHeadCell class="w-24">Ordre</TableHeadCell>
+        <TableHeadCell>Nom</TableHeadCell>
+      </TableHead>
       <TableBody>
         {#each visibleThemes as theme (theme.id)}
-          <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(theme.id)}>
+          <TableBodyRow
+            class={drag.rowClass(themeIds, theme.id)}
+            draggable="true"
+            ondragstart={(e: DragEvent) => drag.start(e, theme.id)}
+            ondragover={(e: DragEvent) => drag.over(e, theme.id)}
+            ondrop={(e: DragEvent) => drag.drop(e, themeIds, theme.id, reorderThemes)}
+            ondragend={drag.end}
+            onclick={() => openNavItem(theme.id)}
+          >
+            <TableBodyCell>
+              <span class="inline-flex cursor-grab items-center gap-2"><BarsOutline class="h-4 w-4 text-gray-400" />{themeIds.indexOf(theme.id) + 1}</span>
+            </TableBodyCell>
             <TableBodyCell>{theme.name}</TableBodyCell>
           </TableBodyRow>
         {:else}
-          <TableBodyRow><TableBodyCell>{themeQuery.trim() ? 'Aucun résultat' : 'Aucun thème'}</TableBodyCell></TableBodyRow>
+          <TableBodyRow><TableBodyCell colspan={2}>{emptyText('Aucun thème')}</TableBodyCell></TableBodyRow>
         {/each}
       </TableBody>
-    </TableSearch>
+    </SearchTable>
     </Card>
   {:else if openedTheme}
     {@render panelTitle(openedTheme.name)}
     <Card size="xl" class="p-6">
-      {@render addButton('session')}
-      <Table hoverable>
+      {@render orderAlert()}
+      <SearchTable bind:query placeholder="Rechercher une séance" onadd={() => openDialog('session')}>
         <TableHead>
-          <TableHeadCell>Ordre</TableHeadCell>
+          <TableHeadCell class="w-24">Ordre</TableHeadCell>
           <TableHeadCell>Nom</TableHeadCell>
           <TableHeadCell>Public</TableHeadCell>
           <TableHeadCell>Phase</TableHeadCell>
         </TableHead>
         <TableBody>
-          {#each openedTheme.sessions as session (session.id)}
-            <TableBodyRow class="cursor-pointer" onclick={() => openNavChild(session.id)}>
-              <TableBodyCell>{session.order || ''}</TableBodyCell>
+          {#each visibleSessions as session (session.id)}
+            <TableBodyRow
+              class={drag.rowClass(sessionIds, session.id)}
+              draggable="true"
+              ondragstart={(e: DragEvent) => drag.start(e, session.id)}
+              ondragover={(e: DragEvent) => drag.over(e, session.id)}
+              ondrop={(e: DragEvent) => drag.drop(e, sessionIds, session.id, ids => reorderThemeSessions(openedTheme.id, ids))}
+              ondragend={drag.end}
+              onclick={() => openNavChild(session.id)}
+            >
+              <TableBodyCell>
+                <span class="inline-flex cursor-grab items-center gap-2"><BarsOutline class="h-4 w-4 text-gray-400" />{sessionIds.indexOf(session.id) + 1}</span>
+              </TableBodyCell>
               <TableBodyCell>{session.name}</TableBodyCell>
               <TableBodyCell>{session.audience}</TableBodyCell>
               <TableBodyCell>{session.phase}</TableBodyCell>
             </TableBodyRow>
           {:else}
-            <TableBodyRow><TableBodyCell colspan={4}>Aucune séance</TableBodyCell></TableBodyRow>
+            <TableBodyRow><TableBodyCell colspan={4}>{emptyText('Aucune séance')}</TableBodyCell></TableBodyRow>
           {/each}
         </TableBody>
-      </Table>
+      </SearchTable>
     </Card>
   {:else if $navArea === 'styles' && !openedStyle}
     {@render panelTitle('Styles')}
     <Card size="xl" class="p-6">
-      {@render addButton('style')}
-      <Table hoverable>
+      <SearchTable bind:query placeholder="Rechercher un style" onadd={() => openDialog('style')}>
         <TableHead><TableHeadCell>Nom</TableHeadCell></TableHead>
         <TableBody>
-          {#each $styles as style (style.id)}
+          {#each visibleStyles as style (style.id)}
             <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(style.id)}>
               <TableBodyCell>{style.name}</TableBodyCell>
             </TableBodyRow>
           {:else}
-            <TableBodyRow><TableBodyCell>Aucun style</TableBodyCell></TableBodyRow>
+            <TableBodyRow><TableBodyCell>{emptyText('Aucun style')}</TableBodyCell></TableBodyRow>
           {/each}
         </TableBody>
-      </Table>
+      </SearchTable>
     </Card>
   {:else if openedStyle}
     {@render panelTitle(openedStyle.name)}
@@ -361,7 +405,7 @@
   {:else if $navArea === 'library' && !$navItem}
     {@render panelTitle('Bibliothèque')}
     <Card size="xl" class="p-6">
-      <Table hoverable>
+      <SearchTable bind:query placeholder="Rechercher un domaine">
         <TableHead>
           <TableHeadCell>Domaine</TableHeadCell>
           <TableHeadCell>Objets</TableHeadCell>
@@ -369,7 +413,7 @@
           <TableHeadCell>Formes</TableHeadCell>
         </TableHead>
         <TableBody>
-          {#each domains as domain (domain)}
+          {#each visibleDomains as domain (domain)}
             <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(domain)}>
               <TableBodyCell>{domain}</TableBodyCell>
               <TableBodyCell>{kindCount(domain, 'objects')}</TableBodyCell>
@@ -377,43 +421,44 @@
               <TableBodyCell>{kindCount(domain, 'shapes')}</TableBodyCell>
             </TableBodyRow>
           {:else}
-            <TableBodyRow><TableBodyCell colspan={4}>Aucun domaine</TableBodyCell></TableBodyRow>
+            <TableBodyRow><TableBodyCell colspan={4}>{emptyText('Aucun domaine')}</TableBodyCell></TableBodyRow>
           {/each}
         </TableBody>
-      </Table>
+      </SearchTable>
     </Card>
   {:else if $navArea === 'library' && !$navChild}
     {@render panelTitle($navItem)}
     <Card size="xl" class="p-6">
-      <Table hoverable>
+      <SearchTable bind:query placeholder="Rechercher un dossier">
         <TableHead>
           <TableHeadCell>Dossier</TableHeadCell>
           <TableHeadCell>Fichiers</TableHeadCell>
         </TableHead>
         <TableBody>
-          {#each LIBRARY_KINDS as kind (kind.id)}
+          {#each visibleKinds as kind (kind.id)}
             <TableBodyRow class="cursor-pointer" onclick={() => openNavChild(kind.id)}>
               <TableBodyCell>{kind.label}</TableBodyCell>
               <TableBodyCell>{kindCount($navItem, kind.id)}</TableBodyCell>
             </TableBodyRow>
+          {:else}
+            <TableBodyRow><TableBodyCell colspan={2}>{emptyText('Aucun dossier')}</TableBodyCell></TableBodyRow>
           {/each}
         </TableBody>
-      </Table>
+      </SearchTable>
     </Card>
   {:else if $navArea === 'library'}
     {@render panelTitle(LIBRARY_KINDS.find(kind => kind.id === $navChild)?.label || 'Fichiers')}
     <Card size="xl" class="p-6">
-      {@render addButton('library')}
-      <Table hoverable>
+      <SearchTable bind:query placeholder="Rechercher un fichier" onadd={() => openDialog('library')}>
         <TableHead><TableHeadCell>Nom</TableHeadCell></TableHead>
         <TableBody>
-          {#each files as item (item.file)}
+          {#each visibleFiles as item (item.file)}
             <TableBodyRow><TableBodyCell>{item.name}</TableBodyCell></TableBodyRow>
           {:else}
-            <TableBodyRow><TableBodyCell>Aucun fichier</TableBodyCell></TableBodyRow>
+            <TableBodyRow><TableBodyCell>{emptyText('Aucun fichier')}</TableBodyCell></TableBodyRow>
           {/each}
         </TableBody>
-      </Table>
+      </SearchTable>
     </Card>
   {/if}
 </div>

@@ -3,7 +3,7 @@
   import { PauseOutline, PlayOutline } from 'flowbite-svelte-icons';
   import { loadExercisePreview, type ExercisePreview } from '$lib/schema/preview';
 
-  let { at, exerciseId = '' }: { at: string; exerciseId?: string } = $props();
+  let { at, exerciseId = '', compact = false }: { at: string; exerciseId?: string; compact?: boolean } = $props();
 
   let preview = $state<ExercisePreview | null>(null);
   let shownFor = $state('');
@@ -88,13 +88,14 @@
 <div class="schema">
   <div class="overflow-hidden bg-[#166534]">
     {#if svg}
-      <div class="sheet">{@html svg}</div>
+      <div class="sheet" class:compact>{@html svg}</div>
     {:else}
       <div class="flex aspect-[3/2] items-center justify-center px-4 text-center text-sm text-white/80">
         {error || 'Schéma…'}
       </div>
     {/if}
   </div>
+  {#if !compact}
   <div class="schema-bar flex items-center gap-1.5 px-1.5">
     {#if phases.length}
       <Select
@@ -114,6 +115,7 @@
       {/if}
     </Button>
   </div>
+  {/if}
 </div>
 
 <style>
@@ -123,6 +125,8 @@
     border-radius: 0;
   }
   .sheet :global(svg) { display: block; width: 100%; height: auto; }
+  .sheet.compact { display: flex; justify-content: center; height: 7.5rem; }
+  .sheet.compact :global(svg) { width: auto; max-width: 100%; height: 100%; }
   .schema-bar {
     height: 2.25rem;
     background: var(--color-neutral-secondary-medium);

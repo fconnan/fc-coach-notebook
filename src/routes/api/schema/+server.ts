@@ -1,9 +1,10 @@
 import { json } from '@sveltejs/kit';
-import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse } from 'yaml';
 import type { RequestHandler } from './$types';
-import { SCHEMA_TYPE } from '$lib/schema/types';
+import { SCHEMA_TYPE, type LibraryEntry, type SchemaDoc } from '$lib/schema/types';
+import { buildScene, libraryFor, renderSvg } from '$lib/schema/scene';
 import { isUuidFolder } from '$lib/workspace/exerciseFile';
 
 const root = path.resolve('data');
@@ -120,11 +121,30 @@ export const GET: RequestHandler = async ({ url }) => {
   return json({ source, markdown, library: await readLibrary(schemaPath) });
 };
 
+async function writeSchemaSvg(dir: string, source: string): Promise<string> {
+  const svgPath = path.join(dir, 'schema.svg');
+  try {
+    const doc = parse(source) as SchemaDoc;
+    if (!doc || typeof doc !== 'object') throw new Error('YAML illisible');
+    const rel = path.relative(root, dir).replaceAll('\\', '/');
+    const names = libraryFor(rel, await readLibrary(path.join(dir, 'schema.yaml')) as LibraryEntry[], `${rel}/schema.yaml`);
+    await writeFile(svgPath, renderSvg(buildScene(doc, names, 0, 0)) + '\n', 'utf8');
+    return '';
+  } catch (err) {
+    await rm(svgPath, { force: true });
+    return `SVG non généré : ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 export const PUT: RequestHandler = async ({ request }) => {
   const body = await request.json() as { at?: string; id?: string; source?: string; markdown?: string };
   const dir = await resolveDir(String(body.at || ''), String(body.id || ''));
   if (!dir) return json({ error: 'Chemin invalide.' }, { status: 400 });
-  if (typeof body.source === 'string') await writeFile(path.join(dir, 'schema.yaml'), body.source, 'utf8');
   if (typeof body.markdown === 'string') await writeFile(path.join(dir, 'content.md'), body.markdown, 'utf8');
-  return json({ ok: true });
+  let warning = '';
+  if (typeof body.source === 'string') {
+    await writeFile(path.join(dir, 'schema.yaml'), body.source, 'utf8');
+    warning = await writeSchemaSvg(dir, body.source);
+  }
+  return json({ ok: true, warning });
 };

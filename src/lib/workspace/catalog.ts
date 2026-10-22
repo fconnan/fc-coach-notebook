@@ -76,7 +76,6 @@ export interface ThemeSessionInfo {
   id: string;
   folder: string;
   name: string;
-  order: number;
   audience: string;
   phase: string;
 }
@@ -86,6 +85,13 @@ export interface ThemeInfo {
   name: string;
   uuid: string;
   sessions: ThemeSessionInfo[];
+}
+
+export const REPERTOIRE_TYPE = 'fccn-repertoire:0';
+
+/** Key stored in the `themes` list of repertoire/index.json. */
+export function themeKey(theme: Pick<ThemeInfo, 'id' | 'uuid'>): string {
+  return theme.uuid || theme.id;
 }
 
 export interface LibraryItem {

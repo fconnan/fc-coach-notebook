@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { navDoor, screen, restoring } from '$lib/workspace/state';
+  import { screen, restoring } from '$lib/workspace/state';
   import AppShell from './AppShell.svelte';
   import WorkspaceGate from './WorkspaceGate.svelte';
   import WorkspaceBrowser from './WorkspaceBrowser.svelte';
@@ -42,10 +42,6 @@
 {:else if $screen === 'gate'}
   <AppShell>
     <WorkspaceGate />
-  </AppShell>
-{:else if !$navDoor}
-  <AppShell>
-    <WorkspaceBrowser />
   </AppShell>
 {:else}
   <AppShell fill={$screen === 'exercise'}>

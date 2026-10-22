@@ -135,7 +135,8 @@ input {
 
 [data-scope="app-path"] select,
 [data-scope="app-path"] button.path-home,
-[data-scope="app-path"] button.path-back {
+[data-scope="app-path"] button.path-back,
+[data-scope="app-path"] button.path-mark {
   box-sizing: border-box;
   height: 1.625rem;
   min-height: 0;
@@ -151,15 +152,33 @@ input {
 }
 
 [data-scope="app-path"] button.path-home,
-[data-scope="app-path"] button.path-back {
+[data-scope="app-path"] button.path-back,
+[data-scope="app-path"] button.path-mark {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   width: 1.625rem;
 }
 
+[data-scope="app-path"] button.path-mark:disabled {
+  cursor: default;
+  color: var(--color-fg-brand);
+}
+
+[data-scope="app-path"] button.path-mark.current {
+  border-color: transparent;
+  background: var(--color-brand);
+  color: white;
+}
+
+[data-scope="app-path"] button.path-mark.current:hover {
+  background: var(--color-brand-strong);
+}
+
 [data-scope="app-path"] button.path-home:hover,
-[data-scope="app-path"] button.path-back:hover {
+[data-scope="app-path"] button.path-back:hover,
+[data-scope="app-path"] button.path-mark:enabled:hover {
   background: var(--color-neutral-tertiary-medium);
 }
 
