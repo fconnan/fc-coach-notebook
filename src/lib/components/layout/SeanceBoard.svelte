@@ -185,6 +185,11 @@
     {#each listed as page (page.id)}
       <Card size="xl" class="p-6">
         {#if editingPick}<div class="mb-3">{@render pickBox(page.id, page.name)}</div>{/if}
+        {#if !planning}
+          <div class="mb-3 flex justify-end">
+            <Button size="sm" color="brand" onclick={() => { void showExercise(page.id); }}>Modifier</Button>
+          </div>
+        {/if}
         <div class="grid items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]">
           <div class="exercise-frame flex min-h-0 flex-col overflow-hidden lg:h-0 lg:min-h-full">
             <div class="exercise-md min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
@@ -202,19 +207,4 @@
 
 <style>
   .pick { accent-color: var(--color-brand); }
-  .exercise-frame {
-    border: 1px solid var(--color-default-medium);
-    border-radius: 0;
-  }
-  .exercise-md {
-    padding: 0.9rem 1rem;
-    font-size: 0.925rem;
-    line-height: 1.45;
-  }
-  .exercise-md :global(h1) { margin: 0 0 0.75rem; font-size: 1.05rem; font-weight: 650; }
-  .exercise-md :global(h2) { margin: 0.9rem 0 0.3rem; font-size: 0.95rem; font-weight: 650; }
-  .exercise-md :global(h3) { margin: 0.75rem 0 0.25rem; font-size: 0.9rem; font-weight: 650; }
-  .exercise-md :global(p) { margin: 0.35rem 0; }
-  .exercise-md :global(ul) { margin: 0.25rem 0 0.6rem; padding-left: 1.15rem; list-style: disc; }
-  .exercise-md :global(li) { margin: 0.12rem 0; }
 </style>

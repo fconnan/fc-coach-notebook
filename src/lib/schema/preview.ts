@@ -31,6 +31,17 @@ function svgOf(scene: ReturnType<typeof buildScene>): string {
   return renderSvg(scene).replace(/<\?xml[\s\S]*?\?>\s*/, '');
 }
 
+export async function liveExercisePreview(source: string, at = '', id = ''): Promise<ExercisePreview> {
+  const library = await loadLibrary();
+  const doc = parse(source || DEFAULT_SOURCE) as SchemaDoc;
+  if (!doc || typeof doc !== 'object') throw new Error('YAML illisible');
+  const names = libraryFor(at || id, library, at ? `${at}/schema.yaml` : '');
+  return {
+    phases: buildScene(doc, names, 0, 0).phases,
+    render: (phase, progress) => svgOf(buildScene(doc, names, phase, progress))
+  };
+}
+
 export async function loadExercisePreview(at: string, id = ''): Promise<ExercisePreview> {
   const query = new URLSearchParams({ part: 'source' });
   if (at) query.set('at', at);

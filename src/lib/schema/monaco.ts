@@ -58,3 +58,19 @@ export function mountYaml(
   editor.onDidChangeModelContent(() => onChange(editor.getValue()));
   return editor;
 }
+
+export function mountMarkdown(host: HTMLElement, value: string, onChange: (text: string) => void) {
+  const uri = monaco.Uri.parse('file:///exercise/content.md');
+  monaco.editor.getModel(uri)?.dispose();
+  const model = monaco.editor.createModel(value, 'markdown', uri);
+  const editor = monaco.editor.create(host, {
+    model,
+    automaticLayout: true,
+    minimap: { enabled: false },
+    fontSize: 14,
+    wordWrap: 'on',
+    scrollBeyondLastLine: false
+  });
+  editor.onDidChangeModelContent(() => onChange(editor.getValue()));
+  return editor;
+}

@@ -1,9 +1,14 @@
 <script lang="ts">
   import { Button, Select } from 'flowbite-svelte';
   import { PauseOutline, PlayOutline } from 'flowbite-svelte-icons';
-  import { loadExercisePreview, type ExercisePreview } from '$lib/schema/preview';
+  import { liveExercisePreview, loadExercisePreview, type ExercisePreview } from '$lib/schema/preview';
 
-  let { at, exerciseId = '', compact = false }: { at: string; exerciseId?: string; compact?: boolean } = $props();
+  let { at = '', exerciseId = '', compact = false, source = undefined as string | undefined }: {
+    at?: string;
+    exerciseId?: string;
+    compact?: boolean;
+    source?: string;
+  } = $props();
 
   let preview = $state<ExercisePreview | null>(null);
   let shownFor = $state('');
@@ -12,7 +17,7 @@
   let progress = $state(0);
   let playing = $state(false);
 
-  const token = $derived(exerciseId || at);
+  const token = $derived(source === undefined ? (exerciseId || at) : `live:${exerciseId || at}`);
   const active = $derived(preview && shownFor === token ? preview : null);
   const svg = $derived(active ? active.render(phase, progress) : '');
   const phases = $derived(active?.phases || []);
@@ -20,20 +25,24 @@
   $effect(() => {
     const path = at;
     const id = exerciseId;
-    const key = id || path;
+    const live = source;
+    const key = live === undefined ? (id || path) : `live:${id || path}`;
     if (!key) return;
     let cancelled = false;
-    void loadExercisePreview(path, id).then(next => {
+    const task = live === undefined ? loadExercisePreview(path, id) : liveExercisePreview(live, path, id);
+    void task.then(next => {
       if (cancelled) return;
       preview = next;
       shownFor = key;
       error = '';
-      phase = 0;
-      progress = 0;
-      playing = false;
+      if (live === undefined || phase >= next.phases.length) {
+        phase = 0;
+        progress = 0;
+        playing = false;
+      }
     }).catch(err => {
       if (cancelled) return;
-      if (shownFor === key) return;
+      if (live === undefined && shownFor === key) return;
       preview = null;
       shownFor = '';
       error = err instanceof Error ? err.message : 'Schéma illisible';
@@ -86,7 +95,7 @@
 </script>
 
 <div class="schema">
-  <div class="overflow-hidden bg-[#166534]">
+  <div class="pitch overflow-hidden bg-[#166534]">
     {#if svg}
       <div class="sheet" class:compact>{@html svg}</div>
     {:else}

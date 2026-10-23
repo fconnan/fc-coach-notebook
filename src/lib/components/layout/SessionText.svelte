@@ -81,7 +81,7 @@
     {/if}
   </Heading>
   {#if editable && !editing}
-    <Button size="sm" color="brand" onclick={startEdit}>Éditer</Button>
+    <Button size="sm" color="brand" onclick={startEdit}>Modifier</Button>
   {/if}
 </div>
 <Card size="xl" class="p-6">

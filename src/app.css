@@ -247,3 +247,21 @@ input {
 [data-scope="table-search"] tbody tr:last-child td:last-child {
   border-bottom-right-radius: calc(var(--radius-base) - 1px);
 }
+
+.exercise-frame {
+  border: 1px solid var(--color-default-medium);
+  border-radius: 0;
+}
+
+.exercise-md {
+  padding: 0.9rem 1rem;
+  font-size: 0.925rem;
+  line-height: 1.45;
+}
+
+.exercise-md h1 { margin: 0 0 0.75rem; font-size: 1.05rem; font-weight: 650; }
+.exercise-md h2 { margin: 0.9rem 0 0.3rem; font-size: 0.95rem; font-weight: 650; }
+.exercise-md h3 { margin: 0.75rem 0 0.25rem; font-size: 0.9rem; font-weight: 650; }
+.exercise-md p { margin: 0.35rem 0; }
+.exercise-md ul { margin: 0.25rem 0 0.6rem; padding-left: 1.15rem; list-style: disc; }
+.exercise-md li { margin: 0.12rem 0; }

@@ -1,15 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { parse } from 'yaml';
-  import { Button, Modal, Select } from 'flowbite-svelte';
-  import { PauseOutline, PlayOutline } from 'flowbite-svelte-icons';
+  import { Button, ButtonGroup, Modal } from 'flowbite-svelte';
   import { pages, type Page } from '$lib/stores/workspace';
   import { applyExerciseDocument } from '$lib/workspace/exerciseFile';
+  import { exerciseHtml } from '$lib/workspace/markdownHtml';
   import { registerExerciseLeave, registerExerciseSaver } from '$lib/workspace/exerciseDraft';
   import { persistCursor, screen } from '$lib/workspace/state';
-  import { buildScene, libraryFor, renderSvg } from '$lib/schema/scene';
-  import type { LibraryEntry, SchemaDoc } from '$lib/schema/types';
-  import MarkdownEditor from './MarkdownEditor.svelte';
+  import type { LibraryEntry } from '$lib/schema/types';
+  import SchemaPreview from './SchemaPreview.svelte';
 
   let { at, exerciseId = '' }: { at: string; exerciseId?: string } = $props();
 
@@ -24,15 +22,17 @@
   let status = $state('');
   let loaded = $state(false);
   let saving = $state(false);
-  let preview = $state(false);
   let ask = $state(false);
   let leaveChoice: ((ok: boolean) => void) | null = null;
   const unsaved = { current: false };
-  let phase = $state(0);
-  let progress = $state(0);
-  let playing = $state(false);
-  let lastSvg = $state('');
-  let host: HTMLDivElement | null = $state(null);
+  let markdownHost: HTMLDivElement | null = $state(null);
+  let yamlHost: HTMLDivElement | null = $state(null);
+  let part = $state<'description' | 'schema'>('description');
+
+  const ficheHtml = $derived.by(() => {
+    if (!loaded) return '';
+    return exerciseHtml(applyExerciseDocument({ id: exerciseId, name: '' }, markdown) as Page);
+  });
 
   function canon(text: string): string {
     return text.replace(/\r\n/g, '\n').replace(/\n+$/, '');
@@ -48,52 +48,6 @@
   }
 
   const dirty = $derived(loaded && (!same(markdown, markdownDisk) || !same(yaml, yamlDisk)));
-
-  const parsed = $derived.by(() => {
-    if (!loaded) return { doc: null as SchemaDoc | null, message: '' };
-    try {
-      const doc = parse(yaml) as SchemaDoc;
-      if (!doc || typeof doc !== 'object') return { doc: null, message: 'YAML illisible' };
-      return { doc, message: '' };
-    } catch (err) {
-      return { doc: null, message: err instanceof Error ? err.message : 'YAML illisible' };
-    }
-  });
-
-  const scene = $derived.by(() => {
-    if (!parsed.doc) return null;
-    return buildScene(parsed.doc, libraryFor(at, library, `${at}/schema.yaml`), phase, progress);
-  });
-
-  $effect(() => {
-    if (scene) lastSvg = renderSvg(scene);
-  });
-
-  $effect(() => {
-    if (!playing) return;
-    let frame = 0;
-    let last = 0;
-    const tick = (now: number) => {
-      frame = requestAnimationFrame(tick);
-      const steps = scene?.phases || [];
-      if (!steps.length) {
-        last = now;
-        return;
-      }
-      const duration = (steps[phase]?.duration || 4) * 1000;
-      const delta = last ? now - last : 0;
-      last = now;
-      const next = progress + delta / duration;
-      if (next >= 1) {
-        progress = 0;
-        phase = (phase + 1) % steps.length;
-      } else {
-        progress = next;
-      }
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  });
 
   function onMarkdown(text: string) {
     markdown = text;
@@ -129,9 +83,6 @@
     markdownTouched = false;
     yamlTouched = false;
     loaded = true;
-    phase = 0;
-    progress = 0;
-    playing = false;
     status = '';
   }
 
@@ -219,24 +170,6 @@
     showSeance();
   }
 
-  function showPhase(index: number) {
-    playing = false;
-    phase = index;
-    progress = 1;
-  }
-
-  function togglePlay() {
-    const count = scene?.phases.length || 0;
-    if (!count) return;
-    playing = !playing;
-    if (playing) progress = 0;
-  }
-
-  function fieldValue(event: Event): string {
-    const target = event.currentTarget;
-    return target instanceof HTMLSelectElement ? target.value : '';
-  }
-
   $effect(() => {
     unsaved.current = dirty;
   });
@@ -255,15 +188,16 @@
       event.returnValue = '';
     };
     window.addEventListener('beforeunload', onBeforeUnload);
-    let editor: { dispose: () => void; getModel: () => { dispose: () => void } | null } | null = null;
+    const editors: Array<{ dispose: () => void; getModel: () => { dispose: () => void } | null }> = [];
     let cancelled = false;
     void (async () => {
       await load();
-      if (cancelled || !host) return;
+      if (cancelled || !markdownHost || !yamlHost) return;
       try {
         const monaco = await import('$lib/schema/monaco');
-        if (cancelled || !host) return;
-        editor = monaco.mountYaml(host, yaml, library.map(entry => entry.name), onYaml);
+        if (cancelled || !markdownHost || !yamlHost) return;
+        editors.push(monaco.mountMarkdown(markdownHost, markdown, onMarkdown));
+        editors.push(monaco.mountYaml(yamlHost, yaml, library.map(entry => entry.name), onYaml));
       } catch (err) {
         error = err instanceof Error ? err.message : 'Éditeur indisponible';
       }
@@ -274,75 +208,43 @@
       finishLeave(false);
       stop();
       stopLeave();
-      editor?.getModel()?.dispose();
-      editor?.dispose();
+      for (const editor of editors) {
+        editor.getModel()?.dispose();
+        editor.dispose();
+      }
     };
   });
 </script>
 
 <div class="flex h-full min-h-0 flex-col gap-3">
   <div class="flex shrink-0 items-center gap-3">
+    <ButtonGroup size="sm" aria-label="Partie de l’exercice">
+      <Button size="sm" color={part === 'description' ? 'brand' : 'alternative'} onclick={() => part = 'description'}>Description</Button>
+      <Button size="sm" color={part === 'schema' ? 'brand' : 'alternative'} onclick={() => part = 'schema'}>Schéma</Button>
+    </ButtonGroup>
     <p class="text-sm text-body">{status}</p>
-    <div class="ms-auto flex gap-2">
+    <div class="ms-auto flex items-center gap-2">
       <Button size="sm" color="brand" disabled={!dirty || saving} onclick={() => { void save(); }}>Sauver</Button>
       <Button size="sm" color="alternative" disabled={saving} onclick={() => { void closeEditor(); }}>Fermer</Button>
       <Button size="sm" color="alternative" disabled={saving} onclick={abandon}>Annuler</Button>
     </div>
   </div>
   {#if error}<p class="text-sm text-red-700">{error}</p>{/if}
-  <div class="grid min-h-0 flex-1 gap-3 lg:grid-cols-3">
-    <section class="flex min-h-80 flex-col overflow-hidden rounded-xl border border-default-medium bg-neutral-primary lg:min-h-0">
-      <header class="flex items-center gap-2 border-b border-default-medium px-3 py-2">
-        <h2 class="text-sm font-semibold">Markdown</h2>
-        <div class="ms-auto flex gap-1">
-          <Button size="xs" color={preview ? 'alternative' : 'brand'} onclick={() => preview = false}>Édition</Button>
-          <Button size="xs" color={preview ? 'brand' : 'alternative'} onclick={() => preview = true}>Aperçu</Button>
-        </div>
-      </header>
-      <div class="min-h-0 flex-1">
-        {#if loaded}
-          <MarkdownEditor embedded {preview} value={markdown} onchange={onMarkdown} />
-        {/if}
+  <div class={part === 'description' ? 'grid min-h-0 flex-1 grid-cols-2 gap-3' : 'hidden'}>
+    <div class="panel editor"><div class="monaco" bind:this={markdownHost}></div></div>
+    <div class="panel preview">
+      <div class="preview-body">
+        <div class="exercise-md">{@html ficheHtml}</div>
       </div>
-    </section>
-
-    <section class="flex min-h-80 flex-col overflow-hidden rounded-xl border border-default-medium bg-neutral-primary lg:min-h-0">
-      <header class="border-b border-default-medium px-3 py-2">
-        <h2 class="text-sm font-semibold">YAML</h2>
-      </header>
-      <div class="yaml min-h-0 flex-1" bind:this={host}></div>
-    </section>
-
-    <section class="flex min-h-80 flex-col overflow-hidden rounded-xl border border-default-medium bg-neutral-primary lg:min-h-0">
-      <header class="flex flex-wrap items-center gap-2 border-b border-default-medium px-3 py-2">
-        <h2 class="text-sm font-semibold">Schéma</h2>
-        {#if scene?.phases.length}
-          <Select
-            size="sm"
-            class="ms-auto w-36"
-            placeholder=""
-            value={String(phase)}
-            items={scene.phases.map((item, index) => ({ value: String(index), name: item.name }))}
-            onchange={(e) => showPhase(Number(fieldValue(e)))}
-          />
-          <Button size="xs" color="alternative" onclick={togglePlay}>
-            {#if playing}
-              <PauseOutline class="me-1 h-3.5 w-3.5" /> Pause
-            {:else}
-              <PlayOutline class="me-1 h-3.5 w-3.5" /> Lire
-            {/if}
-          </Button>
-        {/if}
-      </header>
-      <div class="flex min-h-0 flex-1 flex-col gap-2 p-3">
-        {#if parsed.message}<p class="text-sm text-red-700">{parsed.message}</p>{/if}
-        {#if lastSvg}
-          <div class="sheet min-h-0 flex-1">{@html lastSvg}</div>
-        {:else}
-          <div class="flex flex-1 items-center justify-center rounded-xl bg-[#166534] text-sm text-white/80">Schéma…</div>
-        {/if}
-      </div>
-    </section>
+    </div>
+  </div>
+  <div class={part === 'schema' ? 'grid min-h-0 flex-1 grid-cols-2 gap-3' : 'hidden'}>
+    <div class="panel editor"><div class="monaco" bind:this={yamlHost}></div></div>
+    <div class="panel schema-slot">
+      {#if loaded}
+        <SchemaPreview at={at} exerciseId={exerciseId} source={yaml} />
+      {/if}
+    </div>
   </div>
   <Modal bind:open={ask} title="Modifications non enregistrées" size="sm">
     <p class="text-sm text-body">Enregistrer avant de quitter ?</p>
@@ -355,7 +257,45 @@
 </div>
 
 <style>
-  .yaml { min-height: 0; }
-  .sheet { overflow: hidden; border-radius: 12px; background: #166534; }
-  .sheet :global(svg) { display: block; width: 100%; height: 100%; }
+  .editor,
+  .preview {
+    display: flex;
+    min-height: 0;
+    padding: 0.75rem;
+  }
+  .monaco,
+  .preview-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+  }
+  .monaco { border: 1px solid var(--color-gray-200); }
+  .preview-body { overflow: auto; }
+  .panel {
+    min-height: 0;
+    border: 1px solid var(--color-default-medium);
+    border-radius: var(--radius-base);
+    background: var(--color-neutral-primary);
+  }
+  .editor,
+  .schema-slot { overflow: hidden; }
+  .schema-slot :global(.schema) {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    border: 0;
+  }
+  .schema-slot :global(.pitch) {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+  }
+  .schema-slot :global(.sheet) {
+    flex: 1;
+    min-height: 0;
+  }
+  .schema-slot :global(.sheet svg) {
+    width: 100%;
+    height: 100%;
+  }
 </style>
