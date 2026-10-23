@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { categoryInfo, seanceHeader, trainer, saveSessionMarkdown } from '$lib/workspace/state';
+  import { navArea, navItem, seanceHeader, seasons, sessionTheme, themes, trainer, saveSessionMarkdown } from '$lib/workspace/state';
+  import { themeKey } from '$lib/workspace/catalog';
   import { trainerLabel } from '$lib/workspace/model';
   import { fillTemplate, readTemplate } from '$lib/workspace/templates';
   import { renderMarkdown } from '$lib/workspace/markdownHtml';
   import { Button, Card, Heading } from 'flowbite-svelte';
+  import { LinkOutline } from 'flowbite-svelte-icons';
   import MarkdownEditor from './MarkdownEditor.svelte';
 
   let { editable = true }: { editable?: boolean } = $props();
@@ -14,18 +16,28 @@
   let savingText = $state(false);
   let template = $state('');
 
-  const shown = $derived(($seanceHeader.markdown || '').trim()
-    ? $seanceHeader.markdown || ''
-    : fillTemplate(template, {
+  const planning = $derived($navArea === 'seasons');
+  const theme = $derived($themes.find(item => item.sessions.some(session => session.id === $seanceHeader.id)) ?? null);
+  const themeHref = $derived(theme ? `/repertoire/${themeKey(theme)}` : '');
+  const sessionHref = $derived(theme && $seanceHeader.id ? `${themeHref}/${$seanceHeader.id}` : '');
+  const season = $derived($seasons.find(item => item.id === $navItem) ?? null);
+  const slots = $derived(planning ? (season?.slots.filter(slot => slot.session === $seanceHeader.id) ?? []) : []);
+  const themeMarkdown = $derived($sessionTheme.markdown.trim() || ($sessionTheme.name ? `# ${$sessionTheme.name}` : ''));
+  const shown = $derived.by(() => {
+    const saved = ($seanceHeader.markdown || '').trim();
+    if (saved) return $seanceHeader.markdown || '';
+    const text = fillTemplate(template, {
       name: $seanceHeader.name,
       phase: $seanceHeader.phase,
       principle: $seanceHeader.principle,
       means: $seanceHeader.means,
       trainer: trainerLabel($trainer),
-      date: $seanceHeader.date,
-      category: $categoryInfo?.name || '',
-      sheet: $seanceHeader.sheet
-    }));
+      date: slots.map(slot => slot.date).filter(Boolean).join(', ') || $seanceHeader.date,
+      category: planning ? (season?.categoryName || '') : '',
+      sheet: slots.map(slot => slot.sheet).filter(Boolean).join(', ') || $seanceHeader.sheet
+    });
+    return text.split('\n').filter(line => !/:\s*$/.test(line)).join('\n');
+  });
 
   onMount(() => {
     void readTemplate('session').then(text => { template = text; });
@@ -50,9 +62,26 @@
 </script>
 
 <div class="flex items-center justify-between gap-3">
-  <Heading tag="h2" class="text-xl">Thème</Heading>
+  <Heading tag="h2" class="inline-flex items-center gap-2 text-xl">
+    Thème
+    {#if planning && themeHref}
+      <a href={themeHref} class="text-fg-brand" aria-label="Ouvrir le thème" title="Ouvrir le thème"><LinkOutline class="size-4" /></a>
+    {/if}
+  </Heading>
+</div>
+<Card size="xl" class="p-6">
+  <div class="session-md">{@html renderMarkdown(themeMarkdown)}</div>
+</Card>
+
+<div class="flex items-center justify-between gap-3">
+  <Heading tag="h2" class="inline-flex items-center gap-2 text-xl">
+    Séance
+    {#if planning && sessionHref}
+      <a href={sessionHref} class="text-fg-brand" aria-label="Ouvrir la séance" title="Ouvrir la séance"><LinkOutline class="size-4" /></a>
+    {/if}
+  </Heading>
   {#if editable && !editing}
-    <Button size="sm" color="brand" onclick={startEdit}>Éditer le thème</Button>
+    <Button size="sm" color="brand" onclick={startEdit}>Éditer</Button>
   {/if}
 </div>
 <Card size="xl" class="p-6">

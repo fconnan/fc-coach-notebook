@@ -38,7 +38,14 @@
 <svelte:window onkeydowncapture={handleGlobalKeydown} />
 
 {#if $restoring}
-  <AppShell></AppShell>
+  <AppShell>
+    {#snippet bar()}
+      <WorkspacePath />
+    {/snippet}
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50" role="status">
+      <p class="rounded-base bg-neutral-primary px-8 py-6 text-sm text-heading shadow-lg">Chargement…</p>
+    </div>
+  </AppShell>
 {:else if $screen === 'gate'}
   <AppShell>
     <WorkspaceGate />

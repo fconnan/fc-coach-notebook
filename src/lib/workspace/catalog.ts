@@ -58,6 +58,7 @@ export interface SeasonSlot {
   date: string;
   session: string;
   sessionName: string;
+  exercises?: string[];
 }
 
 export interface SeasonInfo {

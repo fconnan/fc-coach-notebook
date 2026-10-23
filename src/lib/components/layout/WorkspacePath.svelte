@@ -1,11 +1,13 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { page } from '$app/stores';
   import { currentPage } from '$lib/stores/workspace';
   import {
-    breadcrumbEpoch, libraryItems, navArea, navChild, navDoor, navItem, screen, seanceHeader, seasons, styles, themes,
+    breadcrumbEpoch, libraryItems, navArea, navChild, navDoor, navItem, restoring, screen, seanceHeader, seasons, styles, themes,
     openArea, openDoor, openNavChild, openNavItem, showHome, showSeanceScreen
   } from '$lib/workspace/state';
   import { LIBRARY_KINDS, WORKSPACE_DOORS, type WorkspaceArea, type WorkspaceDoor } from '$lib/workspace/catalog';
-  import { currentAddress } from '$lib/workspace/address';
+  import { currentAddress, parseAddress } from '$lib/workspace/address';
   import { addBookmark, bookmarks, removeBookmark } from '$lib/stores/bookmarks';
   import { Select } from 'flowbite-svelte';
   import { HeartOutline, HeartSolid, TrashBinOutline } from 'flowbite-svelte-icons';
@@ -22,9 +24,13 @@
     backLabel?: string;
   };
 
+  let mounted = $state(false);
+  onMount(() => { mounted = true; });
+
   const openedTheme = $derived($themes.find(theme => theme.id === $navItem) ?? null);
   const openedSeason = $derived($seasons.find(season => season.id === $navItem) ?? null);
-  const door = $derived(WORKSPACE_DOORS.find(item => item.id === $navDoor) ?? null);
+  const openedDoorId = $derived($navDoor || ($restoring ? (parseAddress($page.url.pathname)?.door || '') : ''));
+  const door = $derived(WORKSPACE_DOORS.find(item => item.id === openedDoorId) ?? null);
   const seasonChoices = $derived.by(() => {
     const sheets = new Map<string, { sheets: string[]; name: string }>();
     for (const slot of openedSeason?.slots || []) {
@@ -52,11 +58,11 @@
       }
       list.push(step);
     };
-    if (!$navDoor || !door) return list;
+    if (!openedDoorId || !door) return list;
     add({
       key: 'door',
       label: 'Porte',
-      value: $navDoor,
+      value: openedDoorId,
       choices: WORKSPACE_DOORS.map(item => ({ value: item.id, label: item.label })),
       change: (value) => { void openDoor(value as WorkspaceDoor); }
     });
@@ -150,7 +156,7 @@
     void steps;
     return currentAddress();
   });
-  const marked = $derived($bookmarks.some(bookmark => bookmark.path === here));
+  const marked = $derived(mounted && $bookmarks.some(bookmark => bookmark.path === here));
 </script>
 
 {#snippet pathSelect(label: string, value: string, choices: { value: string; label: string }[], change: (value: string) => void)}
@@ -199,7 +205,7 @@
     {#if marked}<HeartSolid class="size-4" />{:else}<HeartOutline class="size-4" />{/if}
   </button>
 </nav>
-{#if $bookmarks.length}
+{#if mounted && $bookmarks.length}
   <ul class="flex flex-col gap-0.5" aria-label="Favoris">
     {#each $bookmarks as bookmark (bookmark.path)}
       <li class="flex items-center gap-2">

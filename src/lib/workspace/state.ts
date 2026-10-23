@@ -52,7 +52,7 @@ import {
   type WorkspaceArea,
   type WorkspaceDoor
 } from './catalog';
-import { armAddress, bindAddress, followAddress, publishAddress, type AddressTarget } from './address';
+import { armAddress, bindAddress, followAddress, parseAddress, publishAddress, type AddressTarget } from './address';
 import { confirmLeaveExercise } from './exerciseDraft';
 
 const HANDLE_KEY = 'workspace_dir';
@@ -98,6 +98,8 @@ export const seanceList = writable<SeanceRef[]>([]);
 export const seanceFile = writable<string | null>(null);
 export const exercisePaths = writable<Record<string, string>>({});
 export const seanceHeader = writable<SeanceHeader>(emptyHeader());
+export const sessionTheme = writable<{ name: string; markdown: string }>({ name: '', markdown: '' });
+export const seasonSelection = writable<string[] | null>(null);
 export const styles = writable<PageStyle[]>([]);
 export const seasons = writable<SeasonInfo[]>([]);
 export const themes = writable<ThemeInfo[]>([]);
@@ -276,7 +278,7 @@ function applySeance(data: SeanceFile, file: string, exerciseId?: string, paths?
   seanceHeader.set({
     id: data.id,
     name: data.name || 'Séance',
-    sheet: data.sheet || 'S1',
+    sheet: data.sheet || '',
     date: data.date || '',
     phase: data.phase || '',
     principle: data.principle || '',
@@ -439,6 +441,92 @@ type SharedDisk = {
   library?: LibraryItem[];
 };
 
+type QuickView = {
+  trainer?: { name?: string; sport?: string; folder?: string };
+  seasons?: SeasonInfo[];
+  themes?: ThemeInfo[];
+  session?: { seance: SeanceFile; paths: Record<string, string>; theme?: { name?: string; markdown?: string } } | null;
+  missing?: string;
+};
+
+async function readSharedView(pathname: string): Promise<QuickView | null> {
+  if (!import.meta.env.DEV || !usesSharedDisk()) return null;
+  try {
+    const response = await fetch(`/api/workspace?view=${encodeURIComponent(pathname)}`);
+    if (!response.ok) return null;
+    return await response.json() as QuickView;
+  } catch {
+    return null;
+  }
+}
+
+function viewReady(target: AddressTarget | null, view: QuickView): boolean {
+  if (!target) return false;
+  if (view.missing) return true;
+  if (!target.door) return true;
+  if (target.door === 'season') return Boolean(view.seasons) && (!target.child || Boolean(view.session?.seance));
+  if (target.door === 'repertoire') return Boolean(view.themes) && (!target.child || Boolean(view.session?.seance));
+  return false;
+}
+
+function applyQuickView(target: AddressTarget | null, view: QuickView) {
+  if (view.trainer) {
+    trainer.set(trainerFromJson({ name: view.trainer.name || '', sport: view.trainer.sport || '' }));
+    if (!get(folderLabel) && view.trainer.folder) folderLabel.set(view.trainer.folder);
+  }
+  if (view.seasons) seasons.set(view.seasons);
+  if (view.themes) themes.set(view.themes);
+  workspaceOpen.set(true);
+  workspaceWritable.set(true);
+  needsPermission.set(false);
+  ready = true;
+  if (!target?.door) {
+    navDoor.set('');
+    navArea.set('');
+    screen.set('home');
+    return;
+  }
+  navDoor.set(target.door);
+  navArea.set(target.area);
+  if (view.missing) {
+    missingPage.set(view.missing);
+    navItem.set('');
+    navChild.set('');
+    screen.set('home');
+    return;
+  }
+  if (target.door === 'season') {
+    const season = get(seasons).find(item => item.uuid === target.item || item.id === target.item);
+    navItem.set(season?.id || '');
+    navChild.set(target.child);
+    if (!target.item || !target.child) {
+      screen.set('home');
+      return;
+    }
+    if (!view.session?.seance) return;
+    applySeance(view.session.seance, target.child, target.exercise, view.session.paths);
+    rememberTheme(target.child, view.session.theme ? { name: view.session.theme.name || '', markdown: view.session.theme.markdown || '' } : undefined);
+    applySeasonView(target.child, season);
+    screen.set(target.exercise && get(pages).some(page => page.id === target.exercise) ? 'exercise' : 'seance');
+    return;
+  }
+  if (target.door === 'repertoire') {
+    const theme = get(themes).find(item => item.uuid === target.item || item.id === target.item);
+    navItem.set(theme?.id || '');
+    navChild.set(target.child);
+    if (!target.item || !target.child) {
+      seasonSelection.set(null);
+      screen.set('home');
+      return;
+    }
+    if (!view.session?.seance) return;
+    applySeance(view.session.seance, target.child, target.exercise, view.session.paths);
+    rememberTheme(target.child, view.session.theme ? { name: view.session.theme.name || '', markdown: view.session.theme.markdown || '' } : undefined);
+    seasonSelection.set(null);
+    screen.set(target.exercise && get(pages).some(page => page.id === target.exercise) ? 'exercise' : 'seance');
+  }
+}
+
 async function readSharedDisk(): Promise<SharedDisk | null> {
   if (!import.meta.env.DEV || !usesSharedDisk()) return null;
   try {
@@ -450,14 +538,18 @@ async function readSharedDisk(): Promise<SharedDisk | null> {
   }
 }
 
-async function readSharedSeance(categoryId: string, seanceId: string): Promise<{ seance: SeanceFile; paths: Record<string, string> } | null> {
+async function readSharedSeance(categoryId: string, seanceId: string): Promise<{ seance: SeanceFile; paths: Record<string, string>; theme: { name: string; markdown: string } } | null> {
   if (!import.meta.env.DEV || !usesSharedDisk()) return null;
   try {
     const response = await fetch(`/api/workspace?category=${encodeURIComponent(categoryId)}&seance=${encodeURIComponent(seanceId)}`);
     if (!response.ok) return null;
-    const data = await response.json() as { seance?: SeanceFile | null; paths?: Record<string, string> };
+    const data = await response.json() as { seance?: SeanceFile | null; paths?: Record<string, string>; theme?: { name?: string; markdown?: string } };
     if (!data.seance) return null;
-    return { seance: data.seance, paths: data.paths || {} };
+    return {
+      seance: data.seance,
+      paths: data.paths || {},
+      theme: { name: data.theme?.name || '', markdown: data.theme?.markdown || '' }
+    };
   } catch {
     return null;
   }
@@ -535,6 +627,57 @@ export async function saveSessionMarkdown(markdown: string): Promise<boolean> {
   }
   seanceHeader.update(header => ({ ...header, markdown: text }));
   return true;
+}
+
+function rememberSlotExercises(seasonId: string, sessionId: string, ids: string[]) {
+  seasons.update(list => list.map(season => {
+    if (season.id !== seasonId && season.uuid !== seasonId) return season;
+    let found = false;
+    const slots = season.slots.map(slot => {
+      if (slot.session !== sessionId) return slot;
+      found = true;
+      return { ...slot, exercises: ids };
+    });
+    if (!found) slots.push({ sheet: '', date: '', session: sessionId, sessionName: get(seanceHeader).name, exercises: ids });
+    return { ...season, slots };
+  }));
+}
+
+async function writeHandleSlotExercises(workspace: Dir, seasonId: string, sessionId: string, ids: string[]): Promise<string | null> {
+  const nodes: IndexNode[] = [];
+  await collectIndexes(workspace, [], nodes);
+  const season = nodes.find(node => node.data.type === SEASON_TYPE && (node.segments.join('/') === seasonId || node.data.id === seasonId));
+  if (!season) return 'Cette saison n’existe pas.';
+  const slots = season.data.slots || [];
+  let found = false;
+  for (const slot of slots) {
+    if (String(slot.session || '') !== sessionId) continue;
+    slot.exercises = ids;
+    found = true;
+  }
+  if (!found) slots.push({ sheet: '', date: '', session: sessionId, exercises: ids });
+  season.data.slots = slots;
+  await writeJson(await dirAt(workspace, season.segments), 'index.json', season.data);
+  return null;
+}
+
+export async function saveSeasonExercises(ids: string[]): Promise<string | null> {
+  const seasonId = get(navItem);
+  const sessionId = get(navChild);
+  if (get(navArea) !== 'seasons' || !seasonId || !sessionId) return 'Cette saison n’est pas ouverte.';
+  const handleOk = Boolean(root) && await ensureAccess(false);
+  if (handleOk && root) {
+    const error = await writeHandleSlotExercises(root, seasonId, sessionId, ids);
+    if (error) return error;
+  } else if (usesSharedDisk()) {
+    const error = await postShared({ type: 'save-slot-exercises', explicit: true, season: seasonId, session: sessionId, exercises: ids });
+    if (error) return error;
+  } else {
+    return 'Le dossier n’est pas accessible.';
+  }
+  rememberSlotExercises(seasonId, sessionId, ids);
+  seasonSelection.set(ids);
+  return null;
 }
 
 export async function saveOpenSeance() {
@@ -713,7 +856,7 @@ type IndexNode = {
     zone?: string;
     from?: string;
     to?: string;
-    slots?: Array<{ sheet?: string; date?: string; session?: string }>;
+    slots?: Array<{ sheet?: string; date?: string; session?: string; exercises?: string[] }>;
     exercises?: string[];
     sessions?: string[];
     themes?: string[];
@@ -778,7 +921,8 @@ async function readHandleBrowse(dir: Dir) {
         sheet: slot.sheet || '',
         date: slot.date || '',
         session: sessionId,
-        sessionName: session?.data.name?.trim() || sessionId
+        sessionName: session?.data.name?.trim() || sessionId,
+        exercises: Array.isArray(slot.exercises) ? slot.exercises.filter(id => id !== '') : undefined
       };
     });
     return {
@@ -885,7 +1029,7 @@ async function readSessionDirectory(dir: Dir, rel: string, header: SeanceHeader,
   return { seance: { ...header, markdown: (await readText(dir, 'content.md')) || '', exercises }, paths };
 }
 
-async function readHandleSeance(workspace: Dir, categoryId: string, file: string): Promise<{ seance: SeanceFile; paths: Record<string, string> } | null> {
+async function readHandleSeance(workspace: Dir, categoryId: string, file: string): Promise<{ seance: SeanceFile; paths: Record<string, string>; theme: { name: string; markdown: string } } | null> {
   const nodes: IndexNode[] = [];
   await collectIndexes(workspace, [], nodes);
   const session = nodes.find(node => node.data.type === SEANCE_TYPE && (node.data.id === file || node.segments.join('/') === `repertoire/categories/${categoryId}/seances/${file}`));
@@ -896,25 +1040,29 @@ async function readHandleSeance(workspace: Dir, categoryId: string, file: string
       if (!data) return null;
       const paths: Record<string, string> = {};
       for (const page of data.exercises) paths[page.id] = `repertoire/categories/${categoryId}/seances/${file}/${page.id}`;
-      return { seance: data, paths };
+      return { seance: data, paths, theme: { name: '', markdown: '' } };
     } catch {
       return null;
     }
   }
-  const category = nodes.find(node => node.segments.join('/') === `repertoire/categories/${categoryId}`);
-  const slot = seasonsFor(nodes, categoryId, category?.data.id || '')
-    .flatMap(season => season.data.slots || [])
-    .find(item => item.session === session.data.id || item.session === file);
   const header: SeanceHeader = {
     id: session.data.id || file,
     name: session.data.name || file,
-    sheet: slot?.sheet || session.data.sheet || 'S1',
-    date: slot?.date || session.data.date || '',
+    sheet: session.data.sheet || '',
+    date: session.data.date || '',
     phase: session.data.phase || '',
     principle: session.data.principle || '',
     means: session.data.means || ''
   };
-  return readSessionDirectory(await dirAt(workspace, session.segments), session.segments.join('/'), header, session.data.exercises);
+  const loaded = await readSessionDirectory(await dirAt(workspace, session.segments), session.segments.join('/'), header, session.data.exercises);
+  return { ...loaded, theme: await readThemeText(workspace, session.segments) };
+}
+
+async function readThemeText(workspace: Dir, segments: string[]): Promise<{ name: string; markdown: string }> {
+  if (segments.length < 2) return { name: '', markdown: '' };
+  const dir = await dirAt(workspace, segments.slice(0, 2));
+  const info = await readJson<{ name?: string }>(dir, 'index.json');
+  return { name: info?.name || '', markdown: (await readText(dir, 'content.md')) || '' };
 }
 
 function rememberFolder(folders: Map<string, string>, id: string, name: string) {
@@ -1003,13 +1151,6 @@ async function saveHandleSeance(workspace: Dir, _categoryId: string, _file: stri
     exercises: seance.exercises.map(page => page.id).filter(Boolean)
   });
   exercisePaths.set(await writeExerciseFolders(dir, seance.exercises, session.segments.join('/')));
-  for (const season of nodes.filter(node => node.data.type === SEASON_TYPE && (node.data.slots || []).some(slot => slot.session === session.data.id))) {
-    const slot = (season.data.slots || []).find(item => item.session === session.data.id);
-    if (!slot) continue;
-    slot.sheet = seance.sheet || slot.sheet || 'S1';
-    slot.date = seance.date ?? slot.date ?? '';
-    await writeJson(await dirAt(workspace, season.segments), 'index.json', season.data);
-  }
 }
 
 async function listStyles(folder: Dir): Promise<PageStyle[]> {
@@ -1149,7 +1290,7 @@ export async function openNavChild(id: string) {
 async function openThemeSession(file: string) {
   const theme = get(themes).find(item => item.id === get(navItem));
   if (!theme?.sessions.some(item => item.id === file)) return;
-  await loadSessionScreen(file, get(seasons).find(item => item.slots.some(slot => slot.session === file)));
+  await loadSessionScreen(file);
 }
 
 async function openSeasonSession(file: string) {
@@ -1158,7 +1299,24 @@ async function openSeasonSession(file: string) {
   await loadSessionScreen(file, season);
 }
 
-async function loadSessionScreen(file: string, season: SeasonInfo | undefined) {
+function applySeasonView(file: string, season: SeasonInfo | undefined) {
+  if (!season) {
+    seasonSelection.set(null);
+    return;
+  }
+  const chosen = season.slots.find(slot => slot.session === file && Array.isArray(slot.exercises));
+  seasonSelection.set(chosen?.exercises ?? []);
+}
+
+function rememberTheme(file: string, theme?: { name: string; markdown: string }) {
+  const known = get(themes).find(item => item.sessions.some(session => session.id === file));
+  sessionTheme.set({
+    name: theme?.name || known?.name || '',
+    markdown: theme?.markdown || ''
+  });
+}
+
+async function loadSessionScreen(file: string, season?: SeasonInfo) {
   if (season) {
     categoryInfo.set({ id: season.categoryFolder, name: season.categoryName, uuid: '' });
   }
@@ -1167,6 +1325,7 @@ async function loadSessionScreen(file: string, season: SeasonInfo | undefined) {
   const openPages = get(pages);
   const pathsReady = openPages.length > 0 && openPages.every(page => page.id && known[page.id]);
   if (file === get(seanceFile) && get(seanceHeader).id && pathsReady) {
+    applySeasonView(file, season);
     screen.set('seance');
     persistCursor();
     return;
@@ -1175,6 +1334,8 @@ async function loadSessionScreen(file: string, season: SeasonInfo | undefined) {
   if (!loaded && root && await ensureAccess(true)) loaded = await readHandleSeance(root, categoryId, file);
   if (!loaded) return;
   applySeance(loaded.seance, file, undefined, loaded.paths);
+  rememberTheme(file, loaded.theme);
+  applySeasonView(file, season);
   screen.set('seance');
   await saveSnapshot();
   persistCursor();
@@ -1803,11 +1964,28 @@ async function ensureExercisePaths() {
 }
 
 export async function restoreWorkspace(): Promise<boolean> {
+  const path = typeof location === 'undefined' ? '/' : location.pathname;
+  const target = parseAddress(path);
+  if (target?.door) {
+    navDoor.set(target.door);
+    navArea.set(target.area);
+  }
+  const saved = cursor();
+  if (saved?.folderName) folderLabel.set(saved.folderName);
+  const sharedLikely = !saved?.folderName || saved.folderName === 'data';
+  const wantsView = sharedLikely && target !== null && (target.door === '' || target.door === 'season' || target.door === 'repertoire');
+  const viewPromise = wantsView ? readSharedView(path) : Promise.resolve(null);
+  let painted = false;
   try {
-    const saved = cursor();
-    if (saved?.folderName) folderLabel.set(saved.folderName);
-    const handle = await within(idbGet<Dir>(HANDLE_KEY), 800, null);
-    if (handle && await within(permitted(handle, false), 800, false)) {
+    const handlePromise = within(idbGet<Dir>(HANDLE_KEY), 800, null);
+    const view = await viewPromise;
+    if (view && viewReady(target, view)) {
+      applyQuickView(target, view);
+      painted = true;
+      restoring.set(false);
+    }
+    const handle = await handlePromise;
+    if (!sharedLikely && handle && await within(permitted(handle, false), 800, false)) {
       try {
         if (await adoptWorkspace(handle, false)) return true;
       } catch (err) {
@@ -1823,6 +2001,7 @@ export async function restoreWorkspace(): Promise<boolean> {
       ready = true;
       return true;
     }
+    if (painted) return true;
     if (handle) {
       root = handle;
       folderLabel.set(saved?.folderName || handle.name);
@@ -1831,12 +2010,11 @@ export async function restoreWorkspace(): Promise<boolean> {
     screen.set('gate');
     return false;
   } finally {
-    const path = typeof location === 'undefined' ? '/' : location.pathname;
     if (path === '/' || path === '') {
       await followAddress(path, 'fill');
       await restoreCursorFromDisk();
-    } else {
-      await followAddress(path, 'disk');
+    } else if (!painted || (typeof location !== 'undefined' && location.pathname === path)) {
+      await followAddress(path, painted ? 'url' : 'disk');
     }
     await ensureExercisePaths();
     armAddress();
@@ -1975,7 +2153,7 @@ async function goToAddress(target: AddressTarget) {
     return;
   }
   if (!target.area) {
-    if (get(navDoor) !== target.door || get(navArea)) await openDoor(target.door);
+    if (get(navDoor) !== target.door || get(navArea) || get(screen) === 'gate') await openDoor(target.door);
     return;
   }
   const onDoor = get(navDoor) === target.door && (target.door === 'season' || get(navArea) === target.area);
@@ -1983,7 +2161,10 @@ async function goToAddress(target: AddressTarget) {
     if (target.door === 'season') await openDoor('season');
     else await openArea(target.area);
   }
-  if (!target.item) return;
+  if (!target.item) {
+    if (get(screen) === 'gate') screen.set('home');
+    return;
+  }
   const item = resolveItem(target.area, target.item);
   const lostItem = missingItem(target.area, item);
   if (lostItem) {
