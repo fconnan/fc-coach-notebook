@@ -1,13 +1,16 @@
 import type {
   ArrowMark,
+  BoxInset,
   ItemSpec,
   LibraryEntry,
   MoveSpec,
   PlacedMark,
   PlacedPlayer,
   PlacedZone,
+  RectSpec,
   Scene,
   SchemaDoc,
+  SchemaUnit,
   Segment,
   ZoneSpec
 } from './types';
@@ -56,7 +59,9 @@ function pointOf(value: unknown): [number, number] | null {
   return null;
 }
 
-function placedAt(item: { x?: number; y?: number; at?: unknown }): [number, number] | null {
+function placedAt(item: { x?: number; y?: number; at?: unknown; pos?: unknown }): [number, number] | null {
+  const pos = pointOf(item.pos);
+  if (pos) return pos;
   if (typeof item.x === 'number' && typeof item.y === 'number') return [item.x, item.y];
   return pointOf(item.at);
 }
@@ -146,62 +151,182 @@ function placePlayers(
     const at = placedAt(player);
     if (!at) continue;
     const [x, y] = mapPoint(at, box, relative);
-    into.push({ id: `${team}:${idOf(player.number)}`, team, x, y });
+    const side = player.team || team;
+    into.push({ id: `${side}:${idOf(player.number)}`, team: side, x, y });
   }
 }
 
-function placeItems(
-  items: ItemSpec[] | undefined,
-  library: Map<string, SchemaDoc>,
-  box: [number, number, number, number],
-  players: PlacedPlayer[],
-  marks: PlacedMark[],
-  ballHolder: { id: string }
-) {
-  for (const item of items || []) {
+type Box = [number, number, number, number];
+type Unit = SchemaUnit;
+
+function docUnit(doc: SchemaDoc): Unit {
+  return doc.units === 'relative' ? 'relative' : 'meters';
+}
+
+function shapeUnit(doc: SchemaDoc): Unit {
+  return doc.units === 'meters' ? 'meters' : 'relative';
+}
+
+interface Insets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+function edgesOf(value: BoxInset | undefined, sx: number, sy: number): Insets {
+  if (typeof value === 'number') return { top: value * sy, right: value * sx, bottom: value * sy, left: value * sx };
+  if (!value) return { top: 0, right: 0, bottom: 0, left: 0 };
+  if (value.top !== undefined || value.right !== undefined || value.bottom !== undefined || value.left !== undefined) {
+    return {
+      top: num(value.top) * sy,
+      right: num(value.right) * sx,
+      bottom: num(value.bottom) * sy,
+      left: num(value.left) * sx
+    };
+  }
+  return { top: num(value.y) * sy, right: num(value.x) * sx, bottom: num(value.y) * sy, left: num(value.x) * sx };
+}
+
+function insetBox(box: Box, edges: Insets): Box | null {
+  const w = box[2] - edges.left - edges.right;
+  const h = box[3] - edges.bottom - edges.top;
+  if (w <= 0 || h <= 0) return null;
+  return [box[0] + edges.left, box[1] + edges.bottom, w, h];
+}
+
+function rectSpec(zone: ZoneSpec): RectSpec | null {
+  const base = zone.rect || zone;
+  const across = typeof base.w === 'number' ? base.w : base.width;
+  const down = typeof base.h === 'number' ? base.h : base.height;
+  if (typeof base.x !== 'number' || typeof base.y !== 'number' || typeof across !== 'number' || typeof down !== 'number') {
+    const legacy = zoneBox(zone);
+    if (!legacy) return null;
+    return { x: legacy[0], y: legacy[1], w: legacy[2], h: legacy[3], unit: zone.unit, margin: zone.margin, padding: zone.padding };
+  }
+  return {
+    x: base.x,
+    y: base.y,
+    w: across,
+    h: down,
+    unit: zone.rect?.unit || zone.unit,
+    margin: zone.rect?.margin ?? zone.margin,
+    padding: zone.rect?.padding ?? zone.padding
+  };
+}
+
+function splitBox(spec: RectSpec, parent: Box, unit: Unit): { border: Box; content: Box } | null {
+  const x = num(spec.x);
+  const y = num(spec.y);
+  const w = num(spec.w ?? spec.width);
+  const h = num(spec.h ?? spec.height);
+  const outer: Box = unit === 'relative'
+    ? [parent[0] + x * parent[2], parent[1] + y * parent[3], w * parent[2], h * parent[3]]
+    : [parent[0] + x, parent[1] + y, w, h];
+  const scaleX = unit === 'relative' ? parent[2] : 1;
+  const scaleY = unit === 'relative' ? parent[3] : 1;
+  const border = insetBox(outer, edgesOf(spec.margin, scaleX, scaleY));
+  if (!border) return null;
+  const content = insetBox(border, edgesOf(spec.padding, scaleX, scaleY));
+  if (!content) return null;
+  return { border, content };
+}
+
+interface PlaceBag {
+  library: Map<string, SchemaDoc>;
+  players: PlacedPlayer[];
+  marks: PlacedMark[];
+  zones: PlacedZone[];
+  lines: number[][];
+  ballHolder: { id: string };
+}
+
+function placeShape(shape: SchemaDoc, team: string, box: Box, bag: PlaceBag, depth: number) {
+  if (depth > 6) return;
+  const unit = shapeUnit(shape);
+  placePlayers(shape, team, box, bag.players);
+  const corners: [number, number][] = [];
+  for (const item of shape.items || []) {
+    const local = item.rect?.unit || item.unit || unit;
     if (item.shape) {
-      const shape = library.get(item.shape);
-      if (shape) placePlayers(shape, item.team || 'blue', box, players);
+      const nested = bag.library.get(item.shape);
+      const target = item.rect ? splitBox(item.rect, box, local)?.content : box;
+      if (nested && target) placeShape(nested, item.team || team, target, bag, depth + 1);
     }
-    if (item.player !== undefined) {
-      const at = placedAt(item);
-      if (at) {
-        const side = item.team || 'blue';
-        players.push({ id: `${side}:${idOf(item.player)}`, team: side, x: box[0] + at[0], y: box[1] + at[1] });
+    const at = placedAt(item);
+    if (item.object && at) {
+      const mark = bag.library.get(item.object);
+      const spot = mapPoint(at, box, local === 'relative');
+      if (mark?.svg) {
+        bag.marks.push({ svg: mark.svg, x: spot[0], y: spot[1] });
+        corners.push(spot);
       }
     }
-    if (item.object) {
-      const at = placedAt(item);
-      const mark = library.get(item.object);
-      if (at && mark?.svg) marks.push({ svg: mark.svg, x: box[0] + at[0], y: box[1] + at[1] });
+    if (item.player !== undefined && at) {
+      const spot = mapPoint(at, box, local === 'relative');
+      const side = item.team || team;
+      bag.players.push({ id: `${side}:${idOf(item.player)}`, team: side, x: spot[0], y: spot[1] });
+    }
+  }
+  for (const line of linesOf(shape.lines)) {
+    const a = mapPoint([line[0], line[1]], box, unit === 'relative');
+    const b = mapPoint([line[2], line[3]], box, unit === 'relative');
+    bag.lines.push([a[0], a[1], b[0], b[1]]);
+  }
+  placeZones(shape.zones, box, unit, bag, depth + 1);
+  if (shape.outline && corners.length >= 2) {
+    const last = corners.length === 2 ? 1 : corners.length;
+    for (let i = 0; i < last; i += 1) {
+      const a = corners[i];
+      const b = corners[(i + 1) % corners.length];
+      bag.lines.push([a[0], a[1], b[0], b[1]]);
+    }
+  }
+}
+
+function placeItems(items: ItemSpec[] | undefined, box: Box, unit: Unit, bag: PlaceBag, depth: number) {
+  for (const item of items || []) {
+    const local = item.rect?.unit || item.unit || unit;
+    if (item.shape) {
+      const shape = bag.library.get(item.shape);
+      const target = item.rect ? splitBox(item.rect, box, local)?.content : box;
+      if (shape && target) placeShape(shape, item.team || 'blue', target, bag, depth + 1);
+    }
+    const at = placedAt(item);
+    if (item.player !== undefined && at) {
+      const spot = mapPoint(at, box, local === 'relative');
+      const side = item.team || 'blue';
+      bag.players.push({ id: `${side}:${idOf(item.player)}`, team: side, x: spot[0], y: spot[1] });
+    }
+    if (item.object && at) {
+      const mark = bag.library.get(item.object);
+      const spot = mapPoint(at, box, local === 'relative');
+      if (mark?.svg) bag.marks.push({ svg: mark.svg, x: spot[0], y: spot[1] });
     }
     if (item.ball !== undefined) {
-      if (Array.isArray(item.ball)) {
-        const at = pointOf(item.ball);
-        if (at) ballHolder.id = `@${box[0] + at[0]},${box[1] + at[1]}`;
+      if (Array.isArray(item.ball) || (item.ball && typeof item.ball === 'object')) {
+        const spot = pointOf(item.ball);
+        if (spot) {
+          const placed = mapPoint(spot, box, local === 'relative');
+          bag.ballHolder.id = `@${placed[0]},${placed[1]}`;
+        }
       } else {
-        ballHolder.id = idOf(item.ball as string | number);
+        bag.ballHolder.id = idOf(item.ball as string | number);
       }
     }
   }
 }
 
-function placeZones(
-  zones: ZoneSpec[] | undefined,
-  library: Map<string, SchemaDoc>,
-  origin: [number, number],
-  placed: PlacedZone[],
-  players: PlacedPlayer[],
-  marks: PlacedMark[],
-  ballHolder: { id: string }
-) {
+function placeZones(zones: ZoneSpec[] | undefined, parent: Box, unit: Unit, bag: PlaceBag, depth: number) {
   for (const zone of zones || []) {
-    const box = zoneBox(zone);
-    if (!box) continue;
-    const world: [number, number, number, number] = [origin[0] + box[0], origin[1] + box[1], box[2], box[3]];
-    placed.push({ name: zone.name || '', x: world[0], y: world[1], w: world[2], h: world[3] });
-    placeItems(zone.items, library, world, players, marks, ballHolder);
-    placeZones(zone.zones, library, [world[0], world[1]], placed, players, marks, ballHolder);
+    const spec = rectSpec(zone);
+    if (!spec) continue;
+    const local = spec.unit || unit;
+    const boxes = splitBox(spec, parent, local);
+    if (!boxes) continue;
+    bag.zones.push({ name: zone.name || '', x: boxes.border[0], y: boxes.border[1], w: boxes.border[2], h: boxes.border[3] });
+    placeItems(zone.items, boxes.content, local, bag, depth);
+    placeZones(zone.zones, boxes.content, local, bag, depth);
   }
 }
 
@@ -262,13 +387,20 @@ export function buildScene(
   progress: number
 ): Scene {
   const pitch = pitchOf(doc, library, 0);
-  const players: PlacedPlayer[] = [];
-  const marks: PlacedMark[] = [...cornerMarks(pitch, library)];
-  const zones: PlacedZone[] = [];
-  const ballHolder = { id: '' };
-  const box: [number, number, number, number] = [0, 0, pitch.width, pitch.length];
-  placeItems(doc.items, library, box, players, marks, ballHolder);
-  placeZones(doc.zones, library, [0, 0], zones, players, marks, ballHolder);
+  const bag: PlaceBag = {
+    library,
+    players: [],
+    marks: [...cornerMarks(pitch, library)],
+    zones: [],
+    lines: [],
+    ballHolder: { id: '' }
+  };
+  const box: Box = [0, 0, pitch.width, pitch.length];
+  const unit = docUnit(doc);
+  placeItems(doc.items, box, unit, bag, 0);
+  placeZones(doc.zones, box, unit, bag, 0);
+  const { players, marks, zones } = bag;
+  const ballHolder = bag.ballHolder;
   const phases = (doc.phases || []).map(phase => ({
     name: phase.name || 'Phase',
     duration: num(phase.duration, 4)
@@ -312,7 +444,7 @@ export function buildScene(
     width: pitch.width,
     length: pitch.length,
     margin: pitch.margin,
-    lines: pitch.lines,
+    lines: pitch.lines.concat(bag.lines),
     drawing: pitch.drawing,
     zones,
     players,
@@ -404,10 +536,12 @@ function frameOf(scene: Scene): { left: number; right: number; top: number; bott
   for (const mark of scene.marks) {
     const box = markExtent(mark.svg);
     if (!box) continue;
+    const pitchMinY = mark.y - box.maxY;
+    const pitchMaxY = mark.y - box.minY;
     left = Math.max(left, gap - (mark.x + box.minX));
     right = Math.max(right, mark.x + box.maxX - scene.width + gap);
-    bottom = Math.max(bottom, gap - (mark.y + box.minY));
-    top = Math.max(top, mark.y + box.maxY - scene.length + gap);
+    bottom = Math.max(bottom, gap - pitchMinY);
+    top = Math.max(top, pitchMaxY - scene.length + gap);
   }
   return { left, right, top, bottom };
 }
@@ -434,7 +568,7 @@ export function renderSvg(scene: Scene): string {
     ? `<g transform="translate(${frame.left} ${frame.top})">${scene.drawing}</g>`
     : '';
   const marks = scene.marks.map(mark =>
-    `<g transform="translate(${mark.x} ${mark.y})">${mark.svg}</g>`
+    `<g transform="translate(${mark.x} ${mark.y}) scale(1 -1)">${mark.svg}</g>`
   ).join('');
   const arrows = scene.arrows.map(arrow => {
     if (arrow.kind === 'dribble') {

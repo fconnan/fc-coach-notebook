@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { Button, Select } from 'flowbite-svelte';
   import { PauseOutline, PlayOutline } from 'flowbite-svelte-icons';
   import { liveExercisePreview, loadExercisePreview, type ExercisePreview } from '$lib/schema/preview';
 
@@ -105,24 +104,21 @@
     {/if}
   </div>
   {#if !compact}
-  <div class="schema-bar flex items-center gap-1.5 px-1.5">
-    {#if phases.length}
-      <Select
-        size="sm"
-        class="w-36"
-        placeholder=""
-        value={String(phase)}
-        items={phases.map((item, index) => ({ value: String(index), name: item.name }))}
-        onchange={(e) => showPhase(Number(fieldValue(e)))}
-      />
-    {/if}
-    <Button size="xs" color="alternative" class="shrink-0" disabled={!phases.length} title={phases.length ? undefined : 'Ce schéma n’a pas d’animation'} onclick={togglePlay}>
+  <div class="schema-bar">
+    <button type="button" class="bar-btn" disabled={!phases.length} title={phases.length ? undefined : 'Ce schéma n’a pas d’animation'} onclick={togglePlay}>
       {#if playing}
-        <PauseOutline class="me-1 h-3.5 w-3.5" /> Pause
+        <PauseOutline class="bar-icon" /> Pause
       {:else}
-        <PlayOutline class="me-1 h-3.5 w-3.5" /> Lire
+        <PlayOutline class="bar-icon" /> Lire
       {/if}
-    </Button>
+    </button>
+    {#if phases.length}
+      <select class="bar-select" aria-label="Phase" value={String(phase)} onchange={(e) => showPhase(Number(fieldValue(e)))}>
+        {#each phases as item, index (item.name + index)}
+          <option value={String(index)}>{item.name}</option>
+        {/each}
+      </select>
+    {/if}
   </div>
   {/if}
 </div>
@@ -137,20 +133,28 @@
   .sheet.compact { display: flex; justify-content: center; height: 7.5rem; }
   .sheet.compact :global(svg) { width: auto; max-width: 100%; height: 100%; }
   .schema-bar {
-    height: 2.25rem;
-    background: var(--color-neutral-secondary-medium);
+    display: flex;
+    background: var(--color-neutral-primary);
     border-top: 1px solid var(--color-default-medium);
   }
-  .schema-bar :global(select) {
-    height: 1.75rem;
-    min-height: 0;
-    padding-top: 0;
-    padding-bottom: 0;
+  .bar-select,
+  .bar-btn {
+    height: 1.5rem;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0 0.45rem;
     font-size: 0.75rem;
+    color: var(--color-heading);
   }
-  .schema-bar :global(button) {
-    height: 1.75rem;
-    padding-top: 0;
-    padding-bottom: 0;
+  .bar-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
   }
+  .bar-btn :global(.bar-icon) { width: 0.85rem; height: 0.85rem; }
+  .bar-select { margin-left: auto; border-left: 1px solid var(--color-default-medium); }
+  .bar-btn:disabled { color: var(--color-body); }
+  .bar-select:hover,
+  .bar-btn:hover:not(:disabled) { background: var(--color-neutral-secondary-medium); }
 </style>

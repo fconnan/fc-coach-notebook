@@ -1,9 +1,12 @@
 export const SCHEMA_TYPE = 'fccn-schema:0';
 
+export type SchemaUnit = 'meters' | 'relative';
+
 export interface SchemaDoc {
   type?: string;
   name?: string;
-  units?: 'meters' | 'relative';
+  units?: SchemaUnit;
+  outline?: boolean;
   pitch?: PitchSpec;
   lines?: Array<number[] | Segment>;
   players?: PlayerSpec[];
@@ -11,6 +14,9 @@ export interface SchemaDoc {
   items?: ItemSpec[];
   phases?: PhaseSpec[];
   svg?: string;
+  viewBox?: string;
+  /** Rendu précalculé, à côté du YAML. Ce n’est pas un second objet de la bibliothèque. */
+  preview?: string;
 }
 
 export interface PitchSpec {
@@ -23,15 +29,43 @@ export interface PitchSpec {
 
 export interface PlayerSpec {
   number?: string | number;
+  pos?: Spot;
   at?: number[];
   x?: number;
   y?: number;
   team?: string;
 }
 
+export interface BoxEdges {
+  x?: number;
+  y?: number;
+  top?: number;
+  right?: number;
+  bottom?: number;
+  left?: number;
+}
+
+export type BoxInset = number | BoxEdges;
+
+export interface RectSpec {
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  width?: number;
+  height?: number;
+  unit?: SchemaUnit;
+  margin?: BoxInset;
+  padding?: BoxInset;
+}
+
 export interface ZoneSpec {
   name?: string;
   box?: number[] | Rect;
+  rect?: RectSpec;
+  unit?: SchemaUnit;
+  margin?: BoxInset;
+  padding?: BoxInset;
   x?: number;
   y?: number;
   w?: number;
@@ -66,6 +100,9 @@ export interface Spot {
 export interface ItemSpec {
   team?: string;
   shape?: string;
+  rect?: RectSpec;
+  unit?: SchemaUnit;
+  pos?: Spot;
   at?: number[];
   x?: number;
   y?: number;

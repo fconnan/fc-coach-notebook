@@ -61,9 +61,10 @@ function drawingFromSvg(file: string, source: string): { type?: string; name: st
     .replace(/<\/svg>\s*$/i, '')
     .trim();
   if (!name || !svg) return null;
-  const doc: { name: string; svg: string; pitch?: { width: number; length: number; margin: number } } = { name, svg };
+  const doc: { name: string; svg: string; viewBox?: string; pitch?: { width: number; length: number; margin: number } } = { name, svg };
   const rel = file.replaceAll('\\', '/');
   const box = opened && /viewBox\s*=\s*"([^"]+)"/i.exec(opened[1]);
+  if (box) doc.viewBox = box[1];
   if (rel.includes('/pitches/') && box) {
     const [x, y, w, h] = box[1].trim().split(/[\s,]+/).map(Number);
     const margin = Math.max(x < 0 ? -x : 0, y < 0 ? -y : 0);
@@ -81,19 +82,30 @@ async function walk(dir: string, out: string[]) {
   }
 }
 
+function stemKey(file: string): string {
+  return file.replace(/\.(ya?ml|svg)$/i, '').toLowerCase();
+}
+
 async function readLibrary(skip = '') {
   const files: string[] = [];
   try { await walk(path.join(root, 'studio', 'library'), files); } catch { /* bibliothèque absente */ }
+  const yamlStems = new Set(files.filter(file => /\.ya?ml$/i.test(file)).map(stemKey));
   const library = [];
   for (const file of files) {
     if (file === skip) continue;
+    const svg = /\.svg$/i.test(file);
+    if (svg && yamlStems.has(stemKey(file))) continue;
     try {
       const source = await readFile(file, 'utf8');
-      const doc = file.toLowerCase().endsWith('.svg')
+      const doc = svg
         ? drawingFromSvg(file, source)
-        : parse(source) as { type?: string; name?: string; svg?: string };
+        : parse(source) as SchemaDoc;
       if (!doc?.name || (doc.type && doc.type !== SCHEMA_TYPE)) continue;
-      if (!file.toLowerCase().endsWith('.svg') && doc.type !== SCHEMA_TYPE) continue;
+      if (!svg && doc.type !== SCHEMA_TYPE) continue;
+      if (!svg) {
+        const preview = files.find(item => /\.svg$/i.test(item) && stemKey(item) === stemKey(file));
+        if (preview) doc.preview = (await readFile(preview, 'utf8')).replace(/<\?xml[\s\S]*?\?>/g, '').trim();
+      }
       const rel = path.relative(root, file).replaceAll('\\', '/');
       library.push({
         name: doc.name,

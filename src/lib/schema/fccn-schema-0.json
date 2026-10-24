@@ -14,7 +14,11 @@
     },
     "units": {
       "enum": ["meters", "relative"],
-      "description": "Unité des coordonnées."
+      "description": "Unité héritée quand un rectangle n'en donne pas. meters par défaut."
+    },
+    "outline": {
+      "type": "boolean",
+      "description": "Relie les objets de la forme par un trait d'épaisseur constante."
     },
     "svg": {
       "type": "string",
@@ -129,8 +133,12 @@
           "type": "string",
           "description": "Équipe."
         },
-        "x": { "type": "number", "description": "Abscisse." },
-        "y": { "type": "number", "description": "Ordonnée." },
+        "pos": {
+          "description": "Position.",
+          "allOf": [{ "$ref": "#/definitions/point" }]
+        },
+        "x": { "type": "number", "description": "Ancienne abscisse." },
+        "y": { "type": "number", "description": "Ancienne ordonnée." },
         "at": {
           "description": "Ancienne position.",
           "allOf": [{ "$ref": "#/definitions/point" }]
@@ -142,6 +150,16 @@
       "description": "Rectangle nommé.",
       "properties": {
         "name": { "type": "string", "description": "Nom." },
+        "rect": {
+          "description": "Rectangle. x, y, w et h décrivent la boîte extérieure.",
+          "allOf": [{ "$ref": "#/definitions/rect" }]
+        },
+        "unit": {
+          "enum": ["meters", "relative"],
+          "description": "Unité de la zone. Elle l'emporte sur celle du document, et le unit du rect l'emporte sur elle."
+        },
+        "margin": { "description": "Marge extérieure au trait.", "allOf": [{ "$ref": "#/definitions/inset" }] },
+        "padding": { "description": "Marge intérieure au trait.", "allOf": [{ "$ref": "#/definitions/inset" }] },
         "x": { "type": "number", "description": "Abscisse." },
         "y": { "type": "number", "description": "Ordonnée." },
         "w": { "type": "number", "description": "Largeur." },
@@ -188,10 +206,52 @@
         }
       ]
     },
+    "inset": {
+      "description": "Quatre côtés, vertical puis horizontal, ou chaque côté.",
+      "oneOf": [
+        { "type": "number" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "y": { "type": "number", "description": "Haut et bas." },
+            "x": { "type": "number", "description": "Gauche et droite." },
+            "top": { "type": "number", "description": "Haut." },
+            "right": { "type": "number", "description": "Droite." },
+            "bottom": { "type": "number", "description": "Bas." },
+            "left": { "type": "number", "description": "Gauche." }
+          }
+        }
+      ]
+    },
+    "rect": {
+      "type": "object",
+      "description": "Boîte. La marge est hors du trait, le padding est dedans. Les objets SVG ne sont pas agrandis.",
+      "properties": {
+        "x": { "type": "number", "description": "Abscisse de la boîte extérieure." },
+        "y": { "type": "number", "description": "Ordonnée de la boîte extérieure." },
+        "w": { "type": "number", "description": "Largeur extérieure." },
+        "h": { "type": "number", "description": "Hauteur extérieure." },
+        "unit": {
+          "enum": ["meters", "relative"],
+          "description": "Unité de ce rectangle. Elle l'emporte sur celle de la zone et du document."
+        },
+        "margin": { "description": "Marge extérieure au trait.", "allOf": [{ "$ref": "#/definitions/inset" }] },
+        "padding": { "description": "Marge intérieure au trait.", "allOf": [{ "$ref": "#/definitions/inset" }] }
+      }
+    },
     "item": {
       "type": "object",
-      "description": "Joueur, objet ou ballon.",
+      "description": "Joueur, objet, forme ou ballon. Une forme peut contenir des objets.",
       "properties": {
+        "rect": {
+          "description": "Rectangle dans lequel poser la forme.",
+          "allOf": [{ "$ref": "#/definitions/rect" }]
+        },
+        "unit": {
+          "enum": ["meters", "relative"],
+          "description": "Unité de l'élément. Le unit du rect l'emporte."
+        },
         "team": {
           "type": "string",
           "enum": ["blue", "red", "white", "yellow"],
@@ -205,8 +265,12 @@
           "type": "string",
           "description": "Objet de la bibliothèque."
         },
-        "x": { "type": "number", "description": "Abscisse." },
-        "y": { "type": "number", "description": "Ordonnée." },
+        "pos": {
+          "description": "Position.",
+          "allOf": [{ "$ref": "#/definitions/point" }]
+        },
+        "x": { "type": "number", "description": "Ancienne abscisse." },
+        "y": { "type": "number", "description": "Ancienne ordonnée." },
         "ball": {
           "description": "Numéro du joueur qui a le ballon, ou position.",
           "oneOf": [
