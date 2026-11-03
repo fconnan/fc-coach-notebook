@@ -6,8 +6,9 @@
   import { RowDrag } from '$lib/utils/rowDrag.svelte';
   import { matches } from '$lib/utils/search';
   import { Alert, Button, ButtonGroup, Card, Heading, TableBody, TableBodyCell, TableBodyRow, TableHead, TableHeadCell } from 'flowbite-svelte';
-  import { BarsOutline } from 'flowbite-svelte-icons';
+  import { BarsOutline, PenOutline } from 'flowbite-svelte-icons';
   import AddExerciseButton from './AddExerciseButton.svelte';
+  import QuietIconButton from './QuietIconButton.svelte';
   import SchemaPreview from './SchemaPreview.svelte';
   import SearchTable from './SearchTable.svelte';
   import SessionText from './SessionText.svelte';
@@ -105,15 +106,18 @@
   <SessionText {editable} />
 
   <div class="flex items-center justify-between gap-3">
-    <Heading tag="h2" class="text-xl">Exercices</Heading>
+    <div class="inline-flex items-center gap-1">
+      <Heading tag="h2" class="text-xl">Exercices</Heading>
+      {#if !planning}
+        <AddExerciseButton />
+      {:else if view === 'table' && !editingPick}
+        <QuietIconButton label="Éditer" onclick={startPick}><PenOutline size="sm" /></QuietIconButton>
+      {/if}
+    </div>
     <div class="flex items-center gap-3">
-      {#if planning && view === 'table'}
-        {#if editingPick}
-          <Button size="sm" color="brand" onclick={() => { void savePick(); }}>Sauver</Button>
-          <Button size="sm" color="alternative" onclick={cancelPick}>Annuler</Button>
-        {:else}
-          <Button size="sm" color="brand" onclick={startPick}>Éditer</Button>
-        {/if}
+      {#if planning && view === 'table' && editingPick}
+        <Button size="sm" color="brand" onclick={() => { void savePick(); }}>Sauver</Button>
+        <Button size="sm" color="alternative" onclick={cancelPick}>Annuler</Button>
       {/if}
       <ButtonGroup size="sm" aria-label="Affichage des exercices">
         <Button size="sm" color={view === 'table' ? 'brand' : 'alternative'} onclick={() => showView('table')}>Tableau</Button>
@@ -122,7 +126,6 @@
     </div>
   </div>
 
-  {#snippet addExercise()}<AddExerciseButton />{/snippet}
   {#snippet pickBox(id: string, name: string)}
     <input
       type="checkbox"
@@ -138,7 +141,7 @@
     <Card size="xl" class="p-6">
       {#if drag.error}<Alert color="red" class="mb-3">{drag.error}</Alert>{/if}
       {#if pickError}<Alert color="red" class="mb-3">{pickError}</Alert>{/if}
-      <SearchTable bind:query placeholder="Rechercher un exercice" actions={planning ? undefined : addExercise}>
+      <SearchTable bind:query placeholder="Rechercher un exercice">
         <TableHead>
           {#if editingPick}<TableHeadCell class="w-12 px-3"></TableHeadCell>{/if}
           <TableHeadCell class="w-20 px-3">Ordre</TableHeadCell>
@@ -185,14 +188,15 @@
     {#each listed as page (page.id)}
       <Card size="xl" class="p-6">
         {#if editingPick}<div class="mb-3">{@render pickBox(page.id, page.name)}</div>{/if}
-        {#if !planning}
-          <div class="mb-3 flex justify-end">
-            <Button size="sm" color="brand" onclick={() => { void showExercise(page.id); }}>Modifier</Button>
-          </div>
-        {/if}
         <div class="grid items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]">
           <div class="exercise-frame flex min-h-0 flex-col overflow-hidden lg:h-0 lg:min-h-full">
-            <div class="exercise-md min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+            {#if !planning}
+              <div class="mb-3 flex items-center gap-1">
+                <h3 class="text-[1.05rem] font-semibold">{page.name}</h3>
+                <QuietIconButton label="Modifier" onclick={() => { void showExercise(page.id); }}><PenOutline size="sm" /></QuietIconButton>
+              </div>
+            {/if}
+            <div class="exercise-md min-h-0 flex-1 overflow-x-hidden overflow-y-auto" class:hide-title={!planning}>
               {@html exerciseHtml(page)}
             </div>
           </div>
@@ -207,4 +211,5 @@
 
 <style>
   .pick { accent-color: var(--color-brand); }
+  .hide-title :global(h1) { display: none; }
 </style>

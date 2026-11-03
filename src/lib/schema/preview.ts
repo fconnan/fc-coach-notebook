@@ -24,11 +24,11 @@ function loadLibrary(): Promise<LibraryEntry[]> {
 
 export interface ExercisePreview {
   phases: { name: string; duration: number }[];
-  render: (phase: number, progress: number) => string;
+  render: (phase: number, progress: number, picks?: boolean) => string;
 }
 
-function svgOf(scene: ReturnType<typeof buildScene>): string {
-  return renderSvg(scene).replace(/<\?xml[\s\S]*?\?>\s*/, '');
+function svgOf(scene: ReturnType<typeof buildScene>, picks = false): string {
+  return renderSvg(scene, picks).replace(/<\?xml[\s\S]*?\?>\s*/, '');
 }
 
 export async function liveExercisePreview(source: string, at = '', id = ''): Promise<ExercisePreview> {
@@ -38,7 +38,7 @@ export async function liveExercisePreview(source: string, at = '', id = ''): Pro
   const names = libraryFor(at || id, library, at ? `${at}/schema.yaml` : '');
   return {
     phases: buildScene(doc, names, 0, 0).phases,
-    render: (phase, progress) => svgOf(buildScene(doc, names, phase, progress))
+    render: (phase, progress, picks) => svgOf(buildScene(doc, names, phase, progress), picks)
   };
 }
 
@@ -56,6 +56,6 @@ export async function loadExercisePreview(at: string, id = ''): Promise<Exercise
   const names = libraryFor(at || id, library, at ? `${at}/schema.yaml` : '');
   return {
     phases: buildScene(doc, names, 0, 0).phases,
-    render: (phase, progress) => svgOf(buildScene(doc, names, phase, progress))
+    render: (phase, progress, picks) => svgOf(buildScene(doc, names, phase, progress), picks)
   };
 }

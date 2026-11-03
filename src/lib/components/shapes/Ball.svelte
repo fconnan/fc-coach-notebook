@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ballFace } from '$lib/schema/ball';
   import type { ComponentElement } from '$lib/stores/workspace';
   import { currentPage } from '$lib/stores/workspace';
   import { beginElementDrag } from '$lib/utils/interactions';
@@ -16,8 +17,14 @@
   }
  
   const radius = $derived(element.radius || $currentPage.ballSize);
-  const ballColor = $derived(element.color || $currentPage.ballColor);
   const groundScale = $derived(anchor ? anchor.scale : 1);
+  let face = $state<SVGGElement | null>(null);
+
+  $effect(() => {
+    const node = face;
+    if (!node) return;
+    node.innerHTML = ballFace();
+  });
 </script>
 
 <g 
@@ -35,10 +42,7 @@
     <circle cx="0" cy="0" r={radius + 4} fill="none" stroke="var(--accent-primary)" stroke-width="2" opacity="0.8" />
   {/if}
   
-  <circle cx="0" cy="0" r={radius} fill={ballColor} stroke="#000" stroke-width="1.5" />
-  <circle cx="0" cy="0" r={radius * 0.4} fill="#000" />
-  
-  <path d="M 0,-3.2 L -2.5,1.5 L 2.5,1.5 Z" fill="#000" />
+  <g bind:this={face} transform="scale({radius / 100})"></g>
 </g>
 
 <style>

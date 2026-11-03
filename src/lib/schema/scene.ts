@@ -1,3 +1,4 @@
+import { ballBeside, ballMarkup, playerTokenRadius } from './ball';
 import type {
   ArrowMark,
   BoxInset,
@@ -144,7 +145,8 @@ function placePlayers(
   doc: SchemaDoc,
   team: string,
   box: [number, number, number, number],
-  into: PlacedPlayer[]
+  into: PlacedPlayer[],
+  anchor?: string
 ) {
   const relative = doc.units !== 'meters';
   for (const player of doc.players || []) {
@@ -152,7 +154,13 @@ function placePlayers(
     if (!at) continue;
     const [x, y] = mapPoint(at, box, relative);
     const side = player.team || team;
-    into.push({ id: `${side}:${idOf(player.number)}`, team: side, x, y });
+    into.push({
+      id: `${side}:${idOf(player.number)}`,
+      team: side,
+      x,
+      y,
+      ...(anchor ? { ref: anchor, locked: true } : {})
+    });
   }
 }
 
@@ -241,31 +249,32 @@ interface PlaceBag {
   ballHolder: { id: string };
 }
 
-function placeShape(shape: SchemaDoc, team: string, box: Box, bag: PlaceBag, depth: number) {
+function placeShape(shape: SchemaDoc, team: string, box: Box, bag: PlaceBag, depth: number, anchor?: string) {
   if (depth > 6) return;
   const unit = shapeUnit(shape);
-  placePlayers(shape, team, box, bag.players);
+  placePlayers(shape, team, box, bag.players, anchor);
   const corners: [number, number][] = [];
+  const owned = anchor ? { ref: anchor, locked: true as const } : {};
   for (const item of shape.items || []) {
     const local = item.rect?.unit || item.unit || unit;
     if (item.shape) {
       const nested = bag.library.get(item.shape);
       const target = item.rect ? splitBox(item.rect, box, local)?.content : box;
-      if (nested && target) placeShape(nested, item.team || team, target, bag, depth + 1);
+      if (nested && target) placeShape(nested, item.team || team, target, bag, depth + 1, anchor);
     }
     const at = placedAt(item);
     if (item.object && at) {
       const mark = bag.library.get(item.object);
       const spot = mapPoint(at, box, local === 'relative');
       if (mark?.svg) {
-        bag.marks.push({ svg: mark.svg, x: spot[0], y: spot[1] });
+        bag.marks.push({ svg: mark.svg, x: spot[0], y: spot[1], angle: num(item.angle), ...owned });
         corners.push(spot);
       }
     }
     if (item.player !== undefined && at) {
       const spot = mapPoint(at, box, local === 'relative');
       const side = item.team || team;
-      bag.players.push({ id: `${side}:${idOf(item.player)}`, team: side, x: spot[0], y: spot[1] });
+      bag.players.push({ id: `${side}:${idOf(item.player)}`, team: side, x: spot[0], y: spot[1], ...owned });
     }
   }
   for (const line of linesOf(shape.lines)) {
@@ -273,7 +282,7 @@ function placeShape(shape: SchemaDoc, team: string, box: Box, bag: PlaceBag, dep
     const b = mapPoint([line[2], line[3]], box, unit === 'relative');
     bag.lines.push([a[0], a[1], b[0], b[1]]);
   }
-  placeZones(shape.zones, box, unit, bag, depth + 1);
+  placeZones(shape.zones, box, unit, bag, depth + 1, undefined, anchor);
   if (shape.outline && corners.length >= 2) {
     const last = corners.length === 2 ? 1 : corners.length;
     for (let i = 0; i < last; i += 1) {
@@ -284,24 +293,37 @@ function placeShape(shape: SchemaDoc, team: string, box: Box, bag: PlaceBag, dep
   }
 }
 
-function placeItems(items: ItemSpec[] | undefined, box: Box, unit: Unit, bag: PlaceBag, depth: number) {
-  for (const item of items || []) {
+function placeItems(items: ItemSpec[] | undefined, box: Box, unit: Unit, bag: PlaceBag, depth: number, path?: string, anchor?: string) {
+  (items || []).forEach((item, index) => {
+    const own = path !== undefined;
+    const ref = own ? `${path}/${index}` : anchor;
     const local = item.rect?.unit || item.unit || unit;
     if (item.shape) {
       const shape = bag.library.get(item.shape);
       const target = item.rect ? splitBox(item.rect, box, local)?.content : box;
-      if (shape && target) placeShape(shape, item.team || 'blue', target, bag, depth + 1);
+      if (shape && target) placeShape(shape, item.team || 'blue', target, bag, depth + 1, ref);
     }
     const at = placedAt(item);
+    const spotMeta = ref
+      ? {
+          ref,
+          locked: !own,
+          ox: box[0],
+          oy: box[1],
+          sx: box[2],
+          sy: box[3],
+          relative: local === 'relative'
+        }
+      : {};
     if (item.player !== undefined && at) {
       const spot = mapPoint(at, box, local === 'relative');
       const side = item.team || 'blue';
-      bag.players.push({ id: `${side}:${idOf(item.player)}`, team: side, x: spot[0], y: spot[1] });
+      bag.players.push({ id: `${side}:${idOf(item.player)}`, team: side, x: spot[0], y: spot[1], ...spotMeta });
     }
     if (item.object && at) {
       const mark = bag.library.get(item.object);
       const spot = mapPoint(at, box, local === 'relative');
-      if (mark?.svg) bag.marks.push({ svg: mark.svg, x: spot[0], y: spot[1] });
+      if (mark?.svg) bag.marks.push({ svg: mark.svg, x: spot[0], y: spot[1], angle: num(item.angle), ...spotMeta });
     }
     if (item.ball !== undefined) {
       if (Array.isArray(item.ball) || (item.ball && typeof item.ball === 'object')) {
@@ -314,20 +336,22 @@ function placeItems(items: ItemSpec[] | undefined, box: Box, unit: Unit, bag: Pl
         bag.ballHolder.id = idOf(item.ball as string | number);
       }
     }
-  }
+  });
 }
 
-function placeZones(zones: ZoneSpec[] | undefined, parent: Box, unit: Unit, bag: PlaceBag, depth: number) {
-  for (const zone of zones || []) {
+function placeZones(zones: ZoneSpec[] | undefined, parent: Box, unit: Unit, bag: PlaceBag, depth: number, path?: string, anchor?: string) {
+  (zones || []).forEach((zone, index) => {
     const spec = rectSpec(zone);
-    if (!spec) continue;
+    if (!spec) return;
     const local = spec.unit || unit;
     const boxes = splitBox(spec, parent, local);
-    if (!boxes) continue;
+    if (!boxes) return;
     bag.zones.push({ name: zone.name || '', x: boxes.border[0], y: boxes.border[1], w: boxes.border[2], h: boxes.border[3] });
-    placeItems(zone.items, boxes.content, local, bag, depth);
-    placeZones(zone.zones, boxes.content, local, bag, depth);
-  }
+    const next = path !== undefined ? `${path}/${index}` : undefined;
+    const nested = next === undefined ? anchor : undefined;
+    placeItems(zone.items, boxes.content, local, bag, depth, next !== undefined ? `${next}/items` : undefined, nested);
+    placeZones(zone.zones, boxes.content, local, bag, depth, next !== undefined ? `${next}/zones` : undefined, nested);
+  });
 }
 
 function matches(player: PlacedPlayer, token: string | number | undefined): boolean {
@@ -397,8 +421,8 @@ export function buildScene(
   };
   const box: Box = [0, 0, pitch.width, pitch.length];
   const unit = docUnit(doc);
-  placeItems(doc.items, box, unit, bag, 0);
-  placeZones(doc.zones, box, unit, bag, 0);
+  placeItems(doc.items, box, unit, bag, 0, 'items');
+  placeZones(doc.zones, box, unit, bag, 0, 'zones');
   const { players, marks, zones } = bag;
   const ballHolder = bag.ballHolder;
   const phases = (doc.phases || []).map(phase => ({
@@ -435,9 +459,11 @@ export function buildScene(
   }
   const lastPass = [...arrows].reverse().find(arrow => arrow.kind === 'pass');
   if (lastPass) {
+    const start = ballBeside(lastPass.x1, lastPass.y1, lastPass.x2, lastPass.y2);
+    const end = ballBeside(lastPass.x2, lastPass.y2, lastPass.x1, lastPass.y1);
     ball = {
-      x: lastPass.x1 + (lastPass.x2 - lastPass.x1) * t,
-      y: lastPass.y1 + (lastPass.y2 - lastPass.y1) * t
+      x: start.x + (end.x - start.x) * t,
+      y: start.y + (end.y - start.y) * t
     };
   }
   return {
@@ -464,6 +490,49 @@ const TEAM_COLOR: Record<string, string> = {
 
 function esc(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escAttr(value: string): string {
+  return esc(value).replace(/"/g, '&quot;');
+}
+
+function pickAttrs(node: { ref?: string; locked?: boolean }, kind: 'player' | 'mark'): string {
+  if (!node.ref) return '';
+  const drag = node.locked === false
+    ? ` data-ref="${escAttr(node.ref)}"${kind === 'mark' ? ' data-handle="1" data-ox="0" data-oy="0"' : ''}`
+    : '';
+  return ` data-pick="${escAttr(node.ref)}" data-kind="${kind}"${drag}`;
+}
+
+function markFrame(mark: { ref?: string; locked?: boolean; svg: string }): string {
+  if (!mark.ref) return '';
+  const box = markExtent(mark.svg);
+  const pad = 0.14;
+  const minX = box ? box.minX : -0.6;
+  const minY = box ? box.minY : -0.6;
+  const maxX = box ? box.maxX : 0.6;
+  const maxY = box ? box.maxY : 0.6;
+  const x = minX - pad;
+  const y = -maxY - pad;
+  const w = maxX - minX + pad * 2;
+  const h = maxY - minY + pad * 2;
+  const knobR = 0.85;
+  const knobY = (y + h + knobR + 0.28).toFixed(4);
+  const knob = mark.locked === false
+    ? `<g data-rotate="1" fill-opacity="0" stroke-opacity="0" pointer-events="none">
+        <circle cx="0" cy="${knobY}" r="1.35" fill="transparent"/>
+        <circle cx="0" cy="${knobY}" r="${knobR}" fill="#fde047" stroke="#111827" stroke-width="0.12"/>
+      </g>`
+    : '';
+  return `<rect data-pick="${escAttr(mark.ref)}" x="${x}" y="${y}" width="${w}" height="${h}" fill="transparent" stroke="transparent" stroke-width="0.22"/>${knob}`;
+}
+
+function ring(node: { ref?: string; locked?: boolean; x: number; y: number; ox?: number; oy?: number; sx?: number; sy?: number; relative?: boolean }, kind: 'player' | 'mark'): string {
+  if (!node.ref || kind !== 'player') return '';
+  const handle = node.locked === false
+    ? ` data-ref="${escAttr(node.ref)}" data-handle="1" data-ox="${node.ox ?? 0}" data-oy="${node.oy ?? 0}" data-sx="${node.sx ?? 0}" data-sy="${node.sy ?? 0}" data-rel="${node.relative ? 1 : 0}"`
+    : '';
+  return `<circle data-pick="${escAttr(node.ref)}" data-kind="${kind}"${handle} cx="${node.x}" cy="${node.y}" r="1.7" fill="transparent" stroke="transparent" stroke-width="0.22"/>`;
 }
 
 function wavy(x1: number, y1: number, x2: number, y2: number): string {
@@ -514,6 +583,13 @@ function markExtent(svg: string): { minX: number; minY: number; maxX: number; ma
     add(num(Number(attrs.cx)) - radius, num(Number(attrs.cy)) - radius);
     add(num(Number(attrs.cx)) + radius, num(Number(attrs.cy)) + radius);
   }
+  for (const match of svg.matchAll(/<ellipse\b([^>]*?)\/?>/gi)) {
+    const attrs = attrMap(match[1]);
+    const rx = num(Number(attrs.rx));
+    const ry = num(Number(attrs.ry));
+    add(num(Number(attrs.cx)) - rx, num(Number(attrs.cy)) - ry);
+    add(num(Number(attrs.cx)) + rx, num(Number(attrs.cy)) + ry);
+  }
   for (const match of svg.matchAll(/<line\b([^>]*?)\/?>/gi)) {
     const attrs = attrMap(match[1]);
     add(num(Number(attrs.x1)), num(Number(attrs.y1)));
@@ -536,25 +612,32 @@ function frameOf(scene: Scene): { left: number; right: number; top: number; bott
   for (const mark of scene.marks) {
     const box = markExtent(mark.svg);
     if (!box) continue;
-    const pitchMinY = mark.y - box.maxY;
-    const pitchMaxY = mark.y - box.minY;
-    left = Math.max(left, gap - (mark.x + box.minX));
-    right = Math.max(right, mark.x + box.maxX - scene.width + gap);
-    bottom = Math.max(bottom, gap - pitchMinY);
-    top = Math.max(top, pitchMaxY - scene.length + gap);
+    const angle = (mark.angle || 0) * Math.PI / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    for (const [sx, sy] of [[box.minX, box.minY], [box.maxX, box.minY], [box.minX, box.maxY], [box.maxX, box.maxY]] as [number, number][]) {
+      const px = sx;
+      const py = -sy;
+      const x = mark.x + px * cos - py * sin;
+      const y = mark.y + px * sin + py * cos;
+      left = Math.max(left, gap - x);
+      right = Math.max(right, x - scene.width + gap);
+      bottom = Math.max(bottom, gap - y);
+      top = Math.max(top, y - scene.length + gap);
+    }
   }
   return { left, right, top, bottom };
 }
 
-export function renderSvg(scene: Scene): string {
+export function renderSvg(scene: Scene, picks = false): string {
   const frame = frameOf(scene);
   const width = scene.width + frame.left + frame.right;
   const height = scene.length + frame.top + frame.bottom;
   const players = scene.players.map(player => {
     const fill = TEAM_COLOR[player.team] || '#334155';
     const ink = player.team === 'white' || player.team === 'yellow' ? '#111827' : '#ffffff';
-    return `<g transform="translate(${player.x} ${player.y})">
-      <circle r="1.15" fill="${fill}" stroke="#ffffff" stroke-width="0.12"/>
+    return `<g transform="translate(${player.x} ${player.y})"${picks ? pickAttrs(player, 'player') : ''}>
+      <circle r="${playerTokenRadius}" fill="${fill}" stroke="#ffffff" stroke-width="0.12"/>
       <g transform="scale(1 -1)"><text text-anchor="middle" y="0.38" font-size="1.1" font-family="sans-serif" fill="${ink}">${esc(player.id.split(':').pop() || '')}</text></g>
     </g>`;
   }).join('');
@@ -567,9 +650,13 @@ export function renderSvg(scene: Scene): string {
   const drawing = scene.drawing
     ? `<g transform="translate(${frame.left} ${frame.top})">${scene.drawing}</g>`
     : '';
-  const marks = scene.marks.map(mark =>
-    `<g transform="translate(${mark.x} ${mark.y}) scale(1 -1)">${mark.svg}</g>`
-  ).join('');
+  const marks = scene.marks.map(mark => {
+    const angle = mark.angle || 0;
+    const frame = picks && mark.ref ? markFrame(mark) : '';
+    return `<g transform="translate(${mark.x} ${mark.y}) rotate(${angle})" data-x="${mark.x}" data-y="${mark.y}" data-angle="${angle}"${picks ? pickAttrs(mark, 'mark') : ''}>
+      <g transform="scale(1 -1)">${mark.svg}</g>${frame}
+    </g>`;
+  }).join('');
   const arrows = scene.arrows.map(arrow => {
     if (arrow.kind === 'dribble') {
       return `<path d="${wavy(arrow.x1, arrow.y1, arrow.x2, arrow.y2)}" fill="none" stroke="#111827" stroke-width="0.22"/>`;
@@ -577,11 +664,11 @@ export function renderSvg(scene: Scene): string {
     const dash = arrow.kind === 'run' ? ' stroke-dasharray="0.7 0.45"' : '';
     return `<line x1="${arrow.x1}" y1="${arrow.y1}" x2="${arrow.x2}" y2="${arrow.y2}" stroke="#111827" stroke-width="0.22"${dash} marker-end="url(#arrow)"/>`;
   }).join('');
-  const ball = scene.ball
-    ? `<circle cx="${scene.ball.x}" cy="${scene.ball.y}" r="0.45" fill="#ffffff" stroke="#111827" stroke-width="0.08"/>`
-    : '';
+  const ball = scene.ball ? ballMarkup(scene.ball.x, scene.ball.y, picks) : '';
+  const rings = picks ? scene.players.map(node => ring(node, 'player')).join('') : '';
+  const meta = picks ? ` data-left="${frame.left}" data-top="${frame.top}" data-length="${scene.length}"` : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="100%" height="100%">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="100%" height="100%"${meta}>
   <defs>
     <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
       <path d="M 0 0 L 6 3 L 0 6 z" fill="#111827"/>
@@ -599,6 +686,7 @@ export function renderSvg(scene: Scene): string {
     ${arrows}
     ${players}
     ${ball}
+    ${rings}
   </g>
 </svg>`;
 }

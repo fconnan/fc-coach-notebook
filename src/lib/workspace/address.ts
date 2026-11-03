@@ -31,11 +31,11 @@ export function bindAddress(read: AddressReader, go: AddressGo) {
 export function parseAddress(pathname: string): AddressTarget | null {
   const parts = pathname.split('/').filter(Boolean);
   if (!parts.length) return { door: '', area: '', item: '', child: '', exercise: '' };
-  const door = parts[0];
-  if (!doors.has(door)) return null;
-  if (door === 'season') {
+  const door = parts[0] === 'season' ? 'seasons' : parts[0];
+  if (door === 'seasons') {
     return { door: 'season', area: 'seasons', item: parts[1] || '', child: parts[2] || '', exercise: parts[3] || '' };
   }
+  if (!doors.has(door)) return null;
   if (door === 'repertoire') {
     let rest = parts.slice(1);
     if (rest[0] === 'themes') rest = rest.slice(1);
@@ -61,7 +61,7 @@ export function parseAddress(pathname: string): AddressTarget | null {
 
 export function addressPath(target: AddressTarget): string {
   if (!target.door) return '/';
-  const parts: string[] = [target.door];
+  const parts: string[] = [target.door === 'season' ? 'seasons' : target.door];
   if (target.door === 'season' || target.door === 'repertoire') {
     if (target.item) parts.push(target.item);
     if (target.child) parts.push(target.child);

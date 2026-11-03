@@ -6,8 +6,9 @@
   import { applyExerciseDocument } from '$lib/workspace/exerciseFile';
   import { exerciseHtml } from '$lib/workspace/markdownHtml';
   import { registerExerciseLeave, registerExerciseSaver } from '$lib/workspace/exerciseDraft';
-  import { persistCursor, screen } from '$lib/workspace/state';
+  import { exercisePaths, persistCursor, screen } from '$lib/workspace/state';
   import { addAnimation, addObject, addShape, choosePitch, libraryIcon, ofKind, templateOf } from '$lib/schema/assist';
+  import { itemOffset, movePoint, setAngle } from '$lib/schema/edit';
   import type { LibraryEntry } from '$lib/schema/types';
   import SchemaPreview from './SchemaPreview.svelte';
 
@@ -29,7 +30,22 @@
   const unsaved = { current: false };
   let markdownHost: HTMLDivElement | null = $state(null);
   let yamlHost: HTMLDivElement | null = $state(null);
-  let yamlEditor: { setValue: (value: string) => void } | null = null;
+  type YamlEditor = {
+    setValue(value: string): void;
+    getValue(): string;
+    dispose(): void;
+    focus(): void;
+    getModel(): {
+      dispose(): void;
+      getPositionAt(offset: number): { lineNumber: number; column: number };
+      getFullModelRange(): { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number };
+    } | null;
+    setPosition(position: { lineNumber: number; column: number }): void;
+    revealPositionInCenter(position: { lineNumber: number; column: number }): void;
+    executeEdits(source: string, edits: { range: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number }; text: string }[]): void;
+  };
+  let yamlEditor: YamlEditor | null = null;
+  let picked = $state('');
   const PART_KEY = 'fctactics_exercise_part';
   let part = $state<'description' | 'schema'>(browser && sessionStorage.getItem(PART_KEY) === 'schema' ? 'schema' : 'description');
   let picker = $state<'pitches' | 'objects' | 'shapes' | 'animations' | null>(null);
@@ -100,6 +116,51 @@
     else yaml = next;
   }
 
+  function revealItem(ref: string, focus: boolean) {
+    const editor = yamlEditor;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    const offset = itemOffset(editor.getValue(), ref);
+    if (offset == null) return;
+    const position = model.getPositionAt(offset);
+    editor.setPosition(position);
+    editor.revealPositionInCenter(position);
+    if (focus) editor.focus();
+  }
+
+  function pickItem(ref: string, focus = false) {
+    picked = ref;
+    if (ref) revealItem(ref, focus);
+  }
+
+  function turnItem(ref: string, angle: number) {
+    const editor = yamlEditor;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    const current = editor.getValue();
+    const next = setAngle(current, ref, angle);
+    if (next === current) {
+      revealItem(ref, true);
+      return;
+    }
+    editor.executeEdits('schema', [{ range: model.getFullModelRange(), text: next }]);
+    revealItem(ref, true);
+  }
+
+  function moveItemAt(ref: string, x: number, y: number) {
+    const editor = yamlEditor;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    const current = editor.getValue();
+    const next = movePoint(current, ref, x, y);
+    if (next === current) {
+      revealItem(ref, true);
+      return;
+    }
+    editor.executeEdits('schema', [{ range: model.getFullModelRange(), text: next }]);
+    revealItem(ref, true);
+  }
+
   function assist(change: () => string) {
     try {
       writeYaml(change());
@@ -155,6 +216,7 @@
     yaml = yamlDisk = body.source || 'type: fccn-schema:0\nname: exercise\npitch:\n  template: half\n';
     markdownTouched = false;
     yamlTouched = false;
+    picked = '';
     loaded = true;
     status = '';
   }
@@ -188,7 +250,8 @@
         )));
       }
       if (next.source) yamlDisk = yaml;
-      const { warning } = await response.json() as { warning?: string };
+      const { warning, path } = await response.json() as { warning?: string; path?: string };
+      if (path && exerciseId) exercisePaths.update(map => ({ ...map, [exerciseId]: path }));
       status = warning ? `Enregistré (${warning})` : 'Enregistré';
       return true;
     } catch {
@@ -327,7 +390,7 @@
       </div>
       <div class="schema-fit">
         {#if loaded}
-          <SchemaPreview at={at} exerciseId={exerciseId} source={yaml} />
+          <SchemaPreview at={at} exerciseId={exerciseId} source={yaml} editable selected={picked} onpick={pickItem} onmove={moveItemAt} onrotate={turnItem} />
         {/if}
       </div>
     </div>
@@ -478,8 +541,13 @@
     min-height: 0;
     display: flex;
   }
+  .schema-slot :global(.lens) {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+  }
   .schema-slot :global(.sheet) {
-    flex: 1;
+    flex: none;
     min-height: 0;
   }
   .schema-slot :global(.sheet svg) {

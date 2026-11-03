@@ -64,7 +64,6 @@ export type SectionKey = (typeof KNOWN)[number]['key'];
 export interface TrainerInfo {
   type?: string;
   name: string;
-  sport: string;
 }
 
 export interface CategoryInfo {
@@ -107,17 +106,15 @@ export interface PageStyle {
   morphology: PageMorphology;
 }
 
-export const DEFAULT_SPORT = 'soccer';
-
 export function emptyTrainer(): TrainerInfo {
-  return { type: WORKSPACE_TYPE, name: '', sport: DEFAULT_SPORT };
+  return { type: WORKSPACE_TYPE, name: '' };
 }
 
-type LegacyTrainer = Partial<TrainerInfo> & { produit?: string; prenom?: string; nom?: string; product?: string };
+type LegacyTrainer = Partial<TrainerInfo> & { produit?: string; prenom?: string; nom?: string; product?: string; sport?: string };
 
 export function trainerFromJson(info: LegacyTrainer | null | undefined): TrainerInfo {
   const legacy = [info?.prenom, info?.nom].filter(Boolean).join(' ');
-  return { type: WORKSPACE_TYPE, name: (info?.name || legacy).trim(), sport: info?.sport?.trim() || DEFAULT_SPORT };
+  return { type: WORKSPACE_TYPE, name: (info?.name || legacy).trim() };
 }
 
 export function isWorkspaceIndex(info: LegacyTrainer | null | undefined): boolean {

@@ -11,6 +11,10 @@
   let { children } = $props();
 
   onMount(() => {
+    const blockPageZoom = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey) event.preventDefault();
+    };
+    window.addEventListener('wheel', blockPageZoom, { capture: true, passive: false });
     try {
       for (const key of ['fctactics_ws_cursor', 'fctactics_ws_snap', 'fctactics_session', 'fctactics_theme', 'THEME_PREFERENCE_KEY', 'fctactics.fullscreen', 'fctactics_left_w', 'fctactics_notes_w', 'fctactics_right_w', 'fctactics_show_left', 'fctactics_show_right', 'fctactics_destinations']) {
         localStorage.removeItem(key);

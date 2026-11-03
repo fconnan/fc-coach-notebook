@@ -11,37 +11,45 @@ function inline(text: string): string {
 
 export function renderMarkdown(source: string): string {
   const html: string[] = [];
-  let list = false;
-  const closeList = () => {
-    if (!list) return;
-    html.push('</ul>');
-    list = false;
+  let depth = 0;
+  const closeTo = (target: number) => {
+    while (depth > target) {
+      html.push('</ul>');
+      depth -= 1;
+    }
   };
   for (const line of source.replace(/\r\n/g, '\n').split('\n')) {
     if (!line.trim()) {
-      closeList();
+      closeTo(0);
       continue;
     }
     const heading = /^(#{1,3})\s+(.*)$/.exec(line);
     if (heading) {
-      closeList();
+      closeTo(0);
       const level = heading[1].length;
       html.push(`<h${level}>${inline(heading[2])}</h${level}>`);
       continue;
     }
-    const item = /^[-*]\s+(.*)$/.exec(line);
+    const item = /^(\s*)[-*]\s+(.*)$/.exec(line);
     if (item) {
-      if (!list) {
-        html.push('<ul>');
-        list = true;
-      }
-      html.push(`<li>${inline(item[1])}</li>`);
+      const level = item[1].length >= 2 ? 2 : 1;
+      if (level > depth) {
+        while (depth < level) {
+          html.push('<ul>');
+          depth += 1;
+        }
+      } else closeTo(level);
+      html.push(`<li>${inline(item[2])}</li>`);
       continue;
     }
-    closeList();
-    html.push(`<p>${inline(line)}</p>`);
+    if (depth > 0 && /^\s+\S/.test(line)) {
+      html.push(`<li class="md-note">${inline(line.trim())}</li>`);
+      continue;
+    }
+    closeTo(0);
+    html.push(`<p>${inline(line.trim())}</p>`);
   }
-  closeList();
+  closeTo(0);
   return html.join('');
 }
 

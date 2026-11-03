@@ -2,61 +2,28 @@
   import type { Snippet } from 'svelte';
   import logo from '$lib/assets/logo.png';
   import { Button, ButtonGroup, Navbar, NavBrand } from 'flowbite-svelte';
-  import { ExpandOutline, MinimizeOutline, RefreshOutline } from 'flowbite-svelte-icons';
+  import { RefreshOutline } from 'flowbite-svelte-icons';
   import { folderLabel, needsPermission, pickWorkspace, refreshWorkspace, resumeWorkspace, showHome, workspaceOpen } from '$lib/workspace/state';
 
   let { children, fill = false, bar }: { children?: Snippet; fill?: boolean; bar?: Snippet } = $props();
 
-  const FULLSCREEN = 'fctactics.fullscreen';
+  const WIDE = 'fctactics.wide';
   const DARK = 'fctactics_ui_dark';
-  let fullscreen = $state(false);
-  let nativeFullscreen = false;
+  let wide = $state(false);
   let choosing = $state(false);
 
-  function savedFullscreen(): boolean {
-    try { return sessionStorage.getItem(FULLSCREEN) === '1'; } catch { return false; }
+  function savedWide(): boolean {
+    try { return sessionStorage.getItem(WIDE) === '1'; } catch { return false; }
   }
 
-  function remember(next: boolean) {
-    fullscreen = next;
-    try { sessionStorage.setItem(FULLSCREEN, next ? '1' : '0'); } catch { /* ignore */ }
+  function toggleWide() {
+    wide = !wide;
+    try { sessionStorage.setItem(WIDE, wide ? '1' : '0'); } catch { /* ignore */ }
   }
 
   function toggleDark() {
     const dark = document.documentElement.classList.toggle('dark');
     try { sessionStorage.setItem(DARK, dark ? '1' : '0'); } catch { /* ignore */ }
-  }
-
-  async function enterNative() {
-    if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
-  }
-
-  async function exitNative() {
-    if (document.fullscreenElement) await document.exitFullscreen();
-  }
-
-  function onFullscreenChange() {
-    const active = document.fullscreenElement != null;
-    if (active) {
-      nativeFullscreen = true;
-      if (!fullscreen) remember(true);
-      return;
-    }
-    if (nativeFullscreen) {
-      nativeFullscreen = false;
-      remember(false);
-    }
-  }
-
-  async function toggleFullscreen() {
-    const next = !fullscreen;
-    remember(next);
-    try {
-      if (next) await enterNative();
-      else await exitNative();
-    } catch {
-      // Le navigateur n’ouvre le plein écran qu’après un clic. La mise en page large reste mémorisée.
-    }
   }
 
   async function changeFolder() {
@@ -71,13 +38,9 @@
 
   $effect(() => {
     if (!$workspaceOpen) return;
-    fullscreen = savedFullscreen();
-    if (!fullscreen) return;
-    void enterNative().catch(() => {});
+    wide = savedWide();
   });
 </script>
-
-<svelte:document onfullscreenchange={onFullscreenChange} />
 
 <div class="flex h-screen flex-col overflow-hidden bg-gray-100 text-gray-900 dark:bg-gray-950 dark:text-white">
   <Navbar fluid class="shrink-0">
@@ -100,15 +63,19 @@
         </ButtonGroup>
         <Button
           color="alternative"
-          aria-pressed={fullscreen}
-          aria-label={fullscreen ? 'Quitter le plein écran' : 'Plein écran'}
-          title={fullscreen ? 'Quitter le plein écran' : 'Plein écran'}
-          onclick={toggleFullscreen}
+          aria-pressed={wide}
+          aria-label={wide ? 'Resserrer la page' : 'Élargir la page'}
+          title={wide ? 'Resserrer la page' : 'Élargir la page'}
+          onclick={toggleWide}
         >
-          {#if fullscreen}
-            <MinimizeOutline class="h-4 w-4" />
+          {#if wide}
+            <svg class="icon-margins" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M3 12h6M9 12l-3-3M9 12l-3 3M21 12h-6M15 12l3-3M15 12l3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
           {:else}
-            <ExpandOutline class="h-4 w-4" />
+            <svg class="icon-expand" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M9 12H3M3 12l3-3M3 12l3 3M15 12h6M21 12l-3-3M21 12l-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
           {/if}
         </Button>
       {/if}
@@ -128,7 +95,7 @@
     </div>
   {/if}
   <div class={fill ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'min-h-0 flex-1 overflow-y-auto'}>
-    <main class={fill ? 'flex h-full min-h-0 flex-col px-4 py-4' : fullscreen ? 'px-3 py-6' : 'mx-auto w-full max-w-6xl px-4 py-6'}>
+    <main class={fill ? 'flex h-full min-h-0 flex-col px-4 py-4' : wide ? 'is-wide w-full px-4 py-6' : 'mx-auto w-full max-w-6xl px-4 py-6'}>
       {#if children}{@render children()}{/if}
     </main>
   </div>

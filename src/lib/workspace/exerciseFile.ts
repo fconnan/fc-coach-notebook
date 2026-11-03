@@ -17,14 +17,17 @@ export function orderByIds<T extends { id?: string }>(items: T[], ids: unknown, 
     .map(entry => entry.item);
 }
 
-export function exerciseFolder(name: string): string {
-  const slug = (name.trim() || 'exercice')
+export function folderSlug(name: string): string {
+  return name.trim()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
-  return slug || 'exercice';
+}
+
+export function exerciseFolder(name: string): string {
+  return folderSlug(name) || 'exercice';
 }
 
 const FIELDS = [
@@ -102,6 +105,93 @@ export function parseExerciseDocument(source: string): ExerciseText {
   return { name, drill, markdownContent: body.join('\n').trim() };
 }
 
+export function markdownTitle(source: string): string {
+  return parseExerciseDocument(source).name;
+}
+
+/** Ordre stable de index.json. type reste le premier. */
+const INDEX_ORDER = [
+  'type', 'id', 'tags'
+];
+
+/** Déjà portés par content.md, ou ancien dessin jamais lu par le carnet. */
+const DROPPED_INDEX_KEYS = new Set([
+  'name',
+  'session',
+  'schemaVersion',
+  'fieldTemplate',
+  'nextTeam1Number', 'nextTeam2Number', 'showPlayerDetails', 'morphology',
+  'team1Color', 'team2Color', 'team1Size', 'team2Size',
+  'ballColor', 'ballSize', 'showFieldStripes', 'grassType', 'backgroundColor',
+  'hideGoals', 'goalNetOpacity', 'hidePitchLines', 'view',
+  'frames', 'activeFrameIndex', 'elements',
+  'perspectiveTilt', 'perspectiveIntensity', 'perspectiveScale',
+  'cam3dYaw', 'cam3dPitch', 'cam3dPosition', 'cam3dDistance', 'cam3dRadius', 'cam3dTarget',
+  'playerAnimations'
+]);
+
+function exerciseTags(index: Record<string, unknown>): string[] {
+  const tags: string[] = [];
+  const add = (value: unknown) => {
+    if (typeof value !== 'string') return;
+    const tag = value.trim().toLowerCase();
+    if (tag && !tags.includes(tag)) tags.push(tag);
+  };
+  if (Array.isArray(index.tags)) for (const tag of index.tags) add(tag);
+  const session = index.session;
+  if (session && typeof session === 'object') add((session as { level?: unknown }).level);
+  return tags;
+}
+
+export function orderExerciseIndex(index: Record<string, unknown>): Record<string, unknown> {
+  const tags = exerciseTags(index);
+  const ordered: Record<string, unknown> = {};
+  for (const key of INDEX_ORDER) {
+    if (key === 'tags') {
+      if (tags.length) ordered.tags = tags;
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(index, key)) ordered[key] = index[key];
+  }
+  for (const key of Object.keys(index)) {
+    if (DROPPED_INDEX_KEYS.has(key) || key === 'tags') continue;
+    if (!Object.prototype.hasOwnProperty.call(ordered, key)) ordered[key] = index[key];
+  }
+  return ordered;
+}
+
+/** Champs de séance déjà portés par content.md, ou remplacés par le tag de l'exercice. */
+const DROPPED_SESSION_KEYS = new Set(['name', 'audience', 'phase', 'principle', 'means']);
+const SESSION_INDEX_ORDER = ['type', 'id', 'order', 'exercises'];
+
+/** Le nom du thème est le titre de content.md. sessions reste la liste ordonnée. */
+const DROPPED_THEME_KEYS = new Set(['name']);
+const THEME_INDEX_ORDER = ['type', 'id', 'sessions'];
+
+export function orderThemeIndex(index: Record<string, unknown>): Record<string, unknown> {
+  const ordered: Record<string, unknown> = {};
+  for (const key of THEME_INDEX_ORDER) {
+    if (Object.prototype.hasOwnProperty.call(index, key)) ordered[key] = index[key];
+  }
+  for (const key of Object.keys(index)) {
+    if (DROPPED_THEME_KEYS.has(key) || Object.prototype.hasOwnProperty.call(ordered, key)) continue;
+    ordered[key] = index[key];
+  }
+  return ordered;
+}
+
+export function orderSessionIndex(index: Record<string, unknown>): Record<string, unknown> {
+  const ordered: Record<string, unknown> = {};
+  for (const key of SESSION_INDEX_ORDER) {
+    if (Object.prototype.hasOwnProperty.call(index, key)) ordered[key] = index[key];
+  }
+  for (const key of Object.keys(index)) {
+    if (DROPPED_SESSION_KEYS.has(key) || Object.prototype.hasOwnProperty.call(ordered, key)) continue;
+    ordered[key] = index[key];
+  }
+  return ordered;
+}
+
 export function splitExerciseRecord(page: Record<string, unknown>): { index: Record<string, unknown>; document: string } {
   const raw = page.drill && typeof page.drill === 'object' ? page.drill as Partial<ExerciseText['drill']> : {};
   const drill = emptyDrill();
@@ -114,7 +204,7 @@ export function splitExerciseRecord(page: Record<string, unknown>): { index: Rec
   const index = { ...page };
   delete index.markdownContent;
   delete index.drill;
-  return { index, document };
+  return { index: orderExerciseIndex(index), document };
 }
 
 export function applyExerciseDocument(page: Record<string, unknown>, source: string | null): Record<string, unknown> {

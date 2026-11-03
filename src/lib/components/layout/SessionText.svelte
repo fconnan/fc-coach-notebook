@@ -1,18 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { navArea, navItem, seanceHeader, seasons, sessionTheme, themes, trainer, saveSessionMarkdown } from '$lib/workspace/state';
+  import { navArea, navItem, seanceHeader, seasons, sessionTheme, themes, saveSessionMarkdown, saveThemeMarkdown } from '$lib/workspace/state';
   import { themeKey } from '$lib/workspace/catalog';
-  import { trainerLabel } from '$lib/workspace/model';
   import { fillTemplate, readTemplate } from '$lib/workspace/templates';
   import { renderMarkdown } from '$lib/workspace/markdownHtml';
   import { Button, Card, Heading } from 'flowbite-svelte';
-  import { LinkOutline } from 'flowbite-svelte-icons';
+  import { LinkOutline, PenOutline } from 'flowbite-svelte-icons';
   import MarkdownEditor from './MarkdownEditor.svelte';
+  import QuietIconButton from './QuietIconButton.svelte';
 
   let { editable = true }: { editable?: boolean } = $props();
 
   let editing = $state(false);
+  let editingTheme = $state(false);
   let draft = $state('');
+  let themeDraft = $state('');
   let savingText = $state(false);
   let template = $state('');
 
@@ -31,10 +33,9 @@
       phase: $seanceHeader.phase,
       principle: $seanceHeader.principle,
       means: $seanceHeader.means,
-      trainer: trainerLabel($trainer),
       date: slots.map(slot => slot.date).filter(Boolean).join(', ') || $seanceHeader.date,
-      category: planning ? (season?.categoryName || '') : '',
-      sheet: slots.map(slot => slot.sheet).filter(Boolean).join(', ') || $seanceHeader.sheet
+      trainer: '',
+      sheet: $seanceHeader.sheet
     });
     return text.split('\n').filter(line => !/:\s*$/.test(line)).join('\n');
   });
@@ -59,31 +60,51 @@
     savingText = false;
     if (ok) editing = false;
   }
+
+  function startThemeEdit() {
+    themeDraft = themeMarkdown;
+    editingTheme = true;
+  }
+
+  async function saveThemeEdit() {
+    if (!theme) return;
+    savingText = true;
+    const ok = await saveThemeMarkdown(theme.id, themeDraft);
+    savingText = false;
+    if (ok) editingTheme = false;
+  }
 </script>
 
-<div class="flex items-center justify-between gap-3">
-  <Heading tag="h2" class="inline-flex items-center gap-2 text-xl">
-    Thème
-    {#if planning && themeHref}
-      <a href={themeHref} class="text-fg-brand" aria-label="Ouvrir le thème" title="Ouvrir le thème"><LinkOutline class="size-4" /></a>
-    {/if}
-  </Heading>
-</div>
+<Heading tag="h2" class="inline-flex items-center gap-1 text-xl">
+  Thème
+  {#if editable && theme && !editingTheme}
+    <QuietIconButton label="Modifier" onclick={startThemeEdit}><PenOutline size="sm" /></QuietIconButton>
+  {/if}
+  {#if planning && themeHref}
+    <a href={themeHref} class="text-fg-brand" aria-label="Ouvrir le thème" title="Ouvrir le thème"><LinkOutline class="size-4" /></a>
+  {/if}
+</Heading>
 <Card size="xl" class="p-6">
-  <div class="session-md">{@html renderMarkdown(themeMarkdown)}</div>
+  {#if editable && editingTheme}
+    <div class="mb-3 flex justify-end gap-2">
+      <Button size="sm" color="alternative" onclick={() => { editingTheme = false; }}>Annuler</Button>
+      <Button size="sm" color="brand" disabled={savingText} onclick={() => { void saveThemeEdit(); }}>Sauver</Button>
+    </div>
+    <MarkdownEditor bind:value={themeDraft} />
+  {:else}
+    <div class="session-md">{@html renderMarkdown(themeMarkdown)}</div>
+  {/if}
 </Card>
 
-<div class="flex items-center justify-between gap-3">
-  <Heading tag="h2" class="inline-flex items-center gap-2 text-xl">
-    Séance
-    {#if planning && sessionHref}
-      <a href={sessionHref} class="text-fg-brand" aria-label="Ouvrir la séance" title="Ouvrir la séance"><LinkOutline class="size-4" /></a>
-    {/if}
-  </Heading>
+<Heading tag="h2" class="inline-flex items-center gap-1 text-xl">
+  Séance
   {#if editable && !editing}
-    <Button size="sm" color="brand" onclick={startEdit}>Modifier</Button>
+    <QuietIconButton label="Modifier" onclick={startEdit}><PenOutline size="sm" /></QuietIconButton>
   {/if}
-</div>
+  {#if planning && sessionHref}
+    <a href={sessionHref} class="text-fg-brand" aria-label="Ouvrir la séance" title="Ouvrir la séance"><LinkOutline class="size-4" /></a>
+  {/if}
+</Heading>
 <Card size="xl" class="p-6">
   {#if editable && editing}
     <div class="mb-3 flex justify-end gap-2">

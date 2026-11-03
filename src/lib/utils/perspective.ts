@@ -11,14 +11,10 @@ export function perspectiveDistancePx(intensity: number): number {
   return Math.round(2800 - t * 2100); // 2800px → 700px
 }
 
-export function resolvePerspective(page: {
-  perspectiveTilt?: number;
-  perspectiveIntensity?: number;
-  perspectiveScale?: number;
-}) {
-  const tilt = page.perspectiveTilt ?? PERSPECTIVE_DEFAULTS.tilt;
-  const intensity = page.perspectiveIntensity ?? PERSPECTIVE_DEFAULTS.intensity;
-  const scale = page.perspectiveScale ?? PERSPECTIVE_DEFAULTS.scale;
+export function resolvePerspective() {
+  const tilt = PERSPECTIVE_DEFAULTS.tilt;
+  const intensity = PERSPECTIVE_DEFAULTS.intensity;
+  const scale = PERSPECTIVE_DEFAULTS.scale;
   return {
     tilt,
     intensity,

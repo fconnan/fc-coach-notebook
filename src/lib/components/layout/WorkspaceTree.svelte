@@ -1,7 +1,7 @@
 <script lang="ts">
   import {
     workspaceOpen, folderLabel, needsPermission, trainer, categories, categoryInfo,
-    seanceList, seanceFile, pickWorkspace, resumeWorkspace, createCategory, commitTrainerName, showCategory,
+    seanceList, seanceFile, pickWorkspace, resumeWorkspace, createCategory, commitCoachName, showCategory,
     showSeance, patchHeader
   } from '$lib/workspace/state';
   import { tacticName } from '$lib/stores/workspace';

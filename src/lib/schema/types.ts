@@ -107,6 +107,8 @@ export interface ItemSpec {
   x?: number;
   y?: number;
   object?: string;
+  /** Degrés, sens antihoraire sur le schéma. 0 laisse l’objet tel que dessiné. */
+  angle?: number;
   player?: string | number;
   ball?: number[] | Spot | string | number;
   goal?: number[] | boolean;
@@ -138,12 +140,30 @@ export interface PlacedPlayer {
   team: string;
   x: number;
   y: number;
+  /** Chemin YAML dans le schéma de l’exercice, par exemple `items/2`. */
+  ref?: string;
+  /** Vient d’une forme : sélectionnable, mais ses coordonnées ne sont pas dans ce fichier. */
+  locked?: boolean;
+  ox?: number;
+  oy?: number;
+  sx?: number;
+  sy?: number;
+  relative?: boolean;
 }
 
 export interface PlacedMark {
   svg: string;
   x: number;
   y: number;
+  /** Degrés, autour du point d’ancrage, sens antihoraire sur le schéma. */
+  angle?: number;
+  ref?: string;
+  locked?: boolean;
+  ox?: number;
+  oy?: number;
+  sx?: number;
+  sy?: number;
+  relative?: boolean;
 }
 
 export interface PlacedZone {

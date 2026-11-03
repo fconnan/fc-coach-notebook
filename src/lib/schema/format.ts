@@ -1,7 +1,9 @@
-import { Pair, parseDocument, visit, YAMLSeq } from 'yaml';
+import { isMap, isSeq, Pair, parseDocument, visit, YAMLMap, YAMLSeq } from 'yaml';
 
-const FLOW_ENTRIES = new Set(['zones', 'items', 'players', 'lines', 'moves']);
-const FLOW_VALUES = new Set(['at', 'box', 'run', 'dribble', 'ball', 'pass']);
+/** Petits objets géométriques : toujours sur une ligne. */
+const INLINE_MAPS = new Set(['rect', 'pos', 'at', 'box', 'run', 'dribble', 'pass', 'ball', 'margin', 'padding']);
+/** Suites courtes de nombres, pas des listes d’objets. */
+const INLINE_SEQS = new Set(['at', 'box', 'ball', 'pass', 'run', 'dribble']);
 
 export function formatSchema(source: string): string {
   if (!source.trim()) return source;
@@ -10,11 +12,13 @@ export function formatSchema(source: string): string {
   let rewrite = false;
   visit(doc, {
     Map(_key, node, path) {
-      const want = flowMap(path);
+      if (!(node instanceof YAMLMap)) return;
+      const want = flowMap(path, node);
       if (Boolean(node.flow) !== want) rewrite = true;
       node.flow = want;
     },
     Seq(_key, node, path) {
+      if (!(node instanceof YAMLSeq)) return;
       const want = flowSeq(path);
       if (Boolean(node.flow) !== want) rewrite = true;
       node.flow = want;
@@ -31,25 +35,30 @@ export function formatSchema(source: string): string {
   return next;
 }
 
-function flowMap(path: readonly unknown[]) {
+function flowMap(path: readonly unknown[], node: YAMLMap) {
+  const key = pairKey(path);
+  if (INLINE_MAPS.has(key)) return true;
   const parent = path[path.length - 1];
-  if (parent instanceof YAMLSeq) return FLOW_ENTRIES.has(owner(path[path.length - 2]));
-  if (parent instanceof Pair) {
-    const key = label(parent);
-    return key === 'run' || key === 'dribble';
-  }
+  if (parent instanceof YAMLSeq) return !hasBlockChild(node);
   return false;
 }
 
 function flowSeq(path: readonly unknown[]) {
-  const parent = path[path.length - 1];
-  if (parent instanceof YAMLSeq) return owner(path[path.length - 2]) === 'lines';
-  if (parent instanceof Pair) return FLOW_VALUES.has(label(parent));
-  return false;
+  if (INLINE_SEQS.has(pairKey(path))) return true;
+  return path[path.length - 1] instanceof YAMLSeq;
 }
 
-function owner(node: unknown) {
-  return node instanceof Pair ? label(node) : '';
+function hasBlockChild(node: YAMLMap) {
+  return node.items.some(item => {
+    const key = label(item);
+    if (isSeq(item.value)) return !INLINE_SEQS.has(key);
+    return isMap(item.value) && !INLINE_MAPS.has(key);
+  });
+}
+
+function pairKey(path: readonly unknown[]) {
+  const parent = path[path.length - 1];
+  return parent instanceof Pair ? label(parent) : '';
 }
 
 function label(pair: Pair) {

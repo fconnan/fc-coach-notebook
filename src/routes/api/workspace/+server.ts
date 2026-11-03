@@ -2,16 +2,17 @@ import { json } from '@sveltejs/kit';
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RequestHandler } from './$types';
-import { frenchDateOrder } from '$lib/workspace/calendar';
-import { applyExerciseDocument, exerciseFolder, isUuidFolder, orderByIds, splitExerciseRecord } from '$lib/workspace/exerciseFile';
-import { fillTemplate, type TemplateName } from '$lib/workspace/templates';
-import { REPERTOIRE_TYPE, themeKey } from '$lib/workspace/catalog';
+import { canonicalIso, frenchDateOrder, longFrenchDate } from '$lib/workspace/calendar';
+import { applyExerciseDocument, exerciseFolder, folderSlug, isUuidFolder, markdownTitle, orderByIds, orderSessionIndex, orderThemeIndex, splitExerciseRecord } from '$lib/workspace/exerciseFile';
+import { renameToTitle } from '$lib/workspace/renameFolder';
+import { fillTemplate, TEMPLATE_NAMES, type TemplateName } from '$lib/workspace/templates';
+import { coachName, EVALUATIONS_DIR, PLAYERS_DIR, playerNames, REPERTOIRE_TYPE, SEASONS_DIR, THEMES_DIR, themeKey, type SeasonPlayer } from '$lib/workspace/catalog';
 
 const root = path.resolve('data');
 const file = path.join(root, 'index.json');
-const categoriesRoot = path.join(root, 'repertoire', 'categories');
-const repertoireRoot = path.join(root, 'repertoire');
-const seasonRoot = path.join(root, 'season');
+const themesRoot = path.join(root, THEMES_DIR);
+const categoriesRoot = path.join(themesRoot, 'categories');
+const seasonRoot = path.join(root, SEASONS_DIR);
 const libraryRoot = path.join(root, 'studio', 'library');
 const stylesRoot = path.join(root, 'studio', 'styles');
 
@@ -19,7 +20,7 @@ async function readIndex(): Promise<Record<string, unknown>> {
   try {
     return JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
   } catch {
-    return { type: 'fccn-workspace:0', name: '' };
+    return { type: 'fccn-workspace:0' };
   }
 }
 
@@ -87,9 +88,10 @@ type CatalogEntry = {
   dir: string;
   absDir: string;
   data: Record<string, unknown>;
+  title?: string;
 };
 
-type Slot = { sheet?: string; date?: string; session?: string; exercises?: string[] };
+type Slot = { date?: string; session?: string; exercises?: string[] };
 
 let catalogCache: Promise<CatalogEntry[]> | null = null;
 
@@ -99,7 +101,7 @@ function invalidateCatalog() {
 
 function isExerciseDir(rel: string): boolean {
   const parts = rel.split('/');
-  return parts.length === 5 && parts[0] === 'repertoire' && parts[2] === 'sessions';
+  return parts.length === 4 && parts[0] === THEMES_DIR;
 }
 
 async function loadCatalog(): Promise<CatalogEntry[]> {
@@ -117,7 +119,10 @@ async function loadCatalog(): Promise<CatalogEntry[]> {
       }
       if (entry.name !== 'index.json') return;
       try {
-        out.push({ dir: rel, absDir: abs, data: JSON.parse(await readFile(nextAbs, 'utf8')) as Record<string, unknown> });
+        const data = JSON.parse(await readFile(nextAbs, 'utf8')) as Record<string, unknown>;
+        let title = '';
+        try { title = markdownTitle(await readFile(path.join(abs, 'content.md'), 'utf8')); } catch { /* pas de descriptif */ }
+        out.push({ dir: rel, absDir: abs, data, title });
       } catch { /* index illisible */ }
     }));
   }
@@ -134,18 +139,12 @@ function themeSession(entries: CatalogEntry[], id: string): CatalogEntry | undef
   return entries.find(entry => {
     if (entry.data.type !== 'fccn-session:0' || entry.data.id !== id) return false;
     const parts = entry.dir.split('/');
-    return parts.length === 4 && parts[0] === 'repertoire' && parts[2] === 'sessions';
+    return parts.length === 3 && parts[0] === THEMES_DIR;
   });
 }
 
-function seasonsFor(entries: CatalogEntry[], categoryId: string): CatalogEntry[] {
-  const category = entries.find(entry => entry.dir === `repertoire/categories/${categoryId}` && entry.data.type === 'fccn-category:0');
-  const categoryIdValue = typeof category?.data.id === 'string' ? category.data.id : '';
-  return entries.filter(entry => {
-    if (entry.data.type !== 'fccn-season:0') return false;
-    const parts = entry.dir.split('/');
-    return (parts[0] === 'season' && parts[2] === categoryId) || (categoryIdValue !== '' && entry.data.category === categoryIdValue);
-  });
+function seasonsFor(_entries: CatalogEntry[], _categoryId: string): CatalogEntry[] {
+  return [];
 }
 
 function slotsOf(seasons: CatalogEntry[]): Slot[] {
@@ -182,7 +181,7 @@ async function readSeances(id: string): Promise<Array<{ file: string; name: stri
     const sessionId = String(slot.session || '');
     const session = entries.find(entry => entry.data.type === 'fccn-session:0' && entry.data.id === sessionId);
     const name = typeof session?.data.name === 'string' ? session.data.name.trim() : '';
-    return { file: sessionId, name: name || sessionId, sheet: String(slot.sheet || 'S1'), date: String(slot.date || '') };
+    return { file: sessionId, name: name || sessionId, sheet: '', date: String(slot.date || '') };
   });
   seances.sort((a, b) => frenchDateOrder(a.date) - frenchDateOrder(b.date) || a.sheet.localeCompare(b.sheet, 'fr', { numeric: true }));
   return seances;
@@ -257,9 +256,66 @@ async function readSeance(categoryId: string, seanceId: string) {
   };
 }
 
-async function readSettings(name: TemplateName): Promise<string> {
-  try { return await readFile(path.join(root, 'settings', `${name}.md`), 'utf8'); }
+async function readTemplateFile(name: TemplateName): Promise<string> {
+  try { return await readFile(path.join(root, 'templates', `${name}.md`), 'utf8'); }
   catch { return ''; }
+}
+
+async function markdownFrom(name: TemplateName, values: Record<string, string>): Promise<string> {
+  const filled = fillTemplate(await readTemplateFile(name), values).replace(/\n+$/, '');
+  const title = values.name || values.date || '';
+  return `${filled || (title ? `# ${title}` : '')}\n`;
+}
+
+const PLAYER_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+function seasonAbs(id: string): string | null {
+  const parts = id.split('/').filter(Boolean);
+  if (parts.length !== 2 || parts[0] !== SEASONS_DIR) return null;
+  if (parts.some(part => directoryIssue(part, 'répertoire'))) return null;
+  const dir = path.resolve(root, ...parts);
+  const rel = path.relative(root, dir);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  return dir;
+}
+
+async function listPlayers(absDir: string, names: unknown): Promise<SeasonPlayer[]> {
+  const players: SeasonPlayer[] = [];
+  for (const name of playerNames(names)) {
+    const id = folderSlug(name);
+    if (!id || !PLAYER_SLUG.test(id)) continue;
+    const playerDir = path.join(absDir, PLAYERS_DIR, id);
+    let evaluations: string[] = [];
+    try {
+      const files = await readdir(path.join(playerDir, EVALUATIONS_DIR));
+      evaluations = files.flatMap(file => {
+        const match = /^(\d{4}-\d{2}-\d{2})\.md$/.exec(file);
+        return match ? [match[1]] : [];
+      }).sort();
+    } catch { /* pas encore d'évaluations */ }
+    players.push({ id, name, evaluations });
+  }
+  return players;
+}
+
+function playerDirOf(seasonDir: string, player: string): string | null {
+  if (!PLAYER_SLUG.test(player)) return null;
+  return path.join(seasonDir, PLAYERS_DIR, player);
+}
+
+async function readPlayerSheet(seasonId: string, player: string, evaluation: string): Promise<Response> {
+  const seasonDir = seasonAbs(seasonId);
+  const playerDir = seasonDir ? playerDirOf(seasonDir, player) : null;
+  if (!playerDir) return json({ error: 'Joueur invalide.' }, { status: 400 });
+  const file = evaluation
+    ? canonicalIso(evaluation) === evaluation ? path.join(playerDir, EVALUATIONS_DIR, `${evaluation}.md`) : ''
+    : path.join(playerDir, 'content.md');
+  if (!file) return json({ error: 'Date invalide.' }, { status: 400 });
+  try {
+    return json({ markdown: await readFile(file, 'utf8') });
+  } catch {
+    return json({ error: 'Cette fiche n’existe pas.' }, { status: 404 });
+  }
 }
 
 async function exerciseIdOf(dir: string): Promise<string> {
@@ -384,33 +440,27 @@ function text(value: unknown): string {
 
 async function readBrowse() {
   const entries = await catalog();
-  const categories = await readCategories();
-  const seasons = entries.filter(entry => entry.data.type === 'fccn-season:0' && entry.dir.split('/').length === 3 && entry.dir.startsWith('season/')).map(entry => {
-    const [, , folder] = entry.dir.split('/');
-    const category = categories.find(item => item.id === folder) || categories.find(item => item.uuid && item.uuid === entry.data.category);
+  const seasonEntries = entries.filter(entry => entry.data.type === 'fccn-season:0' && entry.dir.split('/').length === 2 && entry.dir.startsWith(`${SEASONS_DIR}/`));
+  const seasons = await Promise.all(seasonEntries.map(async entry => {
     const slots = (Array.isArray(entry.data.slots) ? entry.data.slots as Slot[] : []).map(slot => {
       const sessionId = String(slot.session || '');
       const session = entries.find(item => item.data.type === 'fccn-session:0' && item.data.id === sessionId);
       return {
-        sheet: String(slot.sheet || ''),
         date: String(slot.date || ''),
         session: sessionId,
-        sessionName: text(session?.data.name) || sessionId,
+        sessionName: session?.title || text(session?.data.name) || sessionId,
         exercises: Array.isArray(slot.exercises) ? idList(slot.exercises) : undefined
       };
     });
     return {
       id: entry.dir,
       uuid: text(entry.data.id),
-      name: text(entry.data.name) || entry.dir.split('/')[1],
-      zone: text(entry.data.zone),
-      from: text(entry.data.from),
-      to: text(entry.data.to),
-      categoryFolder: folder,
-      categoryName: text(entry.data.categoryName) || category?.name || folder,
+      name: entry.title || text(entry.data.name) || entry.dir.split('/')[1],
+      players: await listPlayers(entry.absDir, entry.data.players),
       slots
     };
-  }).sort((a, b) => a.name.localeCompare(b.name, 'fr') || a.categoryName.localeCompare(b.categoryName, 'fr'));
+  }));
+  seasons.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   return { seasons, themes: themesOf(entries), library: await readLibrary() };
 }
 
@@ -419,20 +469,18 @@ function legacyOrder(entry: CatalogEntry): number {
 }
 
 function themesOf(entries: CatalogEntry[]) {
-  const repertoire = entries.find(entry => entry.dir === 'repertoire' && entry.data.type === REPERTOIRE_TYPE);
-  const themes = entries.filter(entry => entry.data.type === 'fccn-theme:0' && entry.dir.split('/').length === 2 && entry.dir.startsWith('repertoire/')).map(entry => {
+  const repertoire = entries.find(entry => entry.dir === THEMES_DIR && entry.data.type === REPERTOIRE_TYPE);
+  const themes = entries.filter(entry => entry.data.type === 'fccn-theme:0' && entry.dir.split('/').length === 2 && entry.dir.startsWith(`${THEMES_DIR}/`)).map(entry => {
     const id = entry.dir.split('/')[1];
     const sessions = entries
-      .filter(item => item.data.type === 'fccn-session:0' && item.dir.startsWith(`repertoire/${id}/sessions/`) && item.dir.split('/').length === 4)
-      .sort((a, b) => legacyOrder(a) - legacyOrder(b) || text(a.data.name).localeCompare(text(b.data.name), 'fr'))
+      .filter(item => item.data.type === 'fccn-session:0' && item.dir.startsWith(`${THEMES_DIR}/${id}/`) && item.dir.split('/').length === 3)
+      .sort((a, b) => legacyOrder(a) - legacyOrder(b) || (a.title || text(a.data.name)).localeCompare(b.title || text(b.data.name), 'fr'))
       .map(item => ({
         id: text(item.data.id) || item.dir.split('/').pop() || '',
         folder: item.dir.split('/').pop() || '',
-        name: text(item.data.name),
-        audience: text(item.data.audience),
-        phase: text(item.data.phase)
+        name: item.title || text(item.data.name)
       }));
-    return { id, name: text(entry.data.name) || id, uuid: text(entry.data.id), sessions: orderByIds(sessions, entry.data.sessions) };
+    return { id, name: entry.title || text(entry.data.name) || id, uuid: text(entry.data.id), sessions: orderByIds(sessions, entry.data.sessions) };
   }).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   return orderByIds(themes, repertoire?.data.themes, themeKey);
 }
@@ -442,10 +490,10 @@ function idList(value: unknown): string[] {
 }
 
 async function writeThemeOrder(themes: string[]) {
-  const file = path.join(repertoireRoot, 'index.json');
+  const file = path.join(themesRoot, 'index.json');
   let current: Record<string, unknown> = {};
   try { current = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>; } catch { /* premier ordre enregistré */ }
-  await mkdir(repertoireRoot, { recursive: true });
+  await mkdir(themesRoot, { recursive: true });
   await writeFile(file, JSON.stringify({ type: REPERTOIRE_TYPE, ...current, themes }, null, 2) + '\n');
 }
 
@@ -461,6 +509,13 @@ async function listDirNames(dir: string): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+async function heading(absDir: string, data: Record<string, unknown>): Promise<string> {
+  const stored = text(data.name).trim();
+  if (stored) return stored;
+  try { return markdownTitle(await readFile(path.join(absDir, 'content.md'), 'utf8')); }
+  catch { return ''; }
 }
 
 async function readJsonAt(filePath: string): Promise<Record<string, unknown> | null> {
@@ -482,28 +537,29 @@ type SessionHit = {
 
 async function scanThemes(): Promise<{ themes: ReturnType<typeof themesOf>; sessions: SessionHit[] }> {
   const [repertoire, folders] = await Promise.all([
-    readJsonAt(path.join(repertoireRoot, 'index.json')),
-    listDirNames(repertoireRoot)
+    readJsonAt(path.join(themesRoot, 'index.json')),
+    listDirNames(themesRoot)
   ]);
   const entries: CatalogEntry[] = [];
-  if (repertoire) entries.push({ dir: 'repertoire', absDir: repertoireRoot, data: repertoire });
+  if (repertoire) entries.push({ dir: THEMES_DIR, absDir: themesRoot, data: repertoire, title: await heading(themesRoot, repertoire) });
   const sessions: SessionHit[] = [];
   await Promise.all(folders.map(async folder => {
-    const abs = path.join(repertoireRoot, folder);
+    const abs = path.join(themesRoot, folder);
     const data = await readJsonAt(path.join(abs, 'index.json'));
     if (!data || data.type !== 'fccn-theme:0') return;
-    entries.push({ dir: `repertoire/${folder}`, absDir: abs, data });
-    const names = await listDirNames(path.join(abs, 'sessions'));
+    entries.push({ dir: `${THEMES_DIR}/${folder}`, absDir: abs, data, title: await heading(abs, data) });
+    const names = await listDirNames(abs);
     await Promise.all(names.map(async name => {
-      const sessionAbs = path.join(abs, 'sessions', name);
+      const sessionAbs = path.join(abs, name);
       const session = await readJsonAt(path.join(sessionAbs, 'index.json'));
       if (!session || session.type !== 'fccn-session:0') return;
-      const rel = `repertoire/${folder}/sessions/${name}`;
-      entries.push({ dir: rel, absDir: sessionAbs, data: session });
+      const rel = `${THEMES_DIR}/${folder}/${name}`;
+      const title = await heading(sessionAbs, session);
+      entries.push({ dir: rel, absDir: sessionAbs, data: session, title });
       sessions.push({
         id: text(session.id) || name,
         folder: name,
-        name: text(session.name),
+        name: title,
         audience: text(session.audience),
         phase: text(session.phase),
         abs: sessionAbs,
@@ -517,23 +573,18 @@ async function scanThemes(): Promise<{ themes: ReturnType<typeof themesOf>; sess
 }
 
 async function scanSeasons(sessions: SessionHit[]) {
-  const years = await listDirNames(seasonRoot);
+  const names = await listDirNames(seasonRoot);
   const found: CatalogEntry[] = [];
-  await Promise.all(years.map(async year => {
-    const cats = await listDirNames(path.join(seasonRoot, year));
-    await Promise.all(cats.map(async cat => {
-      const abs = path.join(seasonRoot, year, cat);
-      const data = await readJsonAt(path.join(abs, 'index.json'));
-      if (data?.type === 'fccn-season:0') found.push({ dir: `season/${year}/${cat}`, absDir: abs, data });
-    }));
+  await Promise.all(names.map(async name => {
+    const abs = path.join(seasonRoot, name);
+    const data = await readJsonAt(path.join(abs, 'index.json'));
+    if (data?.type === 'fccn-season:0') found.push({ dir: `${SEASONS_DIR}/${name}`, absDir: abs, data, title: await heading(abs, data) });
   }));
   const byId = new Map(sessions.map(session => [session.id, session.name]));
-  return found.map(entry => {
-    const folder = entry.dir.split('/')[2];
+  const seasons = await Promise.all(found.map(async entry => {
     const slots = (Array.isArray(entry.data.slots) ? entry.data.slots as Slot[] : []).map(slot => {
       const sessionId = String(slot.session || '');
       return {
-        sheet: String(slot.sheet || ''),
         date: String(slot.date || ''),
         session: sessionId,
         sessionName: byId.get(sessionId) || sessionId,
@@ -543,22 +594,20 @@ async function scanSeasons(sessions: SessionHit[]) {
     return {
       id: entry.dir,
       uuid: text(entry.data.id),
-      name: text(entry.data.name) || entry.dir.split('/')[1],
-      zone: text(entry.data.zone),
-      from: text(entry.data.from),
-      to: text(entry.data.to),
-      categoryFolder: folder,
-      categoryName: text(entry.data.categoryName) || folder,
+      name: entry.title || text(entry.data.name) || entry.dir.split('/')[1],
+      players: await listPlayers(entry.absDir, entry.data.players),
       slots
     };
-  }).sort((a, b) => a.name.localeCompare(b.name, 'fr') || a.categoryName.localeCompare(b.categoryName, 'fr'));
+  }));
+  return seasons.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
 }
 
 async function readView(pathname: string) {
   const index = await readIndex();
-  const trainer = { name: text(index.name), sport: text(index.sport), folder: path.basename(root) };
+  const trainer = { name: coachName(index.coach), folder: path.basename(root) };
   const parts = pathname.split('/').filter(Boolean);
-  if (!parts.length || (parts[0] !== 'season' && parts[0] !== 'repertoire')) return { trainer };
+  if (parts[0] === 'season') parts[0] = 'seasons';
+  if (!parts.length || (parts[0] !== 'seasons' && parts[0] !== 'repertoire')) return { trainer };
   const scanned = await scanThemes();
   if (parts[0] === 'repertoire') {
     const theme = scanned.themes.find(item => item.uuid === parts[1] || item.id === parts[1]);
@@ -571,7 +620,7 @@ async function readView(pathname: string) {
       const themeEntry = scanned.themes.find(item => item.id === session.themeFolder);
       let themeMarkdown = '';
       if (themeEntry) {
-        try { themeMarkdown = await readFile(path.join(repertoireRoot, themeEntry.id, 'content.md'), 'utf8'); } catch { /* pas de descriptif */ }
+        try { themeMarkdown = await readFile(path.join(themesRoot, themeEntry.id, 'content.md'), 'utf8'); } catch { /* pas de descriptif */ }
       }
       opened = {
         seance: {
@@ -608,7 +657,7 @@ async function readView(pathname: string) {
     const themeEntry = scanned.themes.find(item => item.id === session.themeFolder);
     let themeMarkdown = '';
     if (themeEntry) {
-      try { themeMarkdown = await readFile(path.join(repertoireRoot, themeEntry.id, 'content.md'), 'utf8'); } catch { /* pas de descriptif */ }
+      try { themeMarkdown = await readFile(path.join(themesRoot, themeEntry.id, 'content.md'), 'utf8'); } catch { /* pas de descriptif */ }
     }
     opened = {
       seance: {
@@ -627,9 +676,15 @@ async function readView(pathname: string) {
       theme: { name: themeEntry?.name || '', markdown: themeMarkdown }
     };
   }
+  const playerStem = parts[2] || '';
+  const player = season?.players.find(item => item.id === playerStem);
+  const knownPlayer = Boolean(player);
+  const evalDate = parts[3] || '';
   const missing = parts[1] && !season
     ? 'Cette saison n’existe plus.'
-    : parts[2] && season && !season.slots.some(slot => slot.session === parts[2])
+    : knownPlayer && evalDate && !player?.evaluations.includes(evalDate)
+      ? `Cette évaluation ne fait plus partie du suivi de ${player?.name || playerStem}.`
+    : playerStem && season && !knownPlayer && !season.slots.some(slot => slot.session === playerStem)
       ? `Cette séance ne fait plus partie du planning de la saison « ${season.name} ».`
       : '';
   return {
@@ -643,7 +698,12 @@ async function readView(pathname: string) {
 
 export const GET: RequestHandler = async ({ url }) => {
   const template = url.searchParams.get('template');
-  if (template === 'session' || template === 'exercise') return json({ markdown: await readSettings(template) });
+  if (template && (TEMPLATE_NAMES as readonly string[]).includes(template)) {
+    return json({ markdown: await readTemplateFile(template as TemplateName) });
+  }
+  const player = url.searchParams.get('player');
+  const seasonId = url.searchParams.get('season');
+  if (player && seasonId) return readPlayerSheet(seasonId, player, url.searchParams.get('evaluation') || '');
   const view = url.searchParams.get('view');
   if (view != null) return json(await readView(view));
   const category = url.searchParams.get('category');
@@ -708,7 +768,7 @@ export const POST: RequestHandler = async ({ request }) => {
       slot.exercises = exercises;
       found = true;
     }
-    if (!found) slots.push({ sheet: '', date: '', session, exercises });
+    if (!found) slots.push({ date: '', session, exercises });
     season.data.slots = slots;
     await writeFile(path.join(season.absDir, 'index.json'), JSON.stringify(season.data, null, 2) + '\n');
     return json({ ok: true });
@@ -721,7 +781,9 @@ export const POST: RequestHandler = async ({ request }) => {
     if (!session) return json({ error: 'Cette séance n’existe pas.' }, { status: 404 });
     const text = String(body.markdown || '').replace(/\r\n/g, '\n').replace(/\n+$/, '') + '\n';
     await writeFile(path.join(session.absDir, 'content.md'), text);
-    return json({ ok: true });
+    const next = await renameToTitle(session.absDir, markdownTitle(text));
+    if (next !== session.absDir) invalidateCatalog();
+    return json({ ok: true, folder: path.basename(next) });
   }
   if (body.type === 'category' || body.type === 'seance') {
     return json({ error: 'Les catégories ne font plus partie du répertoire.' }, { status: 410 });
@@ -736,63 +798,42 @@ export const POST: RequestHandler = async ({ request }) => {
     const entries = await catalog();
     const session = themeSession(entries, id);
     if (session) {
-      await writeFile(path.join(session.absDir, 'index.json'), JSON.stringify({
-        type: 'fccn-session:0',
-        id: session.data.id,
-        name: String(body.name || session.data.name || id),
-        order: session.data.order,
-        audience: session.data.audience,
-        phase: String(body.phase || ''),
-        principle: String(body.principle || ''),
-        means: String(body.means || ''),
+      await writeFile(path.join(session.absDir, 'index.json'), JSON.stringify(orderSessionIndex({
+        ...session.data,
         exercises: (body.exercises || []).map(page => String(page.id || '')).filter(Boolean)
-      }, null, 2) + '\n');
+      }), null, 2) + '\n');
       const paths = await writeExercises(session.absDir, session.dir, body.exercises || []);
       return json({ id, paths });
     }
     return json({ error: 'Cette séance n’existe pas.' }, { status: 404 });
   }
   if (body.type === 'season') {
-    const name = String(body.name || '').trim();
-    const category = String(body.category || '').trim();
-    const zone = String(body.zone || '').trim();
-    const from = String(body.from || '').trim();
-    const to = String(body.to || '').trim();
-    const issue = directoryIssue(name, 'répertoire');
-    const categoryIssue = directoryIssue(category, 'répertoire');
-    if (issue || categoryIssue) return json({ error: issue || categoryIssue }, { status: 400 });
-    if (!zone || !from || !to) return json({ error: 'Indique la zone et les deux dates.' }, { status: 400 });
-    const categories = await readCategories();
-    const found = categories.find(item => item.id === category);
-    if (!found) return json({ error: 'Cette catégorie n’existe pas.' }, { status: 400 });
-    const dir = path.join(seasonRoot, name, category);
+    const title = String(body.name || '').trim();
+    const folder = folderSlug(title);
+    const issue = folder ? directoryIssue(folder, 'répertoire') : 'Indique un nom.';
+    if (issue) return json({ error: issue }, { status: 400 });
+    const dir = path.join(seasonRoot, folder);
     if (await exists(dir)) return json({ error: 'Cette saison existe déjà.' }, { status: 409 });
     await mkdir(dir, { recursive: true });
     const id = crypto.randomUUID();
     await writeFile(path.join(dir, 'index.json'), JSON.stringify({
       type: 'fccn-season:0',
       id,
-      name,
-      zone,
-      from,
-      to,
-      category: found.uuid,
-      holidays: [],
-      competencies: [],
+      players: [],
       slots: []
     }, null, 2) + '\n');
-    return json({ id: `season/${name}/${category}`, name });
+    await writeFile(path.join(dir, 'content.md'), await markdownFrom('season', { name: title }));
+    return json({ id: `${SEASONS_DIR}/${folder}`, name: title });
   }
   if (body.type === 'slot') {
     const season = String(body.season || '').trim();
     const parts = season.split('/');
-    if (parts.length !== 3 || parts[0] !== 'season' || parts.some(part => directoryIssue(part, 'répertoire'))) {
+    if (parts.length !== 2 || parts[0] !== SEASONS_DIR || parts.some(part => directoryIssue(part, 'répertoire'))) {
       return json({ error: 'Saison invalide.' }, { status: 400 });
     }
-    const sheet = String(body.sheet || '').trim();
     const date = String(body.date || '').trim();
     const session = String(body.session || '').trim();
-    if (!sheet || !date || !session) return json({ error: 'Indique la fiche, la date et la séance.' }, { status: 400 });
+    if (!date || !session) return json({ error: 'Indique la date et la séance.' }, { status: 400 });
     const entries = await catalog();
     const found = entries.find(entry => entry.dir === season && entry.data.type === 'fccn-season:0');
     if (!found) return json({ error: 'Cette saison n’existe pas.' }, { status: 404 });
@@ -800,11 +841,137 @@ export const POST: RequestHandler = async ({ request }) => {
       return json({ error: 'Cette séance n’existe pas.' }, { status: 400 });
     }
     const slots = Array.isArray(found.data.slots) ? found.data.slots as Slot[] : [];
-    if (slots.some(slot => slot.sheet === sheet)) return json({ error: 'Cette fiche existe déjà.' }, { status: 409 });
-    slots.push({ sheet, date, session });
+    if (slots.some(slot => slot.date === date)) return json({ error: 'Cette date existe déjà.' }, { status: 409 });
+    slots.push({ date, session });
     found.data.slots = slots;
     await writeFile(path.join(found.absDir, 'index.json'), JSON.stringify(found.data, null, 2) + '\n');
     return json({ id: season });
+  }
+  if (body.type === 'coach') {
+    const name = String(body.name || '').trim();
+    const index = await readIndex();
+    const { type, coach: _coach, ...rest } = index;
+    await writeFile(file, JSON.stringify({
+      type: typeof type === 'string' && type ? type : 'fccn-workspace:0',
+      coach: name,
+      ...rest
+    }, null, 2) + '\n');
+    return json({ ok: true });
+  }
+  if (body.type === 'player') {
+    const seasonDir = seasonAbs(String(body.season || ''));
+    const indexPath = seasonDir ? path.join(seasonDir, 'index.json') : '';
+    if (!indexPath || !(await exists(indexPath))) return json({ error: 'Saison invalide.' }, { status: 400 });
+    const label = String(body.name || '').trim();
+    const folder = folderSlug(label);
+    if (!folder || !PLAYER_SLUG.test(folder)) return json({ error: 'Indique un nom.' }, { status: 400 });
+    const data = JSON.parse(await readFile(indexPath, 'utf8')) as Record<string, unknown>;
+    const names = playerNames(data.players);
+    if (names.some(name => folderSlug(name) === folder)) return json({ error: 'Ce joueur existe déjà.' }, { status: 409 });
+    const { type, id, slots, players: _players, ...rest } = data;
+    await writeFile(indexPath, JSON.stringify({
+      type,
+      id,
+      players: [...names, label],
+      ...rest,
+      slots
+    }, null, 2) + '\n');
+    return json({ id: folder });
+  }
+  if (body.type === 'rename-player') {
+    const seasonDir = seasonAbs(String(body.season || ''));
+    const indexPath = seasonDir ? path.join(seasonDir, 'index.json') : '';
+    if (!indexPath || !(await exists(indexPath))) return json({ error: 'Saison invalide.' }, { status: 400 });
+    const currentId = String(body.player || '').trim();
+    if (!PLAYER_SLUG.test(currentId)) return json({ error: 'Joueur invalide.' }, { status: 400 });
+    const label = String(body.name || '').trim();
+    const folder = folderSlug(label);
+    if (!folder || !PLAYER_SLUG.test(folder)) return json({ error: 'Indique un nom.' }, { status: 400 });
+    const data = JSON.parse(await readFile(indexPath, 'utf8')) as Record<string, unknown>;
+    const names = playerNames(data.players);
+    const index = names.findIndex(item => folderSlug(item) === currentId);
+    if (index < 0) return json({ error: 'Ce joueur n’existe pas.' }, { status: 404 });
+    if (folder !== currentId && names.some(item => folderSlug(item) === folder)) {
+      return json({ error: 'Ce joueur existe déjà.' }, { status: 409 });
+    }
+    if (folder !== currentId) {
+      const from = path.join(seasonDir!, PLAYERS_DIR, currentId);
+      if (await exists(from)) {
+        const next = await renameToTitle(from, label);
+        if (path.basename(next) !== folder) return json({ error: 'Ce joueur existe déjà.' }, { status: 409 });
+      }
+    }
+    names[index] = label;
+    const { type, id, slots, players: _players, ...rest } = data;
+    await writeFile(indexPath, JSON.stringify({ type, id, players: names, ...rest, slots }, null, 2) + '\n');
+    return json({ id: folder });
+  }
+  if (body.type === 'save-player-markdown') {
+    if (body.explicit !== true) return json({ ok: false });
+    const seasonDir = seasonAbs(String(body.season || ''));
+    const playerDir = seasonDir ? playerDirOf(seasonDir, String(body.player || '')) : null;
+    if (!playerDir || !(await exists(path.join(playerDir, 'content.md')))) return json({ error: 'Ce joueur n’existe pas.' }, { status: 404 });
+    const text = String(body.markdown || '').replace(/\r\n/g, '\n').replace(/\n+$/, '') + '\n';
+    await writeFile(path.join(playerDir, 'content.md'), text);
+    const next = await renameToTitle(playerDir, markdownTitle(text));
+    return json({ ok: true, id: path.basename(next) });
+  }
+  if (body.type === 'evaluation') {
+    const seasonDir = seasonAbs(String(body.season || ''));
+    const playerDir = seasonDir ? playerDirOf(seasonDir, String(body.player || '')) : null;
+    const listed = seasonDir ? playerNames(JSON.parse(await readFile(path.join(seasonDir, 'index.json'), 'utf8')).players) : [];
+    if (!playerDir || !listed.some(name => folderSlug(name) === String(body.player || ''))) return json({ error: 'Ce joueur n’existe pas.' }, { status: 404 });
+    const date = canonicalIso(String(body.date || ''));
+    if (!date) return json({ error: 'Date invalide.' }, { status: 400 });
+    const file = path.join(playerDir, EVALUATIONS_DIR, `${date}.md`);
+    if (await exists(file)) return json({ error: 'Cette date existe déjà.' }, { status: 409 });
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, await markdownFrom('evaluation', { date: longFrenchDate(date) }));
+    return json({ date });
+  }
+  if (body.type === 'save-evaluation') {
+    if (body.explicit !== true) return json({ ok: false });
+    const seasonDir = seasonAbs(String(body.season || ''));
+    const playerDir = seasonDir ? playerDirOf(seasonDir, String(body.player || '')) : null;
+    const date = canonicalIso(String(body.date || ''));
+    if (!playerDir || !date) return json({ error: 'Évaluation invalide.' }, { status: 400 });
+    const listed = playerNames(JSON.parse(await readFile(path.join(seasonDir!, 'index.json'), 'utf8')).players);
+    if (!listed.some(name => folderSlug(name) === String(body.player || ''))) return json({ error: 'Ce joueur n’existe pas.' }, { status: 404 });
+    const current = path.join(playerDir, EVALUATIONS_DIR, `${date}.md`);
+    const text = String(body.markdown || '').replace(/\r\n/g, '\n').replace(/\n+$/, '') + '\n';
+    const nextDate = canonicalIso(markdownTitle(text)) || date;
+    const target = path.join(playerDir, EVALUATIONS_DIR, `${nextDate}.md`);
+    const currentExists = await exists(current);
+    if (!currentExists && await exists(target)) return json({ error: 'Cette date existe déjà.' }, { status: 409 });
+    if (currentExists && nextDate !== date && await exists(target)) return json({ error: 'Cette date existe déjà.' }, { status: 409 });
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, text);
+    if (nextDate !== date && currentExists) await rm(current, { force: true });
+    return json({ ok: true, date: nextDate });
+  }
+  if (body.type === 'save-season-markdown') {
+    if (body.explicit !== true) return json({ ok: false });
+    const id = String(body.id || '').trim();
+    const entries = await catalog();
+    const season = entries.find(entry => entry.data.type === 'fccn-season:0' && entry.dir.split('/').length === 2 && entry.dir.startsWith(`${SEASONS_DIR}/`) && (entry.dir === id || entry.dir.split('/')[1] === id || entry.data.id === id));
+    if (!season) return json({ error: 'Cette saison n’existe pas.' }, { status: 404 });
+    const text = String(body.markdown || '').replace(/\r\n/g, '\n').replace(/\n+$/, '') + '\n';
+    await writeFile(path.join(season.absDir, 'content.md'), text);
+    const next = await renameToTitle(season.absDir, markdownTitle(text));
+    if (next !== season.absDir) invalidateCatalog();
+    return json({ ok: true, folder: path.basename(next) });
+  }
+  if (body.type === 'save-theme-markdown') {
+    if (body.explicit !== true) return json({ ok: false });
+    const id = String(body.id || '').trim();
+    const entries = await catalog();
+    const theme = entries.find(entry => entry.data.type === 'fccn-theme:0' && entry.dir.split('/').length === 2 && entry.dir.startsWith(`${THEMES_DIR}/`) && (entry.dir.split('/')[1] === id || entry.data.id === id));
+    if (!theme) return json({ error: 'Ce thème n’existe pas.' }, { status: 404 });
+    const text = String(body.markdown || '').replace(/\r\n/g, '\n').replace(/\n+$/, '') + '\n';
+    await writeFile(path.join(theme.absDir, 'content.md'), text);
+    const next = await renameToTitle(theme.absDir, markdownTitle(text));
+    if (next !== theme.absDir) invalidateCatalog();
+    return json({ ok: true, folder: path.basename(next) });
   }
   if (body.type === 'theme') {
     const id = String(body.id || '').trim();
@@ -812,12 +979,13 @@ export const POST: RequestHandler = async ({ request }) => {
     if (issue) return json({ error: issue }, { status: 400 });
     const name = String(body.name || '').trim();
     if (!name) return json({ error: 'Indique un nom.' }, { status: 400 });
-    const dir = path.join(repertoireRoot, id);
+    const dir = path.join(themesRoot, id);
     if (await exists(dir)) return json({ error: 'Ce répertoire existe déjà.' }, { status: 409 });
     const listed = themesOf(await catalog()).map(themeKey);
-    await mkdir(path.join(dir, 'sessions'), { recursive: true });
+    await mkdir(dir, { recursive: true });
     const themeId = crypto.randomUUID();
-    await writeFile(path.join(dir, 'index.json'), JSON.stringify({ type: 'fccn-theme:0', id: themeId, name, sessions: [] }, null, 2) + '\n');
+    await writeFile(path.join(dir, 'index.json'), JSON.stringify(orderThemeIndex({ type: 'fccn-theme:0', id: themeId, sessions: [] }), null, 2) + '\n');
+    await writeFile(path.join(dir, 'content.md'), await markdownFrom('theme', { name }));
     await writeThemeOrder([...listed, themeId]);
     return json({ id, name });
   }
@@ -829,7 +997,7 @@ export const POST: RequestHandler = async ({ request }) => {
     const theme = String(body.theme || '').trim();
     const issue = directoryIssue(theme, 'répertoire');
     if (issue) return json({ error: issue }, { status: 400 });
-    const themeDir = path.join(repertoireRoot, theme);
+    const themeDir = path.join(themesRoot, theme);
     if (!(await exists(path.join(themeDir, 'index.json')))) return json({ error: 'Ce thème n’existe pas.' }, { status: 404 });
     await writeSessionOrder(themeDir, idList(body.sessions));
     return json({ ok: true });
@@ -837,7 +1005,7 @@ export const POST: RequestHandler = async ({ request }) => {
   if (body.type === 'order-exercises') {
     const session = themeSession(await catalog(), String(body.id || '').trim());
     if (!session) return json({ error: 'Cette séance n’existe pas.' }, { status: 404 });
-    await writeFile(path.join(session.absDir, 'index.json'), JSON.stringify({ ...session.data, exercises: idList(body.exercises) }, null, 2) + '\n');
+    await writeFile(path.join(session.absDir, 'index.json'), JSON.stringify(orderSessionIndex({ ...session.data, exercises: idList(body.exercises) }), null, 2) + '\n');
     return json({ ok: true });
   }
   if (body.type === 'session') {
@@ -848,25 +1016,19 @@ export const POST: RequestHandler = async ({ request }) => {
     if (themeIssue || issue) return json({ error: themeIssue || issue }, { status: 400 });
     const name = String(body.name || '').trim();
     if (!name) return json({ error: 'Indique un nom.' }, { status: 400 });
-    const themeDir = path.join(repertoireRoot, theme);
+    const themeDir = path.join(themesRoot, theme);
     if (!(await exists(path.join(themeDir, 'index.json')))) return json({ error: 'Ce thème n’existe pas.' }, { status: 404 });
-    const dir = path.join(themeDir, 'sessions', id);
+    const dir = path.join(themeDir, id);
     if (await exists(dir)) return json({ error: 'Ce répertoire existe déjà.' }, { status: 409 });
     const listed = themesOf(await catalog()).find(item => item.id === theme)?.sessions.map(session => session.id) || [];
     await mkdir(dir, { recursive: true });
     const sessionId = crypto.randomUUID();
-    await writeFile(path.join(dir, 'index.json'), JSON.stringify({
+    await writeFile(path.join(dir, 'index.json'), JSON.stringify(orderSessionIndex({
       type: 'fccn-session:0',
       id: sessionId,
-      name,
-      audience: '',
-      phase: '',
-      principle: '',
-      means: '',
       exercises: []
-    }, null, 2) + '\n');
-    const markdown = fillTemplate(await readSettings('session'), { name });
-    await writeFile(path.join(dir, 'content.md'), markdown.replace(/\n+$/, '') + '\n');
+    }), null, 2) + '\n');
+    await writeFile(path.join(dir, 'content.md'), await markdownFrom('session', { name }));
     await writeSessionOrder(themeDir, [...listed, sessionId]);
     return json({ id: sessionId, name });
   }
@@ -907,17 +1069,10 @@ export const POST: RequestHandler = async ({ request }) => {
   return json({ error: 'Requête inconnue.' }, { status: 400 });
 };
 
-export const PUT: RequestHandler = async ({ request }) => {
-  const body = await request.json() as { name?: string; sport?: string };
+export const PUT: RequestHandler = async () => {
   const current = await readIndex();
-  const { folder: _folder, ...rest } = current;
-  void _folder;
-  const next = {
-    ...rest,
-    type: 'fccn-workspace:0',
-    name: String(body.name ?? current.name ?? ''),
-    sport: String(body.sport || current.sport || 'soccer')
-  };
+  const coach = coachName(current.coach);
+  const next = coach ? { type: 'fccn-workspace:0', coach } : { type: 'fccn-workspace:0' };
   await mkdir(root, { recursive: true });
   await writeFile(file, JSON.stringify(next, null, 2) + '\n');
   return json({ ...next, folder: path.basename(root), categories: await readCategories() });

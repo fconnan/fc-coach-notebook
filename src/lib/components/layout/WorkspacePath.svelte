@@ -3,11 +3,12 @@
   import { page } from '$app/stores';
   import { currentPage } from '$lib/stores/workspace';
   import {
-    breadcrumbEpoch, libraryItems, navArea, navChild, navDoor, navItem, restoring, screen, seanceHeader, seasons, styles, themes,
-    openArea, openDoor, openNavChild, openNavItem, showHome, showSeanceScreen
+    breadcrumbEpoch, libraryItems, navArea, navChild, navDoor, navItem, navLeaf, restoring, screen, seanceHeader, seasons, styles, themes,
+    closeEvaluation, openArea, openDoor, openEvaluation, openNavChild, openNavItem, showHome, showSeanceScreen
   } from '$lib/workspace/state';
   import { LIBRARY_KINDS, WORKSPACE_DOORS, type WorkspaceArea, type WorkspaceDoor } from '$lib/workspace/catalog';
   import { currentAddress, parseAddress } from '$lib/workspace/address';
+import { longFrenchDate } from '$lib/workspace/calendar';
   import { addBookmark, bookmarks, removeBookmark } from '$lib/stores/bookmarks';
   import { Select } from 'flowbite-svelte';
   import { HeartOutline, HeartSolid, TrashBinOutline } from 'flowbite-svelte-icons';
@@ -32,13 +33,13 @@
   const openedDoorId = $derived($navDoor || ($restoring ? (parseAddress($page.url.pathname)?.door || '') : ''));
   const door = $derived(WORKSPACE_DOORS.find(item => item.id === openedDoorId) ?? null);
   const seasonChoices = $derived.by(() => {
-    const sheets = new Map<string, { sheets: string[]; name: string }>();
+    const dates = new Map<string, { dates: string[]; name: string }>();
     for (const slot of openedSeason?.slots || []) {
-      const entry = sheets.get(slot.session) ?? { sheets: [], name: slot.sessionName };
-      entry.sheets.push(slot.sheet);
-      sheets.set(slot.session, entry);
+      const entry = dates.get(slot.session) ?? { dates: [], name: slot.sessionName };
+      if (slot.date) entry.dates.push(slot.date);
+      dates.set(slot.session, entry);
     }
-    return [...sheets].map(([value, entry]) => ({ value, label: `${entry.sheets.join(', ')} · ${entry.name}` }));
+    return [...dates].map(([value, entry]) => ({ value, label: `${entry.dates.join(', ')} · ${entry.name}` }));
   });
   const domains = $derived([...new Set($libraryItems.map(item => item.domain))].sort((a, b) => a.localeCompare(b, 'fr')));
 
@@ -80,11 +81,29 @@
         key: 'season',
         label: 'Saison',
         value: $navItem,
-        choices: $seasons.map(item => ({ value: item.id, label: `${item.name} · ${item.categoryName}` })),
+        choices: $seasons.map(item => ({ value: item.id, label: item.name })),
         change: (value) => { void openNavItem(value); }
       }, () => openNavItem(''), `Revenir à ${door.label}`);
     }
-    if ($navArea === 'seasons' && $navChild) {
+    const seasonPlayer = openedSeason?.players.find(player => player.id === $navChild);
+    if ($navArea === 'seasons' && seasonPlayer && openedSeason) {
+      add({
+        key: 'player',
+        label: 'Joueur',
+        value: seasonPlayer.id,
+        choices: openedSeason.players.map(player => ({ value: player.id, label: player.name })),
+        change: (value) => { void openNavChild(value); }
+      }, () => openNavChild(''), `Revenir à ${openedSeason.name}`);
+      if ($navLeaf) {
+        add({
+          key: 'evaluation',
+          label: 'Évaluation',
+          value: $navLeaf,
+          choices: seasonPlayer.evaluations.map(date => ({ value: date, label: longFrenchDate(date) })),
+          change: (value) => openEvaluation(value)
+        }, () => closeEvaluation(), `Revenir à ${seasonPlayer.name}`);
+      }
+    } else if ($navArea === 'seasons' && $navChild) {
       add({
         key: 'session',
         label: 'Séance',

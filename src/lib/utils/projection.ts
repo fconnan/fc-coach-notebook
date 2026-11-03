@@ -81,16 +81,9 @@ export function spriteFacing(
   return 'front';
 }
 
-export function createProjector(
-  template: FieldTemplate,
-  page: {
-    perspectiveTilt?: number;
-    perspectiveIntensity?: number;
-    perspectiveScale?: number;
-  }
-): Projector {
+export function createProjector(template: FieldTemplate): Projector {
   const box = contentBox(template);
-  const persp = resolvePerspective(page);
+  const persp = resolvePerspective();
   const tiltRad = (persp.tilt * Math.PI) / 180;
   const cosT = Math.cos(tiltRad);
   const sinT = Math.sin(tiltRad);

@@ -59,10 +59,10 @@ export function mountYaml(
   return editor;
 }
 
-export function mountMarkdown(host: HTMLElement, value: string, onChange: (text: string) => void) {
-  const uri = monaco.Uri.parse('file:///exercise/content.md');
-  monaco.editor.getModel(uri)?.dispose();
-  const model = monaco.editor.createModel(value, 'markdown', uri);
+export function mountMarkdown(host: HTMLElement, value: string, onChange: (text: string) => void, uri = 'file:///exercise/content.md') {
+  const modelUri = monaco.Uri.parse(uri);
+  monaco.editor.getModel(modelUri)?.dispose();
+  const model = monaco.editor.createModel(value, 'markdown', modelUri);
   const editor = monaco.editor.create(host, {
     model,
     automaticLayout: true,

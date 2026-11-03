@@ -1,6 +1,8 @@
 <script lang="ts">
   import { createExercise } from '$lib/workspace/state';
   import { Alert, Button, Input, Label, Modal } from 'flowbite-svelte';
+  import { PlusOutline } from 'flowbite-svelte-icons';
+  import QuietIconButton from './QuietIconButton.svelte';
 
   let adding = $state(false);
   let entryName = $state('');

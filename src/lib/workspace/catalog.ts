@@ -1,3 +1,5 @@
+import { folderSlug } from './exerciseFile';
+
 export type WorkspaceArea = 'categories' | 'library' | 'seasons' | 'styles' | 'themes';
 export type WorkspaceDoor = 'repertoire' | 'season' | 'studio';
 
@@ -18,13 +20,13 @@ export const WORKSPACE_DOORS: {
   {
     id: 'repertoire',
     label: 'Thèmes',
-    line: 'Ce sont des thèmes de séances.',
+    line: 'Bibliothèque d\'exercices regroupés par thèmes.',
     children: []
   },
   {
     id: 'season',
-    label: 'Saison',
-    line: 'Le planning et les évaluations',
+    label: 'Saisons',
+    line: 'Planning des séances d\'entraînement et des évaluations des joueurs.',
     children: [
       { id: 'seasons', label: 'Saisons' }
     ]
@@ -32,7 +34,7 @@ export const WORKSPACE_DOORS: {
   {
     id: 'studio',
     label: 'Atelier',
-    line: 'Terrains, formes et couleurs',
+    line: 'Bibliothèque d\'objets pour les schémas de séances.',
     children: [
       { id: 'library', label: 'Bibliothèque' },
       { id: 'styles', label: 'Styles' }
@@ -54,22 +56,51 @@ export const LIBRARY_KINDS = [
 export type LibraryKind = (typeof LIBRARY_KINDS)[number]['id'];
 
 export interface SeasonSlot {
-  sheet: string;
   date: string;
   session: string;
   sessionName: string;
   exercises?: string[];
 }
 
+export const COACH_IMAGE = 'coach.jpg';
+export const PLAYER_IMAGE = 'player.jpg';
+export const PLAYERS_DIR = 'players';
+export const EVALUATIONS_DIR = 'evaluations';
+
+export function coachName(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (value && typeof value === 'object' && typeof (value as { name?: unknown }).name === 'string') {
+    return (value as { name: string }).name.trim();
+  }
+  return '';
+}
+
+export function playerNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const name = item.trim();
+    const id = folderSlug(name);
+    if (!name || !id || seen.has(id)) continue;
+    seen.add(id);
+    names.push(name);
+  }
+  return names;
+}
+
+export interface SeasonPlayer {
+  id: string;
+  name: string;
+  evaluations: string[];
+}
+
 export interface SeasonInfo {
   id: string;
   uuid?: string;
   name: string;
-  zone: string;
-  from: string;
-  to: string;
-  categoryFolder: string;
-  categoryName: string;
+  players: SeasonPlayer[];
   slots: SeasonSlot[];
 }
 
@@ -77,8 +108,6 @@ export interface ThemeSessionInfo {
   id: string;
   folder: string;
   name: string;
-  audience: string;
-  phase: string;
 }
 
 export interface ThemeInfo {
@@ -90,7 +119,13 @@ export interface ThemeInfo {
 
 export const REPERTOIRE_TYPE = 'fccn-repertoire:0';
 
-/** Key stored in the `themes` list of repertoire/index.json. */
+/** Dossier des thèmes dans l'espace de travail (`data/themes`). */
+export const THEMES_DIR = 'themes';
+
+/** Dossier des saisons dans l'espace de travail (`data/seasons/<titre>`). */
+export const SEASONS_DIR = 'seasons';
+
+/** Key stored in the `themes` list of themes/index.json. */
 export function themeKey(theme: Pick<ThemeInfo, 'id' | 'uuid'>): string {
   return theme.uuid || theme.id;
 }

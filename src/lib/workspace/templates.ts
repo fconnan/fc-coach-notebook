@@ -1,4 +1,6 @@
-export type TemplateName = 'session' | 'exercise';
+export const TEMPLATE_NAMES = ['session', 'exercise', 'theme', 'season', 'player', 'evaluation'] as const;
+
+export type TemplateName = (typeof TEMPLATE_NAMES)[number];
 
 export function fillTemplate(source: string, values: Record<string, string>): string {
   return source.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_match, key: string) => values[key] ?? '');

@@ -6,36 +6,62 @@
   import SearchTable from './SearchTable.svelte';
   import { currentPage } from '$lib/stores/workspace';
   import {
-    trainer, categories, styles, seasons, themes, libraryItems, screen, portraitUrl,
+    styles, seasons, themes, libraryItems, screen,
     exercisePaths,
-    navDoor, navArea, navItem, navChild, missingPage,
-    showHome, createCategory, commitTrainerName, commitTrainerSport, savePortrait, openDoor, openArea, openNavItem, openNavChild, createSeance,
+    navDoor, navArea, navItem, navChild, navLeaf, missingPage,
+    showHome, createCategory, openDoor, openArea, openNavItem, openNavChild, openEvaluation, createSeance,
     createStyle, updateStyle, createSeason, createSlot, createTheme, createThemeSession, createLibraryItem,
-    reorderThemes, reorderThemeSessions
+    reorderThemes, reorderThemeSessions,
+    commitCoachName, refreshPortrait, savePortrait, portraitUrl, trainer,
+    createPlayer, renamePlayer, loadEvaluation, saveEvaluation,
+    playerPortraitUrl, savePlayerPortrait
   } from '$lib/workspace/state';
-  import { BarsOutline } from 'flowbite-svelte-icons';
+  import EvaluationCharts from './EvaluationCharts.svelte';
+  import EvaluationTrend from './EvaluationTrend.svelte';
+  import RawMarkdown from './RawMarkdown.svelte';
+  import PortraitCard from './PortraitCard.svelte';
+  import QuietIconButton from './QuietIconButton.svelte';
+  import { renderMarkdown } from '$lib/workspace/markdownHtml';
+  import { BarsOutline, PenOutline, PlusOutline } from 'flowbite-svelte-icons';
   import { LIBRARY_KINDS, WORKSPACE_DOORS, type LibraryKind, type WorkspaceArea, type WorkspaceDoor } from '$lib/workspace/catalog';
+  import { folderSlug } from '$lib/workspace/exerciseFile';
+  import { WEEKDAYS, longFrenchDate, monthGrid, monthLabel, shiftMonth, todayParts } from '$lib/workspace/calendar';
+  import { fillTemplate, readTemplate } from '$lib/workspace/templates';
   import seancesArt from '$lib/assets/door-seances.jpg';
   import seasonArt from '$lib/assets/door-season.jpg';
   import atelierArt from '$lib/assets/door-atelier.jpg';
-  import { DEFAULT_SPORT, type PageStyle } from '$lib/workspace/model';
+  import { type PageStyle } from '$lib/workspace/model';
   import {
-    Alert, Avatar, Button, Card, Heading, Input, Label, Modal, Select,
+    Alert, Button, Card, Datepicker, Heading, Input, Label, Modal, Select,
     TableBody, TableBodyCell, TableBodyRow, TableHead, TableHeadCell
   } from 'flowbite-svelte';
 
-  let dialog = $state<'category' | 'style' | 'seance' | 'season' | 'slot' | 'theme' | 'session' | 'library' | null>(null);
+  let dialog = $state<'category' | 'style' | 'seance' | 'season' | 'slot' | 'theme' | 'session' | 'library' | 'player' | null>(null);
   let entryOpen = $state(false);
   let entryName = $state('');
   let plainName = $state('');
-  let zone = $state('');
-  let from = $state('');
-  let to = $state('');
-  let categoryId = $state('');
   let sessionId = $state('');
   let dialogError = $state('');
-  let portraitError = $state('');
   let query = $state('');
+  let evaluationDraft = $state('');
+  let evaluationSaved = $state('');
+  let evaluationEditing = $state(false);
+  let evaluationNew = $state(false);
+  let evaluationDate = $state<Date | undefined>(undefined);
+  let draftPlayer = $state('');
+  let evaluationTexts = $state<Record<string, string>>({});
+  let editorToken = $state('');
+  let savingEvaluation = $state(false);
+  let playerPhoto = $state('');
+  let portraits = $state<Record<string, string>>({});
+  let photoError = $state('');
+  let photoNotice = $state(0);
+  let seasonSeen = '';
+  let homeSeen = false;
+  let shownPhoto = '';
+  const today = todayParts();
+  let calendarYear = $state(today.year);
+  let calendarMonth = $state(today.month);
   const drag = new RowDrag();
 
   const openedStyle = $derived($styles.find(style => style.id === $navItem) ?? null);
@@ -48,10 +74,20 @@
     label: `${theme.name} — ${session.name || session.folder}`
   }))));
   const showingBoard = $derived($screen === 'seance' && ($navArea === 'themes' || $navArea === 'seasons') && Boolean($navChild));
-  const visibleSeasons = $derived($seasons.filter(season => matches(query, season.name, season.zone, season.from, season.to, season.categoryName)));
-  const visibleSlots = $derived(openedSeason?.slots.filter(slot => matches(query, slot.sheet, slot.date, slot.sessionName)) ?? []);
+  const visibleSeasons = $derived($seasons.filter(season => matches(query, season.name)));
+  const currentPlayer = $derived((openedSeason?.players || []).find(player => player.id === $navChild) ?? null);
+  const visiblePlayers = $derived(openedSeason?.players || []);
+  const evaluationLive = $derived(
+    evaluationNew || editorToken === `${currentPlayer?.id || ''}:${$navLeaf}`
+      ? evaluationDraft
+      : (evaluationTexts[$navLeaf] || '')
+  );
+  const slotsByDate = $derived(new Map((openedSeason?.slots || []).map(slot => [slot.date, slot])));
+  const calendarDays = $derived(monthGrid(calendarYear, calendarMonth));
+  const calendarTitle = $derived(monthLabel(calendarYear, calendarMonth));
+  const todayIso = $derived(todayParts().iso);
   const visibleThemes = $derived($themes.filter(theme => matches(query, theme.name)));
-  const visibleSessions = $derived(openedTheme?.sessions.filter(session => matches(query, session.name, session.audience, session.phase)) ?? []);
+  const visibleSessions = $derived(openedTheme?.sessions.filter(session => matches(query, session.name)) ?? []);
   const visibleStyles = $derived($styles.filter(style => matches(query, style.name)));
   const visibleDomains = $derived(domains.filter(domain => matches(query, domain)));
   const visibleKinds = $derived(LIBRARY_KINDS.filter(kind => matches(query, kind.label)));
@@ -60,16 +96,233 @@
   const sessionIds = $derived(openedTheme?.sessions.map(session => session.id) ?? []);
   const editingExercise = $derived($screen === 'exercise' && Boolean($currentPage));
 
+  function showMonth(delta: number) {
+    const next = shiftMonth(calendarYear, calendarMonth, delta);
+    calendarYear = next.year;
+    calendarMonth = next.month;
+  }
+
+  function showToday() {
+    const now = todayParts();
+    calendarYear = now.year;
+    calendarMonth = now.month;
+  }
+
   function schemaAt(id: string): string {
     return $exercisePaths[id] || '';
   }
+
+  $effect(() => {
+    const id = $navItem;
+    if (id === seasonSeen) return;
+    seasonSeen = id;
+    editorToken = '';
+    photoError = '';
+    const now = todayParts();
+    calendarYear = now.year;
+    calendarMonth = now.month;
+  });
+
+  $effect(() => {
+    if ($navDoor) {
+      homeSeen = false;
+      return;
+    }
+    if (homeSeen) return;
+    homeSeen = true;
+    void refreshPortrait();
+  });
+
+  $effect(() => {
+    const ids = (openedSeason?.players || []).map(player => player.id);
+    let stop = false;
+    const owned: string[] = [];
+    void Promise.all(ids.map(async id => [id, await playerPortraitUrl(id)] as const)).then(pairs => {
+      if (stop) {
+        for (const [, url] of pairs) if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+        return;
+      }
+      const next: Record<string, string> = {};
+      for (const [id, url] of pairs) {
+        if (!url) continue;
+        next[id] = url;
+        owned.push(url);
+      }
+      portraits = next;
+    });
+    return () => { stop = true; for (const url of owned) if (url.startsWith('blob:')) URL.revokeObjectURL(url); };
+  });
+
+  function openPlayer(id: string) {
+    void openNavChild(id);
+  }
+
+  $effect(() => {
+    const season = openedSeason?.id || '';
+    const player = currentPlayer?.id || '';
+    if (!season || !player) return;
+    let stop = false;
+    void playerPortraitUrl(player).then(url => {
+      if (stop) {
+        if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+        return;
+      }
+      if (shownPhoto.startsWith('blob:')) URL.revokeObjectURL(shownPhoto);
+      shownPhoto = url;
+      playerPhoto = url;
+    });
+    const dates = currentPlayer?.evaluations || [];
+    void Promise.all(dates.map(async item => [item, await loadEvaluation(player, item)] as const)).then(rows => {
+      if (!stop) evaluationTexts = Object.fromEntries(rows);
+    });
+    return () => { stop = true; };
+  });
+
+  $effect(() => {
+    const date = $navLeaf;
+    const id = currentPlayer?.id || '';
+    if (evaluationNew) {
+      if (!date && id === draftPlayer) return;
+      evaluationNew = false;
+      evaluationDate = undefined;
+    }
+    if (!date || !id) {
+      editorToken = '';
+      return;
+    }
+    if (!(date in evaluationTexts)) return;
+    const token = `${id}:${date}`;
+    if (editorToken === token) return;
+    evaluationDraft = evaluationTexts[date];
+    evaluationSaved = evaluationTexts[date];
+    evaluationEditing = false;
+    editorToken = token;
+  });
+
+  function localIso(date: Date): string {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+
+  function dateFromIso(iso: string): Date | undefined {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    if (!match) return undefined;
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  }
+
+  function evaluationBody(text: string): string {
+    return text.replace(/^#\s+[^\n]*\n+/, '');
+  }
+
+  async function startEvaluation() {
+    if (!currentPlayer) return;
+    photoError = '';
+    const source = fillTemplate(await readTemplate('evaluation'), { date: '' });
+    const body = evaluationBody(source).replace(/\n+$/, '\n');
+    draftPlayer = currentPlayer.id;
+    evaluationDraft = body;
+    evaluationSaved = body;
+    evaluationDate = undefined;
+    evaluationEditing = true;
+    evaluationNew = true;
+    editorToken = `${currentPlayer.id}:new`;
+  }
+
+  function editEvaluation() {
+    const date = $navLeaf;
+    const body = evaluationBody(evaluationTexts[date] || '');
+    evaluationDate = date ? dateFromIso(date) : undefined;
+    evaluationDraft = body;
+    evaluationSaved = body;
+    evaluationEditing = true;
+  }
+
+  async function saveOpenEvaluation() {
+    if (!currentPlayer || !evaluationDate) return;
+    const date = localIso(evaluationDate);
+    const previous = evaluationNew ? '' : $navLeaf;
+    if (!date) return;
+    if (date !== previous && currentPlayer.evaluations.includes(date)) {
+      photoError = 'Cette date existe déjà.';
+      return;
+    }
+    const text = `# ${longFrenchDate(date)}\n\n${evaluationBody(evaluationDraft).replace(/\n+$/, '')}\n`;
+    savingEvaluation = true;
+    const saved = await saveEvaluation(currentPlayer.id, date, text);
+    savingEvaluation = false;
+    if ('error' in saved) {
+      photoError = saved.error;
+      return;
+    }
+    const next = { ...evaluationTexts };
+    if (previous && saved.date !== previous) delete next[previous];
+    next[saved.date] = text;
+    evaluationTexts = next;
+    evaluationSaved = text;
+    evaluationDraft = text;
+    evaluationEditing = false;
+    evaluationNew = false;
+    evaluationDate = undefined;
+    if (saved.date !== $navLeaf) {
+      editorToken = '';
+      openEvaluation(saved.date);
+    }
+  }
+
+  function cancelEvaluation() {
+    if (evaluationNew) {
+      evaluationNew = false;
+      evaluationDate = undefined;
+      evaluationDraft = '';
+      evaluationSaved = '';
+      evaluationEditing = false;
+      editorToken = '';
+      photoError = '';
+      return;
+    }
+    evaluationDraft = evaluationTexts[$navLeaf] || '';
+    evaluationSaved = evaluationDraft;
+    evaluationEditing = false;
+    editorToken = '';
+  }
+
+  async function onCoachPhoto(file: File) {
+    photoError = (await savePortrait(file)) || '';
+  }
+
+  function reportPhoto(message: string) {
+    photoNotice += 1;
+    photoError = message;
+  }
+
+  function clearPhotoError() {
+    photoError = '';
+  }
+
+  async function applyPlayerPhoto(file: File) {
+    if (!currentPlayer) return;
+    const playerId = currentPlayer.id;
+    photoError = (await savePlayerPortrait(playerId, file)) || '';
+    if (photoError) return;
+    const url = await playerPortraitUrl(playerId);
+    if (shownPhoto.startsWith('blob:')) URL.revokeObjectURL(shownPhoto);
+    shownPhoto = url;
+    playerPhoto = url;
+    const previous = portraits[playerId];
+    if (previous && previous !== url && previous.startsWith('blob:')) URL.revokeObjectURL(previous);
+    portraits = { ...portraits, [playerId]: url };
+  }
+
+  async function onPlayerPhoto(file: File) {
+    await applyPlayerPhoto(file);
+  }
+
   const door = $derived(WORKSPACE_DOORS.find(item => item.id === $navDoor) ?? null);
-  const sports = [{ value: DEFAULT_SPORT, name: 'Soccer' }];
   const dialogTitle = $derived(dialog === 'category' ? 'Nouvelle catégorie'
     : dialog === 'seance' || dialog === 'session' ? 'Nouvelle séance'
     : dialog === 'style' ? 'Nouveau style'
     : dialog === 'season' ? 'Nouvelle saison'
     : dialog === 'slot' ? 'Nouveau créneau'
+    : dialog === 'player' ? 'Nouveau joueur'
     : dialog === 'theme' ? 'Nouveau thème'
     : 'Nouveau fichier');
 
@@ -79,24 +332,15 @@
     studio: atelierArt
   };
 
-  function initials(name: string): string {
-    const parts = name.trim().split(/\s+/).filter(Boolean);
-    return parts.slice(0, 2).map(part => part[0]?.toLocaleUpperCase('fr') || '').join('');
-  }
-
   function closeDialog() {
     dialog = null;
     entryOpen = false;
   }
 
-  function openDialog(kind: NonNullable<typeof dialog>) {
+  function openDialog(kind: NonNullable<typeof dialog>, date = '') {
     dialog = kind;
-    entryName = '';
+    entryName = date;
     plainName = '';
-    zone = '';
-    from = '';
-    to = '';
-    categoryId = $categories[0]?.id ?? '';
     sessionId = sessionChoices[0]?.id ?? '';
     dialogError = '';
     entryOpen = true;
@@ -107,14 +351,6 @@
     return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
       ? target.value
       : '';
-  }
-
-  async function onPortrait(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = '';
-    if (!file) return;
-    portraitError = (await savePortrait(file)) || '';
   }
 
   async function confirmDialog() {
@@ -140,13 +376,21 @@
       return;
     }
     if (dialog === 'season') {
-      dialogError = (await createSeason(entryName, categoryId, zone, from, to)) || '';
+      dialogError = (await createSeason(entryName)) || '';
       if (!dialogError) closeDialog();
       return;
     }
     if (dialog === 'slot') {
-      dialogError = (await createSlot(entryName, plainName, sessionId)) || '';
+      dialogError = (await createSlot(entryName, sessionId)) || '';
       if (!dialogError) closeDialog();
+      return;
+    }
+    if (dialog === 'player') {
+      const folder = folderSlug(entryName);
+      dialogError = (await createPlayer(entryName)) || '';
+      if (dialogError) return;
+      closeDialog();
+      await openNavChild(folder);
       return;
     }
     if (dialog === 'theme') {
@@ -189,12 +433,25 @@
   }
 </script>
 
+{#snippet photoBanner(className: string)}
+  {#if photoError}
+    {#key photoNotice}
+      <Alert color="red" class={className} dismissable closeAriaLabel="Fermer" closeButtonProps={{ name: 'Fermer', ariaLabel: 'Fermer', onclick: clearPhotoError }}>{photoError}</Alert>
+    {/key}
+  {/if}
+{/snippet}
+
 {#snippet orderAlert()}
   {#if drag.error}<Alert color="red" class="mb-3">{drag.error}</Alert>{/if}
 {/snippet}
 
-{#snippet panelTitle(title: string)}
-  <Heading tag="h2" class="mb-3 text-xl">{title}</Heading>
+{#snippet panelTitle(title: string, onadd: (() => void) | undefined = undefined, addLabel = 'Ajouter')}
+  <div class="mb-3 flex items-center gap-1">
+    <Heading tag="h2" class="text-xl">{title}</Heading>
+    {#if onadd}
+      <QuietIconButton label={addLabel} onclick={onadd}><PlusOutline size="sm" /></QuietIconButton>
+    {/if}
+  </div>
 {/snippet}
 
 <div class={editingExercise ? 'flex h-full min-h-0 flex-col' : ''}>
@@ -216,41 +473,21 @@
   {:else if showingBoard}
     <SeanceBoard />
   {:else if !$navDoor}
-    <div class="mb-6 grid items-start gap-3 sm:grid-cols-3">
+    <PortraitCard class="mb-6" photo={$portraitUrl} name={$trainer.name} onphoto={onCoachPhoto} onname={commitCoachName} onerror={reportPhoto} />
+    {@render photoBanner('mb-6')}
+    <div class="mb-6 grid gap-3 sm:grid-cols-3">
       {#each WORKSPACE_DOORS as item (item.id)}
-        <div class="min-w-0">
+        <div class="flex min-w-0 flex-col">
           {@render panelTitle(item.label)}
-          <Card size="xl" class="aspect-square cursor-pointer overflow-hidden p-0" onclick={() => openDoor(item.id)}>
-            <img src={doorArt[item.id]} alt="" class="h-0 min-h-0 w-full flex-1 object-cover" />
-            <div class="px-5 pt-3 pb-4">
+          <Card size="xl" class="flex flex-1 cursor-pointer flex-col overflow-hidden p-0" onclick={() => openDoor(item.id)}>
+            <img src={doorArt[item.id]} alt="" class="aspect-[5/4] w-full object-cover" />
+            <div class="flex flex-1 px-5 pt-3 pb-4">
               <p class="text-sm text-gray-500 dark:text-gray-400">{item.line}</p>
             </div>
           </Card>
         </div>
       {/each}
     </div>
-    {@render panelTitle('Entraîneur')}
-    <Card size="xl" class="p-6">
-      <div class="flex items-center gap-8">
-        <div class="grid w-full max-w-sm gap-4">
-          <Label>Nom
-            <Input class="mt-1" value={$trainer.name} oninput={(e) => commitTrainerName(fieldValue(e))} />
-          </Label>
-          <Label>Sport
-            <Select class="mt-1" placeholder="" items={sports} value={$trainer.sport || DEFAULT_SPORT} onchange={(e) => commitTrainerSport(fieldValue(e))} />
-          </Label>
-        </div>
-        <label class="ms-auto shrink-0 cursor-pointer">
-          {#if $portraitUrl}
-            <Avatar src={$portraitUrl} cornerStyle="rounded" size="xl" class="h-44 w-44 rounded-2xl object-cover" alt={$trainer.name || 'Photo'} />
-          {:else}
-            <Avatar cornerStyle="rounded" size="xl" class="h-44 w-44 overflow-hidden rounded-2xl text-3xl" alt={$trainer.name || 'Photo'}>{initials($trainer.name) || '?'}</Avatar>
-          {/if}
-          <input class="hidden" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange={onPortrait} />
-          {#if portraitError}<p class="mt-2 max-w-44 text-center text-xs text-red-600">{portraitError}</p>{/if}
-        </label>
-      </div>
-    </Card>
   {:else if !$navArea}
     <div class="flex flex-wrap gap-2">
       {#each door?.children || [] as child (child.id)}
@@ -258,58 +495,149 @@
       {/each}
     </div>
   {:else if $navArea === 'seasons' && !openedSeason}
-    {@render panelTitle('Saisons')}
+    {@render panelTitle('Saisons', () => openDialog('season'), 'Ajouter une saison')}
     <Card size="xl" class="p-6">
-      <SearchTable bind:query placeholder="Rechercher une saison" onadd={() => openDialog('season')}>
+      <SearchTable bind:query placeholder="Rechercher une saison">
         <TableHead>
           <TableHeadCell>Nom</TableHeadCell>
-          <TableHeadCell>Zone</TableHeadCell>
-          <TableHeadCell>Du</TableHeadCell>
-          <TableHeadCell>Au</TableHeadCell>
-          <TableHeadCell>Catégorie</TableHeadCell>
         </TableHead>
         <TableBody>
           {#each visibleSeasons as season (season.id)}
             <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(season.id)}>
               <TableBodyCell>{season.name}</TableBodyCell>
-              <TableBodyCell>{season.zone}</TableBodyCell>
-              <TableBodyCell>{season.from}</TableBodyCell>
-              <TableBodyCell>{season.to}</TableBodyCell>
-              <TableBodyCell>{season.categoryName}</TableBodyCell>
             </TableBodyRow>
           {:else}
-            <TableBodyRow><TableBodyCell colspan={5}>{emptyText('Aucune saison')}</TableBodyCell></TableBodyRow>
+            <TableBodyRow><TableBodyCell>{emptyText('Aucune saison')}</TableBodyCell></TableBodyRow>
           {/each}
         </TableBody>
       </SearchTable>
+    </Card>
+  {:else if openedSeason && currentPlayer && ($navLeaf || evaluationNew)}
+    <div class="eval-split grid items-start gap-4">
+      {@render photoBanner('col-span-full')}
+      <div class="eval-frame min-w-0 rounded-xl border border-default-medium bg-white dark:bg-neutral-primary">
+        <div class="eval-tools flex items-center justify-end gap-1 rounded-t-xl border-b border-default-medium bg-gray-100 px-2 py-1 dark:bg-gray-800">
+          {#if evaluationEditing}
+            <QuietIconButton label="Annuler" onclick={cancelEvaluation}>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="M6 6l12 12M18 6 6 18" /></svg>
+            </QuietIconButton>
+            <QuietIconButton label="Sauver" disabled={savingEvaluation || !evaluationDate || (localIso(evaluationDate) === (evaluationNew ? '' : $navLeaf) && evaluationDraft === evaluationSaved)} onclick={() => { void saveOpenEvaluation(); }}>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m5 13 4 4L19 7" /></svg>
+            </QuietIconButton>
+          {:else}
+            <QuietIconButton label="Modifier" onclick={editEvaluation}><PenOutline size="sm" /></QuietIconButton>
+          {/if}
+        </div>
+        {#if evaluationNew || editorToken === `${currentPlayer.id}:${$navLeaf}`}
+          {#if evaluationEditing}
+            {#key editorToken}
+              <div class="eval-date">
+                <Datepicker
+                  bind:value={evaluationDate}
+                  locale="fr-FR"
+                  firstDayOfWeek={1}
+                  placeholder="Choisir une date"
+                  dateFormat={{ weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }}
+                  inputmode="none"
+                  color="alternative"
+                  inputProps={{ readonly: true, 'aria-label': 'Date' }}
+                />
+              </div>
+              <div class="eval-editor">
+                <RawMarkdown bind:value={evaluationDraft} />
+              </div>
+            {/key}
+          {:else}
+            <div class="eval-md">{@html renderMarkdown(evaluationDraft.replace(/^\{\{\s*skills(?:\s+[^}]*)?\s*\}\}\s*$/gim, ''))}</div>
+          {/if}
+        {/if}
+      </div>
+      <div class="min-w-0">
+        <EvaluationCharts markdown={evaluationLive} />
+      </div>
+    </div>
+  {:else if openedSeason && currentPlayer}
+    <PortraitCard class="mb-6" photo={playerPhoto} name={currentPlayer.name} onphoto={onPlayerPhoto} onname={(value) => renamePlayer(currentPlayer.id, value)} onerror={reportPhoto} />
+    {@render photoBanner('mb-6')}
+    {@render panelTitle('Évaluations', startEvaluation, 'Ajouter une évaluation')}
+    <Card size="xl" class="p-6">
+      <EvaluationTrend
+        rows={(currentPlayer.evaluations || []).map(date => ({ date, markdown: evaluationTexts[date] || '' }))}
+        season={openedSeason.uuid || openedSeason.id}
+        player={currentPlayer.id}
+        onopen={openEvaluation}
+      />
     </Card>
   {:else if openedSeason}
-    {@render panelTitle(openedSeason.name)}
-    <Card size="xl" class="p-6">
-      <SearchTable bind:query placeholder="Rechercher un créneau" onadd={() => openDialog('slot')}>
-        <TableHead>
-          <TableHeadCell>Fiche</TableHeadCell>
-          <TableHeadCell>Date</TableHeadCell>
-          <TableHeadCell>Séance</TableHeadCell>
-        </TableHead>
-        <TableBody>
-          {#each visibleSlots as slot (`${slot.sheet}-${slot.session}`)}
-            <TableBodyRow class="cursor-pointer" onclick={() => openNavChild(slot.session)}>
-              <TableBodyCell>{slot.sheet}</TableBodyCell>
-              <TableBodyCell>{slot.date}</TableBodyCell>
-              <TableBodyCell>{slot.sessionName}</TableBodyCell>
-            </TableBodyRow>
-          {:else}
-            <TableBodyRow><TableBodyCell colspan={3}>{emptyText('Aucun créneau')}</TableBodyCell></TableBodyRow>
+    <Heading tag="h2" class="mb-3 text-xl">{openedSeason.name}</Heading>
+    <Heading tag="h2" class="mb-3 text-xl">Séances</Heading>
+    <Card size="xl" class="mb-3 p-6">
+      <div class="mb-4 flex flex-wrap items-center gap-2">
+        <Button size="sm" color="alternative" onclick={() => showMonth(-1)}>Précédent</Button>
+        <Button size="sm" color="alternative" onclick={() => showMonth(1)}>Suivant</Button>
+        <Button size="sm" color="alternative" onclick={showToday}>Aujourd’hui</Button>
+        <p class="min-w-40 px-2 text-center text-base font-semibold">{calendarTitle}</p>
+      </div>
+      <div class="border border-default-medium bg-gray-200 dark:bg-gray-800">
+        <div class="grid grid-cols-7 border-b border-default-medium">
+          {#each WEEKDAYS as name}
+            <div class="px-1 py-2 text-center text-xs font-medium uppercase">{name}</div>
           {/each}
-        </TableBody>
-      </SearchTable>
+        </div>
+        <div class="grid grid-cols-7">
+          {#each calendarDays as cell, index (cell.iso)}
+            {@const slot = cell.inMonth ? slotsByDate.get(cell.iso) : undefined}
+            {@const col = index % 7}
+            {@const lastRow = index >= calendarDays.length - 7}
+            {@const leftIn = col > 0 && calendarDays[index - 1].inMonth}
+            {@const aboveIn = index >= 7 && calendarDays[index - 7].inMonth}
+            {@const rightIn = col < 6 && calendarDays[index + 1].inMonth}
+            {@const belowIn = !lastRow && calendarDays[index + 7].inMonth}
+            {#if cell.inMonth}
+              <div class="relative min-h-24 border-default-medium bg-white p-1 dark:bg-neutral-primary {col < 6 && rightIn ? 'border-r' : ''} {!lastRow && belowIn ? 'border-b' : ''} {cell.iso === todayIso ? 'z-10 ring-2 ring-inset ring-primary-700' : ''} {slot ? '' : 'cursor-pointer'}" onclick={() => { if (!slot) openDialog('slot', cell.iso); }}>
+                <div class="text-sm">{cell.day}</div>
+                {#if slot}
+                  <button type="button" class="mt-1 w-full cursor-pointer rounded px-1 py-0.5 text-left text-xs hover:underline" onclick={() => openNavChild(slot.session)}>{slot.sessionName}</button>
+                {/if}
+              </div>
+            {:else}
+              <div class="min-h-24 border-dotted border-default-medium bg-gray-100 dark:bg-gray-700 {col < 6 ? 'border-r' : ''} {!lastRow ? 'border-b' : ''} {leftIn ? 'border-l' : ''} {aboveIn ? 'border-t' : ''}"></div>
+            {/if}
+          {/each}
+        </div>
+      </div>
+    </Card>
+    <div class="mb-3 flex items-center gap-1">
+      <Heading tag="h2" class="text-xl">Joueurs</Heading>
+      <QuietIconButton label="Ajouter un joueur" onclick={() => openDialog('player')}><PlusOutline size="sm" /></QuietIconButton>
+    </div>
+    <Card size="xl" class="p-6">
+      {@render photoBanner('mb-3')}
+      <div class="flex flex-wrap gap-3">
+        {#each visiblePlayers as player (player.id)}
+          <button type="button" class="group cursor-pointer" onclick={() => openPlayer(player.id)}>
+            <span class="flex h-16 w-72 items-stretch overflow-hidden rounded-2xl border border-default-medium bg-white shadow-[0_4px_14px_rgba(15,23,42,0.14)] transition group-hover:-translate-y-0.5 group-hover:shadow-[0_8px_20px_rgba(15,23,42,0.18)] dark:bg-neutral-primary dark:shadow-[0_4px_14px_rgba(0,0,0,0.45)]">
+              <span class="flex min-w-0 flex-1 items-center justify-center px-3 text-center text-sm font-medium">{player.name}</span>
+              {#if portraits[player.id]}
+                <img src={portraits[player.id]} alt="" class="h-16 w-16 shrink-0 object-cover" />
+              {:else}
+                <span class="flex h-16 w-16 shrink-0 items-center justify-center bg-gray-100 text-xs dark:bg-gray-700">Photo</span>
+              {/if}
+            </span>
+          </button>
+        {:else}
+          <p class="text-sm">Aucun joueur</p>
+        {/each}
+      </div>
     </Card>
   {:else if $navArea === 'themes' && !openedTheme}
-    <Heading tag="h1" class="mb-3 text-xl">Thèmes de séances</Heading>
+    <div class="mb-3 flex items-center gap-1">
+      <Heading tag="h1" class="text-xl">Thèmes de séances</Heading>
+      <QuietIconButton label="Ajouter un thème" onclick={() => openDialog('theme')}><PlusOutline size="sm" /></QuietIconButton>
+    </div>
     <Card size="xl" class="p-6">
     {@render orderAlert()}
-    <SearchTable bind:query placeholder="Rechercher un thème" addLabel="Ajouter un thème" onadd={() => openDialog('theme')}>
+    <SearchTable bind:query placeholder="Rechercher un thème">
       <TableHead>
         <TableHeadCell class="w-24">Ordre</TableHeadCell>
         <TableHeadCell>Nom</TableHeadCell>
@@ -337,10 +665,10 @@
     </SearchTable>
     </Card>
   {:else if openedTheme}
-    {@render panelTitle(openedTheme.name)}
+    {@render panelTitle(openedTheme.name, () => openDialog('session'), 'Ajouter une séance')}
     <Card size="xl" class="p-6">
       {@render orderAlert()}
-      <SearchTable bind:query placeholder="Rechercher une séance" onadd={() => openDialog('session')}>
+      <SearchTable bind:query placeholder="Rechercher une séance">
         <TableHead>
           <TableHeadCell class="w-24">Ordre</TableHeadCell>
           <TableHeadCell>Nom</TableHeadCell>
@@ -372,9 +700,9 @@
       </SearchTable>
     </Card>
   {:else if $navArea === 'styles' && !openedStyle}
-    {@render panelTitle('Styles')}
+    {@render panelTitle('Styles', () => openDialog('style'), 'Ajouter un style')}
     <Card size="xl" class="p-6">
-      <SearchTable bind:query placeholder="Rechercher un style" onadd={() => openDialog('style')}>
+      <SearchTable bind:query placeholder="Rechercher un style">
         <TableHead><TableHeadCell>Nom</TableHeadCell></TableHead>
         <TableBody>
           {#each visibleStyles as style (style.id)}
@@ -447,9 +775,9 @@
       </SearchTable>
     </Card>
   {:else if $navArea === 'library'}
-    {@render panelTitle(LIBRARY_KINDS.find(kind => kind.id === $navChild)?.label || 'Fichiers')}
+    {@render panelTitle(LIBRARY_KINDS.find(kind => kind.id === $navChild)?.label || 'Fichiers', () => openDialog('library'), 'Ajouter un fichier')}
     <Card size="xl" class="p-6">
-      <SearchTable bind:query placeholder="Rechercher un fichier" onadd={() => openDialog('library')}>
+      <SearchTable bind:query placeholder="Rechercher un fichier">
         <TableHead><TableHeadCell>Nom</TableHeadCell></TableHead>
         <TableBody>
           {#each visibleFiles as item (item.file)}
@@ -469,18 +797,13 @@
   <form id="entry-form" class="space-y-3" onsubmit={(e) => { e.preventDefault(); void confirmDialog(); }}>
     {#if dialog === 'season'}
       <Label>Nom <Input class="mt-1" bind:value={entryName} /></Label>
-      <Label>Catégorie
-        <Select class="mt-1" bind:value={categoryId} items={$categories.map(cat => ({ value: cat.id, name: cat.name }))} />
-      </Label>
-      <Label>Zone <Input class="mt-1" bind:value={zone} /></Label>
-      <Label>Du <Input class="mt-1" type="date" bind:value={from} /></Label>
-      <Label>Au <Input class="mt-1" type="date" bind:value={to} /></Label>
     {:else if dialog === 'slot'}
-      <Label>Fiche <Input class="mt-1" bind:value={entryName} /></Label>
-      <Label>Date <Input class="mt-1" bind:value={plainName} /></Label>
+      <Label>Date <Input class="mt-1" type="date" bind:value={entryName} /></Label>
       <Label>Séance
         <Select class="mt-1" bind:value={sessionId} items={sessionChoices.map(session => ({ value: session.id, name: session.label }))} />
       </Label>
+    {:else if dialog === 'player'}
+      <Label>Nom <Input class="mt-1" bind:value={entryName} /></Label>
     {:else if dialog === 'library'}
       <Label>Nom <Input class="mt-1" bind:value={entryName} /></Label>
     {:else}
@@ -496,3 +819,52 @@
     <Button color="brand" type="submit" form="entry-form">OK</Button>
   {/snippet}
 </Modal>
+
+<style>
+  .eval-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  @media (min-width: 768px) {
+    .eval-split {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+    :global(.is-wide) .eval-split {
+      grid-template-columns: minmax(0, 28rem) minmax(0, 1fr);
+    }
+  }
+  .eval-md { padding: 1rem; font-size: 0.975rem; line-height: 1.5; }
+  .eval-md :global(h1) { margin: 0 0 0.75rem; font-size: 1.15rem; font-weight: 700; }
+  .eval-md :global(h2) { margin: 0.9rem 0 0.3rem; font-size: 1rem; font-weight: 650; }
+  .eval-md :global(p) { margin: 0.35rem 0; }
+  .eval-md :global(ul) { margin: 0.25rem 0 0.6rem; padding-left: 1.15rem; list-style: disc; }
+  .eval-md :global(li) { margin: 0.12rem 0; }
+  .eval-md :global(.md-note) { list-style: none; color: #6b7280; }
+  .eval-date { position: relative; z-index: 20; padding: 1rem 1rem 0; }
+  .eval-date :global(input[data-part="input"]) {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0 2.25rem 0 0;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: inherit;
+  }
+  .eval-date :global(input[data-part="input"]:focus) {
+    outline: none;
+    box-shadow: none;
+  }
+  .eval-editor {
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    height: calc(100vh - 16.5rem);
+    min-height: 24rem;
+    padding-bottom: 1rem;
+  }
+  .eval-editor :global(.raw-md) {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    border: 0;
+  }
+</style>

@@ -29,7 +29,10 @@
     if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
     if (mod && e.key.toLowerCase() === 'c') { e.preventDefault(); copySelection(); return; }
     if (mod && e.key.toLowerCase() === 'x') { e.preventDefault(); cutSelection(); return; }
-    if (mod && e.key.toLowerCase() === 'v') { e.preventDefault(); pasteClipboard(); return; }
+    if (mod && e.key.toLowerCase() === 'v') {
+      if ($screen === 'exercise') { e.preventDefault(); pasteClipboard(); }
+      return;
+    }
     if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateSelection(); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); }
   }
