@@ -1,18 +1,14 @@
 import { get, writable } from 'svelte/store';
 import { idbGet, idbSet } from '$lib/storage/idb';
 import {
-  DEFAULT_PAGE,
   commitToActiveFrame,
-  currentPage,
   currentPageId,
   isDirty,
   migratePage,
   pages,
   selectedIds,
-  setStyleHook,
   showNotes,
   tacticName,
-  updatePageSettings,
   type Page
 } from '$lib/stores/workspace';
 import {
@@ -27,10 +23,7 @@ import {
   emptyTrainer,
   isWorkspaceIndex,
   slug,
-  styleFromPage,
-  visualsFromStyle,
   type CategoryInfo,
-  type PageStyle,
   type SeanceFile,
   type SeanceHeader,
   type TrainerInfo
@@ -45,14 +38,16 @@ import {
   EVALUATIONS_DIR,
   PLAYER_IMAGE,
   PLAYERS_DIR,
-  playerNames,
+  pruneSlots,
+  renameSeasonPlayer,
+  seasonPlayerNames,
   SEASONS_DIR,
   THEMES_DIR,
-  LIBRARY_KINDS,
   REPERTOIRE_TYPE,
+  elementRel,
   themeKey,
+  type LibraryFileKind,
   type LibraryItem,
-  type LibraryKind,
   type SeasonInfo,
   type SeasonPlayer,
   type ThemeInfo,
@@ -60,7 +55,7 @@ import {
   type WorkspaceDoor
 } from './catalog';
 import { armAddress, bindAddress, followAddress, parseAddress, publishAddress, type AddressTarget } from './address';
-import { confirmLeaveExercise } from './exerciseDraft';
+import { confirmLeaveEditors } from './editorLeave';
 
 const HANDLE_KEY = 'workspace_dir';
 const CURSOR_KEY = 'fctactics_ws_cursor';
@@ -97,6 +92,7 @@ export const needsPermission = writable(false);
 export const folderLabel = writable('');
 export const screen = writable<WorkspaceScreen>('gate');
 export const restoring = writable(true);
+export const catalogReady = writable(false);
 export const workspaceError = writable<string | null>(null);
 export const trainer = writable<TrainerInfo>(emptyTrainer());
 export const categories = writable<CategoryInfo[]>([]);
@@ -107,7 +103,6 @@ export const exercisePaths = writable<Record<string, string>>({});
 export const seanceHeader = writable<SeanceHeader>(emptyHeader());
 export const sessionTheme = writable<{ name: string; markdown: string }>({ name: '', markdown: '' });
 export const seasonSelection = writable<string[] | null>(null);
-export const styles = writable<PageStyle[]>([]);
 export const seasons = writable<SeasonInfo[]>([]);
 export const themes = writable<ThemeInfo[]>([]);
 export const libraryItems = writable<LibraryItem[]>([]);
@@ -119,8 +114,6 @@ export const navChild = writable('');
 export const navLeaf = writable('');
 
 let root: Dir | null = null;
-/** null means the style file lives in the workspace-root styles folder. */
-const styleSources = new Map<string, string | null>();
 let ready = false;
 let applying = false;
 let saving = false;
@@ -129,13 +122,6 @@ let savePending = false;
 function emptyHeader(): SeanceHeader {
   return { id: '', name: '', sheet: 'S1', date: '', phase: '', principle: '', means: '' };
 }
-
-setStyleHook((page, updates) => {
-  const id = page.styleId;
-  if (!id) return;
-  styles.update(list => list.map(style => (style.id === id ? { ...style, ...updates } : style)));
-  pages.update(list => list.map(p => (p.id !== page.id && p.styleId === id ? { ...p, ...updates } : p)));
-});
 
 function asDir(handle: Dir): Dir & {
   queryPermission?: (o: { mode: 'readwrite' }) => Promise<PermissionState>;
@@ -326,15 +312,6 @@ export function startWorkspaceAutosave() {
   window.addEventListener('beforeunload', () => { void saveSnapshot(); });
 }
 
-async function writeStyle(style: PageStyle) {
-  if (!root) return;
-  const catId = styleSources.get(style.id);
-  const dir = catId
-    ? await under(root, [THEMES_DIR, 'categories', catId, 'styles'], true)
-    : await under(root, ['studio', 'styles'], true);
-  await writeJson(dir, `${style.id}.json`, style);
-}
-
 let coachWrite: Promise<void> = Promise.resolve();
 let portraitObjectUrl = '';
 
@@ -484,7 +461,6 @@ type SharedDisk = {
   coach?: unknown;
   folder?: string;
   categories?: CategoryInfo[];
-  styles?: PageStyle[];
   seasons?: SeasonInfo[];
   themes?: ThemeInfo[];
   library?: LibraryItem[];
@@ -664,7 +640,6 @@ async function markdownFrom(name: TemplateName, values: Record<string, string>):
 function applySharedDisk(info: SharedDisk) {
   if (!get(folderLabel)) folderLabel.set(info.folder || 'data');
   categories.set(info.categories || []);
-  if (info.styles) styles.set(info.styles);
   seasons.set(info.seasons || []);
   themes.set(info.themes || []);
   libraryItems.set(info.library || []);
@@ -818,10 +793,11 @@ export async function saveSeasonMarkdown(markdown: string): Promise<boolean> {
   }
   const title = markdownTitle(text);
   const nextId = `${SEASONS_DIR}/${folder}`;
-  seasons.update(list => list.map(item => item.id === season.id ? { ...item, id: nextId, name: title || item.name } : item));
+  seasons.update(list => list.map(item => item.id === season.id ? { ...item, id: nextId, name: title || item.name, markdown: text } : item));
   if (get(navItem) === season.id) navItem.set(nextId);
   persistCursor();
   if (folder !== current) void refreshPortrait();
+  await reloadBrowse();
   return true;
 }
 
@@ -887,7 +863,6 @@ export async function saveOpenSeance() {
     const file = get(seanceFile);
     const handleOk = Boolean(root) && await ensureAccess(false);
     if (handleOk && root) {
-      for (const style of get(styles)) await writeStyle(style);
       if (seance && file) await saveHandleSeance(root, cat?.id || '', file, seance);
     } else if (seance && file && usesSharedDisk()) {
       try {
@@ -1040,7 +1015,6 @@ type IndexNode = {
     means?: string;
     slots?: Array<{ date?: string; session?: string; exercises?: string[] }>;
     coach?: unknown;
-    players?: unknown;
     exercises?: string[];
     sessions?: string[];
     themes?: string[];
@@ -1074,23 +1048,24 @@ async function dirAt(start: Dir, segments: string[]): Promise<Dir> {
 async function listLibrary(dir: Dir): Promise<LibraryItem[]> {
   const out: LibraryItem[] = [];
   let library: Dir;
-  try { library = await under(dir, ['studio', 'library']); } catch { return out; }
-  for await (const [domain, domainHandle] of library.entries()) {
-    if (domainHandle.kind !== 'directory') continue;
-    for await (const [kind, kindHandle] of (domainHandle as Dir).entries()) {
-      if (kindHandle.kind !== 'directory' || !LIBRARY_KINDS.some(item => item.id === kind)) continue;
-      for await (const [file, fileHandle] of (kindHandle as Dir).entries()) {
-        if (fileHandle.kind !== 'file' || !/\.(svg|ya?ml)$/i.test(file)) continue;
-        out.push({
-          domain,
-          kind: kind as LibraryKind,
-          name: file.replace(/\.(svg|ya?ml)$/i, ''),
-          file: `studio/library/${domain}/${kind}/${file}`
-        });
+  try { library = await under(dir, ['elements']); } catch { return out; }
+  async function walk(handle: Dir, prefix: string[]) {
+    for await (const [name, child] of handle.entries()) {
+      if (name.startsWith('.')) continue;
+      const next = [...prefix, name];
+      const itemPath = ['elements', ...next].join('/');
+      if (child.kind === 'directory') {
+        out.push({ path: itemPath, name, kind: 'folder' });
+        await walk(child as Dir, next);
+      } else if (/\.ya?ml$/i.test(name)) {
+        out.push({ path: itemPath, name: name.replace(/\.ya?ml$/i, ''), kind: 'yaml' });
+      } else if (/\.svg$/i.test(name)) {
+        out.push({ path: itemPath, name: name.replace(/\.svg$/i, ''), kind: 'svg' });
       }
     }
   }
-  out.sort((a, b) => a.domain.localeCompare(b.domain, 'fr') || a.kind.localeCompare(b.kind, 'fr') || a.name.localeCompare(b.name, 'fr'));
+  await walk(library, []);
+  out.sort((a, b) => a.path.localeCompare(b.path, 'fr'));
   return out;
 }
 
@@ -1098,9 +1073,9 @@ function sessionNameOf(node: Pick<IndexNode, 'title' | 'data'> | undefined, fall
   return node?.title?.trim() || node?.data.name?.trim() || fallback;
 }
 
-async function readPlayers(dir: Dir, names: unknown): Promise<SeasonPlayer[]> {
+async function readPlayers(dir: Dir, names: string[]): Promise<SeasonPlayer[]> {
   const players: SeasonPlayer[] = [];
-  for (const name of playerNames(names)) {
+  for (const name of names) {
     const id = folderSlug(name);
     if (!id) continue;
     const evaluations: string[] = [];
@@ -1133,11 +1108,14 @@ async function readHandleBrowse(dir: Dir) {
         exercises: Array.isArray(slot.exercises) ? slot.exercises.filter(id => id !== '') : undefined
       };
     });
+    const seasonDir = await dirAt(dir, node.segments);
+    const markdown = (await readText(seasonDir, 'content.md')) || '';
     return {
       id: node.segments.join('/'),
       uuid: node.data.id || '',
       name: node.title || node.data.name || folder,
-      players: await readPlayers(await dirAt(dir, node.segments), node.data.players),
+      markdown,
+      players: await readPlayers(seasonDir, seasonPlayerNames(markdown)),
       slots
     };
   }));
@@ -1157,7 +1135,8 @@ function themesOf(nodes: IndexNode[]): ThemeInfo[] {
       .map(item => ({
         id: item.data.id || item.segments[2] || '',
         folder: item.segments[2] || '',
-        name: sessionNameOf(item)
+        name: sessionNameOf(item),
+        exercises: Array.isArray(item.data.exercises) ? item.data.exercises.length : 0
       }));
     return { id, name: node.title || node.data.name || id, uuid: node.data.id || '', sessions: orderByIds(sessions, node.data.sessions) };
   }).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
@@ -1346,40 +1325,6 @@ async function saveHandleSeance(workspace: Dir, _categoryId: string, _file: stri
   exercisePaths.set(await writeExerciseFolders(dir, seance.exercises, session.segments.join('/')));
 }
 
-async function listStyles(folder: Dir): Promise<PageStyle[]> {
-  const out: PageStyle[] = [];
-  try {
-    const dir = await childDir(folder, 'styles');
-    for await (const [name, handle] of dir.entries()) {
-      if (handle.kind !== 'file' || !name.endsWith('.json')) continue;
-      const style = await readJson<PageStyle>(dir, name);
-      if (style?.id) out.push(style);
-    }
-  } catch { /* empty */ }
-  return out;
-}
-
-async function listAllStyles(handle: Dir): Promise<PageStyle[]> {
-  styleSources.clear();
-  const out: PageStyle[] = [];
-  try {
-    for (const style of await listStyles(await childDir(handle, 'studio'))) {
-      styleSources.set(style.id, null);
-      out.push(style);
-    }
-  } catch { /* pas encore d'atelier */ }
-  for (const cat of await listCategories(handle)) {
-    const folder = await under(handle, [THEMES_DIR, 'categories', cat.id]);
-    for (const style of await listStyles(folder)) {
-      if (styleSources.has(style.id)) continue;
-      styleSources.set(style.id, cat.id);
-      out.push(style);
-    }
-  }
-  out.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-  return out;
-}
-
 async function isEmptyDir(dir: Dir): Promise<boolean> {
   for await (const _entry of dir.entries()) return false;
   return true;
@@ -1406,8 +1351,7 @@ export const missingPage = writable('');
 
 async function releaseExercise(): Promise<boolean> {
   missingPage.set('');
-  if (get(screen) !== 'exercise') return true;
-  const ok = await confirmLeaveExercise();
+  const ok = await confirmLeaveEditors();
   if (!ok) breadcrumbEpoch.update(n => n + 1);
   return ok;
 }
@@ -1430,7 +1374,7 @@ export async function openDoor(door: WorkspaceDoor) {
   navItem.set('');
   navChild.set('');
   navLeaf.set('');
-  navArea.set(door === 'season' ? 'seasons' : door === 'repertoire' ? 'themes' : '');
+  navArea.set(door === 'season' ? 'seasons' : door === 'repertoire' ? 'themes' : door === 'elements' ? 'elements' : '');
   screen.set('home');
   finishCoach();
   persistCursor();
@@ -1463,12 +1407,14 @@ export async function openNavItem(id: string) {
   persistCursor();
 }
 
-export function openEvaluation(date: string) {
+export async function openEvaluation(date: string) {
+  if (!(await releaseExercise())) return;
   navLeaf.set(date);
   persistCursor();
 }
 
-export function closeEvaluation() {
+export async function closeEvaluation() {
+  if (!(await releaseExercise())) return;
   navLeaf.set('');
   persistCursor();
 }
@@ -1607,53 +1553,10 @@ export async function renameCategory(id: string, name: string): Promise<string |
   catch { return 'Impossible de renommer le dossier.'; }
   const next: CategoryInfo = { id: label, name: label };
   await writeJson(await childDir(parent, label), 'index.json', categoryIndex(label));
-  for (const [styleId, catId] of styleSources) if (catId === id) styleSources.set(styleId, label);
   categories.update(list => list.map(cat => (cat.id === id ? next : cat)).sort((a, b) => a.name.localeCompare(b.name, 'fr')));
   if (get(categoryInfo)?.id === id) categoryInfo.set(next);
   await saveSnapshot();
   return null;
-}
-
-export async function createStyle(fileName: string, displayName: string): Promise<string | null> {
-  const issue = directoryNameIssue(fileName, 'fichier');
-  if (issue) return issue;
-  const label = displayName.trim();
-  if (!label) return 'Indique un nom.';
-  const id = fileName.trim();
-  if (get(styles).some(style => style.id === id)) return 'Ce fichier existe déjà.';
-  const style = styleFromPage(structuredClone(DEFAULT_PAGE), id, label);
-  if (root && await ensureAccess(true)) {
-    const dir = await under(root, ['studio', 'styles'], true);
-    try {
-      await dir.getFileHandle(`${id}.json`);
-      return 'Ce fichier existe déjà.';
-    } catch { /* le fichier n'existe pas */ }
-    styleSources.set(style.id, null);
-    await writeStyle(style);
-  } else {
-    const error = await postShared({ type: 'style', style });
-    if (error) return error;
-    styleSources.set(style.id, null);
-  }
-  styles.update(list => [...list, style].sort((a, b) => a.name.localeCompare(b.name, 'fr')));
-  await saveSnapshot();
-  return null;
-}
-
-export async function updateStyle(id: string, patch: Partial<PageStyle>) {
-  let next: PageStyle | null = null;
-  styles.update(list => list.map(style => {
-    if (style.id !== id) return style;
-    next = { ...style, ...patch, id };
-    return next;
-  }));
-  if (!next) return;
-  const saved: PageStyle = next;
-  if (root && await ensureAccess(true)) await writeStyle(saved);
-  else await postShared({ type: 'style', style: saved, update: true });
-  const visual = visualsFromStyle(saved);
-  pages.update(list => list.map(page => (page.styleId === id ? { ...page, ...visual } : page)));
-  await saveSnapshot();
 }
 
 export async function refreshWorkspace() {
@@ -1667,7 +1570,6 @@ export async function refreshWorkspace() {
   if (shared) applySharedDisk(shared);
   else {
     categories.set(listed);
-    styles.set(await listAllStyles(root!));
     await readHandleBrowse(root!);
   }
   if (catId && !listed.some(cat => cat.id === catId)) {
@@ -1779,7 +1681,6 @@ export async function createSeason(name: string): Promise<string | null> {
   const doc = {
     type: SEASON_TYPE,
     id: crypto.randomUUID(),
-    players: [] as string[],
     slots: [] as unknown[]
   };
   if (root && await ensureAccess(true)) {
@@ -1794,6 +1695,133 @@ export async function createSeason(name: string): Promise<string | null> {
   await reloadBrowse();
   navItem.set(id);
   persistCursor();
+  return null;
+}
+
+export async function deleteSeason(seasonId: string): Promise<string | null> {
+  const season = get(seasons).find(item => item.id === seasonId);
+  const folder = season?.id.split('/')[1] || '';
+  if (!season || !folder) return 'Cette saison n’existe pas.';
+  if (root && await ensureAccess(true)) {
+    const failed = await removeHere(await under(root, [SEASONS_DIR]), folder);
+    if (failed) return failed;
+  } else {
+    const error = await postShared({ type: 'delete-season', id: season.id });
+    if (error) return error;
+  }
+  await reloadBrowse();
+  return null;
+}
+
+async function removeHere(dir: Dir, name: string): Promise<string | null> {
+  try {
+    await removeChild(dir, name);
+    return null;
+  } catch {
+    return 'Suppression impossible.';
+  }
+}
+
+async function dropHandleSeasonRefs(workspace: Dir, sessions: Set<string>, exercises: Set<string>) {
+  let dir: Dir;
+  try {
+    dir = await under(workspace, [SEASONS_DIR]);
+  } catch {
+    return;
+  }
+  const folders: Dir[] = [];
+  for await (const [, handle] of dir.entries()) if (handle.kind === 'directory') folders.push(handle as Dir);
+  for (const folder of folders) {
+    const data = await readJson<Record<string, unknown>>(folder, 'index.json');
+    if (data?.type !== SEASON_TYPE || !Array.isArray(data.slots)) continue;
+    const slots = pruneSlots(data.slots as Array<{ session?: unknown; exercises?: unknown }>, sessions, exercises);
+    if (slots) await writeJson(folder, 'index.json', { ...data, slots });
+  }
+}
+
+export async function deleteTheme(themeId: string): Promise<string | null> {
+  const list = get(themes);
+  const theme = list.find(item => item.id === themeId);
+  if (!theme) return 'Ce thème n’existe pas.';
+  if (root && await ensureAccess(true)) {
+    const failed = await removeHere(await under(root, [THEMES_DIR]), theme.id);
+    if (failed) return failed;
+    await writeThemeOrder(root, list.filter(item => item !== theme).map(themeKey));
+    await dropHandleSeasonRefs(root, new Set(theme.sessions.map(session => session.id)), new Set());
+  } else {
+    const error = await postShared({ type: 'delete-theme', id: theme.id });
+    if (error) return error;
+  }
+  await reloadBrowse();
+  return null;
+}
+
+export async function deleteThemeSession(themeId: string, sessionId: string): Promise<string | null> {
+  const theme = get(themes).find(item => item.id === themeId);
+  const session = theme?.sessions.find(item => item.id === sessionId);
+  if (!theme || !session) return 'Cette séance n’existe pas.';
+  if (root && await ensureAccess(true)) {
+    const themeDir = await under(root, [THEMES_DIR, theme.id]);
+    const failed = await removeHere(themeDir, session.folder);
+    if (failed) return failed;
+    await writeSessionOrder(themeDir, theme.sessions.filter(item => item !== session).map(item => item.id));
+    await dropHandleSeasonRefs(root, new Set([session.id]), new Set());
+  } else {
+    const error = await postShared({ type: 'delete-session', theme: theme.id, id: session.id });
+    if (error) return error;
+  }
+  await reloadBrowse();
+  return null;
+}
+
+export async function deleteExercise(id: string): Promise<string | null> {
+  const sessionId = get(seanceHeader).id;
+  const rest = get(pages).filter(page => page.id !== id);
+  if (!sessionId || rest.length === get(pages).length) return 'Cet exercice n’existe pas.';
+  if (root && await ensureAccess(true)) {
+    const nodes: IndexNode[] = [];
+    await collectIndexes(root, [], nodes);
+    const session = nodes.find(node => repertoireSession(node, sessionId));
+    if (!session) return 'Cette séance n’existe pas.';
+    const parent = session.segments.join('/');
+    const exercise = nodes.find(node => node.data.type === EXERCISE_TYPE && node.data.id === id && node.segments.slice(0, -1).join('/') === parent);
+    const dir = await dirAt(root, session.segments);
+    const failed = exercise ? await removeHere(dir, exercise.segments[exercise.segments.length - 1]) : null;
+    if (failed) return failed;
+    await writeJson(dir, 'index.json', orderSessionIndex({ ...session.data, exercises: rest.map(page => page.id) }));
+    await dropHandleSeasonRefs(root, new Set(), new Set([id]));
+  } else {
+    const error = await postShared({ type: 'delete-exercise', session: sessionId, id });
+    if (error) return error;
+  }
+  pages.set(rest);
+  if (get(currentPageId) === id) currentPageId.set(rest[0]?.id || '');
+  exercisePaths.update(paths => {
+    const { [id]: _removed, ...kept } = paths;
+    return kept;
+  });
+  await reloadBrowse();
+  await saveSnapshot();
+  return null;
+}
+
+export async function deleteLibraryItem(file: string): Promise<string | null> {
+  if (!get(libraryItems).some(item => item.path === file)) return 'Cet élément n’existe pas.';
+  if (root && await ensureAccess(true)) {
+    const segments = file.split('/');
+    const name = segments.pop() || '';
+    const failed = await removeHere(await under(root, segments), name);
+    if (failed) return failed;
+  } else {
+    const error = await postShared({ type: 'delete-library', file });
+    if (error) return error;
+  }
+  const current = get(navItem);
+  const rel = elementRel(file);
+  if (current === rel || current.startsWith(`${rel}/`)) {
+    navItem.set(rel.split('/').slice(0, -1).join('/'));
+  }
+  await reloadBrowse();
   return null;
 }
 
@@ -1853,30 +1881,6 @@ export function loadEvaluation(playerId: string, date: string): Promise<string> 
   return readSheet(playerId, date);
 }
 
-export async function createPlayer(name: string): Promise<string | null> {
-  const seasonId = openSeasonId();
-  const season = get(seasons).find(item => item.id === seasonId);
-  if (!season) return 'Ouvre une saison.';
-  const label = name.trim();
-  const folder = folderSlug(label);
-  if (!folder) return 'Indique un nom.';
-  if (season.players.some(player => player.id === folder)) return 'Ce joueur existe déjà.';
-  if (root && await ensureAccess(true)) {
-    const dir = await under(root, seasonId.split('/'));
-    const data = await readJson<Record<string, unknown>>(dir, 'index.json');
-    if (!data) return 'Cette saison n’existe pas.';
-    const names = playerNames(data.players);
-    if (names.some(item => folderSlug(item) === folder)) return 'Ce joueur existe déjà.';
-    const { type, id, slots, players: _players, ...rest } = data;
-    await writeJson(dir, 'index.json', { type, id, players: [...names, label], ...rest, slots });
-  } else {
-    const error = await postShared({ type: 'player', season: seasonId, name: label });
-    if (error) return error;
-  }
-  await reloadBrowse();
-  return null;
-}
-
 export async function renamePlayer(playerId: string, name: string): Promise<string | null> {
   const seasonId = openSeasonId();
   const season = get(seasons).find(item => item.id === seasonId);
@@ -1890,11 +1894,10 @@ export async function renamePlayer(playerId: string, name: string): Promise<stri
   if (folder !== playerId && season.players.some(player => player.id === folder)) return 'Ce joueur existe déjà.';
   if (root && await ensureAccess(true)) {
     const dir = await under(root, seasonId.split('/'));
-    const data = await readJson<Record<string, unknown>>(dir, 'index.json');
-    if (!data) return 'Cette saison n’existe pas.';
-    const names = playerNames(data.players);
-    const index = names.findIndex(item => folderSlug(item) === playerId);
-    if (index < 0) return 'Ce joueur n’existe pas.';
+    const markdown = await readText(dir, 'content.md');
+    if (markdown == null) return 'Cette saison n’existe pas.';
+    const renamed = renameSeasonPlayer(markdown, playerId, label);
+    if (renamed == null) return 'Ce joueur n’existe pas.';
     if (folder !== playerId) {
       try {
         const parent = await under(root, [...seasonId.split('/'), PLAYERS_DIR]);
@@ -1903,9 +1906,7 @@ export async function renamePlayer(playerId: string, name: string): Promise<stri
         if (moved !== folder) return 'Impossible de renommer ce joueur.';
       } catch { /* pas encore de dossier */ }
     }
-    names[index] = label;
-    const { type, id, slots, players: _players, ...rest } = data;
-    await writeJson(dir, 'index.json', { type, id, players: names, ...rest, slots });
+    await writeText(dir, 'content.md', renamed);
   } else {
     const error = await postShared({ type: 'rename-player', season: seasonId, player: playerId, name: label });
     if (error) return error;
@@ -2096,29 +2097,54 @@ export async function reorderExercises(ids: string[]): Promise<string | null> {
   return postShared({ type: 'order-exercises', id, exercises: ids });
 }
 
-export async function createLibraryItem(fileName: string): Promise<string | null> {
-  const domain = get(navItem);
-  const kind = get(navChild) as LibraryKind;
-  if (!domain || !LIBRARY_KINDS.some(item => item.id === kind)) return 'Ouvre un dossier de la bibliothèque.';
+function libraryFolder(): { rel: string } | string {
+  const rel = get(navItem);
+  if (!rel) return { rel: '' };
+  const found = get(libraryItems).find(item => elementRel(item.path) === rel);
+  if (!found || found.kind !== 'folder') return 'Ouvre un dossier.';
+  return { rel };
+}
+
+function libraryTaken(rel: string): boolean {
+  return get(libraryItems).some(item => elementRel(item.path) === rel);
+}
+
+export async function createLibraryFolder(folderName: string): Promise<string | null> {
+  const parent = libraryFolder();
+  if (typeof parent === 'string') return parent;
+  const issue = directoryNameIssue(folderName, 'répertoire');
+  if (issue) return issue;
+  const name = folderName.trim();
+  const rel = [parent.rel, name].filter(Boolean).join('/');
+  if (libraryTaken(rel)) return 'Ce dossier existe déjà.';
+  if (root && await ensureAccess(true)) {
+    await under(root, ['elements', ...rel.split('/')], true);
+  } else {
+    const error = await postShared({ type: 'library', dir: parent.rel, name, kind: 'folder' });
+    if (error) return error;
+  }
+  await reloadBrowse();
+  return null;
+}
+
+export async function createLibraryItem(fileName: string, kind: Extract<LibraryFileKind, 'yaml' | 'svg'>): Promise<string | null> {
+  const parent = libraryFolder();
+  if (typeof parent === 'string') return parent;
   const issue = directoryNameIssue(fileName, 'fichier');
   if (issue) return issue;
   const name = fileName.trim();
-  if (get(libraryItems).some(item => item.domain === domain && item.kind === kind && item.name === name)) return 'Ce fichier existe déjà.';
-  const ext = kind === 'shapes' ? 'yaml' : 'svg';
-  const source = kind === 'shapes'
-    ? `type: fccn-schema:0\nname: ${name}\nunits: relative\nplayers: []\n`
-    : kind === 'pitches'
-      ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 72 56.5">\n</svg>\n'
-      : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.5 -0.5 1 1">\n</svg>\n';
+  if (!name.includes('.')) return 'Le nom est un chemin pointé, par exemple object.plot.';
+  const ext = kind === 'yaml' ? 'yaml' : 'svg';
+  const rel = [parent.rel, `${name}.${ext}`].filter(Boolean).join('/');
+  if (libraryTaken(rel)) return 'Ce fichier existe déjà.';
+  const yaml = `version: fccn-schema:1\n`;
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-1 -1 2 2">\n</svg>\n';
+  const source = kind === 'yaml' ? yaml : svg;
   if (root && await ensureAccess(true)) {
-    const dir = await under(root, ['studio', 'library', domain, kind], true);
-    try {
-      await dir.getFileHandle(`${name}.${ext}`);
-      return 'Ce fichier existe déjà.';
-    } catch { /* le fichier n'existe pas */ }
+    const dir = await under(root, ['elements', ...parent.rel.split('/').filter(Boolean)], true);
     await writeText(dir, `${name}.${ext}`, source);
   } else {
-    const error = await postShared({ type: 'library', domain, kind, name });
+    const error = await postShared({ type: 'library', dir: parent.rel, name, kind });
     if (error) return error;
   }
   await reloadBrowse();
@@ -2131,15 +2157,13 @@ export async function createExercise(dirName: string, displayName: string): Prom
   const label = displayName.trim();
   if (!label) return 'Indique un nom.';
   const id = dirName.trim();
-  if (!get(categoryInfo) || !get(seanceFile)) return 'Ouvre une séance.';
+  if (!get(seanceHeader).id || !get(seanceFile)) return 'Ouvre une séance.';
   if (get(pages).some(page => page.id === id)) return 'Ce répertoire existe déjà.';
   const page = blankExercise(label);
   const drafted = parseExerciseDocument(fillTemplate(await readTemplate('exercise'), { name: label }));
   page.name = drafted.name || label;
   page.drill = { ...(page.drill || {}), ...drafted.drill, kind: drafted.drill.kind || label };
   page.markdownContent = drafted.markdownContent;
-  const base = get(currentPage);
-  if (base?.styleId) Object.assign(page, visualsFromStyle(styleFromPage(base, base.styleId, label)));
   page.id = id;
   page.name = label;
   pages.update(list => [...list, page]);
@@ -2159,22 +2183,6 @@ export async function openSeance(file: string) {
   applySeance(loaded.seance, file, undefined, loaded.paths);
   await saveSnapshot();
   persistCursor();
-}
-
-export function useStyle(id: string) {
-  const style = get(styles).find(item => item.id === id);
-  if (!style) return;
-  updatePageSettings(visualsFromStyle(style));
-}
-
-export function saveStyleFromExercise(name: string) {
-  const page = get(currentPage);
-  if (!page) return;
-  const used = new Set(get(styles).map(style => style.id));
-  const style = styleFromPage(page, uniqueSlug(name || 'style', used), name.trim() || 'Style');
-  styles.update(list => [...list, style]);
-  updatePageSettings({ styleId: style.id }, { skipHistory: true });
-  scheduleWorkspaceSave();
 }
 
 export async function pickWorkspace(askTemplate = false): Promise<boolean> {
@@ -2201,7 +2209,6 @@ async function recognize(handle: Dir): Promise<boolean> {
   if (await isEmptyDir(handle)) {
     await writeJson(handle, 'index.json', { type: WORKSPACE_TYPE });
     await under(handle, [THEMES_DIR], true);
-    await under(handle, ['studio', 'styles'], true);
     return true;
   }
   const info = await readJson<TrainerInfo & { produit?: string; prenom?: string; nom?: string; product?: string }>(handle, 'index.json');
@@ -2234,7 +2241,6 @@ async function adoptWorkspace(handle: Dir, ask: boolean): Promise<boolean> {
   workspaceError.set(null);
   ready = false;
   categories.set(await listCategories(handle));
-  styles.set(await listAllStyles(handle));
   await readHandleBrowse(handle);
   workspaceOpen.set(true);
   const saved = cursor();
@@ -2381,6 +2387,7 @@ export async function restoreWorkspace(): Promise<boolean> {
     }
     await ensureExercisePaths();
     armAddress();
+    catalogReady.set(true);
     restoring.set(false);
     if ((path === '/' || path === '') && get(workspaceOpen)) publishAddress('replace');
   }
@@ -2486,8 +2493,7 @@ function resolveChild(area: WorkspaceArea | '', item: string, token: string): st
 function missingItem(area: WorkspaceArea | '', item: string): string {
   if (area === 'themes' && !get(themes).some(theme => theme.id === item)) return 'Ce thème n’existe plus.';
   if (area === 'seasons' && !get(seasons).some(season => season.id === item)) return 'Cette saison n’existe plus.';
-  if (area === 'styles' && !get(styles).some(style => style.id === item)) return 'Ce style n’existe plus.';
-  if (area === 'library' && !get(libraryItems).some(entry => entry.domain === item)) return 'Ce domaine de la bibliothèque n’existe plus.';
+  if (area === 'elements' && item && !get(libraryItems).some(entry => elementRel(entry.path) === item)) return 'Cet élément n’existe plus.';
   return '';
 }
 
@@ -2501,7 +2507,6 @@ function missingChild(area: WorkspaceArea | '', item: string, child: string): st
     if (season?.players.some(player => player.id === child)) return '';
     if (!season?.slots.some(slot => slot.session === child)) return `Cette séance ne fait plus partie du planning de la saison « ${season?.name || item} ».`;
   }
-  if (area === 'library' && !LIBRARY_KINDS.some(kind => kind.id === child)) return 'Ce dossier de la bibliothèque n’existe plus.';
   return '';
 }
 
@@ -2520,9 +2525,9 @@ async function goToAddress(target: AddressTarget) {
     if (get(navDoor) !== target.door || get(navArea) || get(screen) === 'gate') await openDoor(target.door);
     return;
   }
-  const onDoor = get(navDoor) === target.door && (target.door === 'season' || get(navArea) === target.area);
+  const onDoor = get(navDoor) === target.door && (target.door === 'season' || target.door === 'elements' || get(navArea) === target.area);
   if (!onDoor) {
-    if (target.door === 'season') await openDoor('season');
+    if (target.door === 'season' || target.door === 'elements') await openDoor(target.door);
     else await openArea(target.area);
   }
   if (!target.item) {
@@ -2553,7 +2558,7 @@ async function goToAddress(target: AddressTarget) {
   const knownPaths = get(exercisePaths);
   const openPages = get(pages);
   const pathsReady = (target.area !== 'themes' && target.area !== 'seasons') || (openPages.length > 0 && openPages.every(page => page.id && knownPaths[page.id]));
-  const childOpen = pathsReady && get(navChild) === child && (get(screen) === 'seance' || get(screen) === 'exercise' || target.area === 'library' || target.area === 'styles');
+  const childOpen = pathsReady && get(navChild) === child && (get(screen) === 'seance' || get(screen) === 'exercise' || target.area === 'elements');
   if (!childOpen) await openNavChild(child);
   const openedSeason = target.area === 'seasons' ? get(seasons).find(entry => entry.id === item) : undefined;
   const openedPlayer = openedSeason?.players.find(entry => entry.id === child);

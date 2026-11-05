@@ -1,22 +1,30 @@
 <script lang="ts">
   import { PauseOutline, PlayOutline, RefreshOutline } from 'flowbite-svelte-icons';
   import { tick } from 'svelte';
-  import { ballCarryGap, ballTransform } from '$lib/schema/ball';
-  import { liveExercisePreview, loadExercisePreview, type ExercisePreview } from '$lib/schema/preview';
+  import { ballRadius, ballTransform, playerTokenRadius } from '$lib/schema/ball';
+  import { crispStrokes } from '$lib/schema/crisp';
+  import { chrome } from '$lib/schema/scene';
+  import { frameOfSize, stretchSvg } from '$lib/schema/stretch';
+  import { liveElementPreview, liveExercisePreview, loadExercisePreview, type ExercisePreview } from '$lib/schema/preview';
 
   let {
     at = '',
     exerciseId = '',
+    element = false,
+    elementId = '',
     compact = false,
     source = undefined as string | undefined,
     editable = false,
     selected = '',
     onpick = undefined as ((ref: string, focus?: boolean) => void) | undefined,
     onmove = undefined as ((ref: string, x: number, y: number) => void) | undefined,
-    onrotate = undefined as ((ref: string, angle: number) => void) | undefined
+    onrotate = undefined as ((ref: string, angle: number) => void) | undefined,
+    onresize = undefined as ((ref: string, w: number | null, h: number | null) => void) | undefined
   }: {
     at?: string;
     exerciseId?: string;
+    element?: boolean;
+    elementId?: string;
     compact?: boolean;
     source?: string;
     editable?: boolean;
@@ -24,6 +32,7 @@
     onpick?: (ref: string, focus?: boolean) => void;
     onmove?: (ref: string, x: number, y: number) => void;
     onrotate?: (ref: string, angle: number) => void;
+    onresize?: (ref: string, w: number | null, h: number | null) => void;
   } = $props();
 
   let preview = $state<ExercisePreview | null>(null);
@@ -48,9 +57,19 @@
     sx: number;
     sy: number;
     relative: boolean;
-    mode: 'move' | 'rotate';
+    mode: 'move' | 'rotate' | 'resize';
+    axis: 'x' | 'y' | 'xy';
     ax: number;
     ay: number;
+    angle: number;
+    vx: number;
+    vy: number;
+    vw: number;
+    vh: number;
+    mw: number;
+    mh: number;
+    grabX: number;
+    grabY: number;
   } | null = null;
 
   const token = $derived(source === undefined ? (exerciseId || at) : `live:${exerciseId || at}`);
@@ -65,7 +84,7 @@
     const key = live === undefined ? (id || path) : `live:${id || path}`;
     if (!key) return;
     let cancelled = false;
-    const task = live === undefined ? loadExercisePreview(path, id) : liveExercisePreview(live, path, id);
+    const task = element ? liveElementPreview(live || '', elementId) : live === undefined ? loadExercisePreview(path, id) : liveExercisePreview(live, path, id);
     void task.then(next => {
       if (cancelled) return;
       preview = next;
@@ -169,12 +188,16 @@
         const distance = Math.hypot(bx - Number(node.getAttribute('cx')), by - Number(node.getAttribute('cy')));
         if (distance < closest) closest = distance;
       }
-      if (near <= closest + 0.05 && near < ballCarryGap + 0.6) {
+      const token = root.querySelector(`[data-kind="player"][data-pick="${CSS.escape(handle.getAttribute('data-ref') || '')}"]`);
+      const playerR = Number(token?.getAttribute('data-radius')) || playerTokenRadius;
+      const ballR = Number(ball.getAttribute('data-radius')) || ballRadius;
+      const gap = playerR + ballR * 0.4;
+      if (near <= closest + playerR * 0.05 && near < gap + playerR * 0.35) {
         const nextX = x + dx;
         const nextY = y + dy;
         ball.setAttribute('data-x', String(nextX));
         ball.setAttribute('data-y', String(nextY));
-        ball.setAttribute('transform', ballTransform(nextX, nextY));
+        ball.setAttribute('transform', ballTransform(nextX, nextY, Number(ball.getAttribute('data-radius')) || undefined));
       }
     }
     for (const node of nodes) {
@@ -196,6 +219,81 @@
     }
   }
 
+  function localOf(angle: number, ax: number, ay: number, world: { x: number; y: number }): { x: number; y: number } {
+    const t = angle * Math.PI / 180;
+    const cos = Math.cos(t);
+    const sin = Math.sin(t);
+    const dx = world.x - ax;
+    const dy = world.y - ay;
+    return { x: dx * cos + dy * sin, y: -dx * sin + dy * cos };
+  }
+
+  function lengthFrom(edge: number, origin: number, extent: number, horizontal: boolean): number {
+    const floor = Math.max(extent * 0.15, 0.05);
+    if (horizontal) {
+      const far = origin + extent;
+      if (Math.abs(far) < 1e-4) return Math.max(floor, Math.abs(edge));
+      return Math.max(floor, edge * extent / far);
+    }
+    const share = extent ? (0 - origin) / extent : 0;
+    if (Math.abs(share) < 1e-4) return Math.max(floor, Math.abs(edge));
+    return Math.max(floor, edge / share);
+  }
+
+  function paintSize(group: SVGElement, w: number, h: number) {
+    const vx = Number(group.getAttribute('data-vx'));
+    const vy = Number(group.getAttribute('data-vy'));
+    const vw = Number(group.getAttribute('data-vw'));
+    const vh = Number(group.getAttribute('data-vh'));
+    const mold = group.querySelector('[data-mold]');
+    const ink = group.querySelector('[data-ink]');
+    if (!(mold instanceof SVGElement) || !(ink instanceof SVGElement) || !(vw > 0) || !(vh > 0)) return;
+    const xRule = group.getAttribute('data-stretch-x') || undefined;
+    const yRule = group.getAttribute('data-stretch-y') || undefined;
+    const ux = Number(group.getAttribute('data-ux')) || 1;
+    const uy = Number(group.getAttribute('data-uy')) || 1;
+    const drawn = stretchSvg({
+      markup: mold.innerHTML,
+      viewBox: `${vx} ${vy} ${vw} ${vh}`,
+      stretch: { x: xRule, y: yRule }
+    }, w / ux, h / uy);
+    ink.innerHTML = drawn.markup;
+    const min = Number(group.getAttribute('data-min')) || 0;
+    const span = Number(group.getAttribute('data-span')) || 0;
+    const factor = min > 0 && span > 0 ? Math.max(1, (min * span) / Math.max(w, h)) : 1;
+    const u = Number(group.getAttribute('data-u')) || 1;
+    group.setAttribute('data-glyph', String(factor));
+    const draw = group.querySelector('[data-draw]');
+    if (draw instanceof SVGElement) draw.setAttribute('transform', `scale(${factor * ux} ${-factor * uy})`);
+    const pad = chrome.pad * u;
+    const frame = frameOfSize({ x: vx, y: vy, w: vw, h: vh }, w, h);
+    const rect = group.querySelector('[data-frame]');
+    const left = frame.x * factor - pad;
+    const bottom = frame.y * factor - pad;
+    const width = frame.w * factor + pad * 2;
+    const height = frame.h * factor + pad * 2;
+    if (rect instanceof SVGElement) {
+      rect.setAttribute('x', String(left));
+      rect.setAttribute('y', String(bottom));
+      rect.setAttribute('width', String(width));
+      rect.setAttribute('height', String(height));
+    }
+    const size = chrome.handle * u;
+    const place = (axis: string, cx: number, cy: number) => {
+      const node = group.querySelector(`[data-resize="${axis}"]`);
+      if (!(node instanceof SVGElement)) return;
+      node.setAttribute('x', String(cx - size / 2));
+      node.setAttribute('y', String(cy - size / 2));
+    };
+    place('x', left + width, bottom + height / 2);
+    place('y', left + width / 2, bottom + height);
+    place('xy', left + width, bottom + height);
+    const knob = group.querySelector('[data-rotate] circle[cy]');
+    if (knob instanceof SVGElement) knob.setAttribute('cy', String(bottom + height + (chrome.knob + chrome.knobGap) * u));
+    group.setAttribute('data-mw', String(w));
+    group.setAttribute('data-mh', String(h));
+  }
+
   function down(event: PointerEvent) {
     if (!editable || event.button !== 0) return;
     const target = event.target instanceof Element ? event.target : null;
@@ -213,23 +311,49 @@
     phase = 0;
     progress = 0;
     const rotating = !!target?.closest('[data-rotate]');
+    const resizing = target?.closest('[data-resize]')?.getAttribute('data-resize') || '';
     const handle = node?.hasAttribute('data-handle')
       ? node
       : sheetEl?.querySelector(`[data-handle][data-ref="${CSS.escape(ref)}"]`);
+    const group = sheetEl?.querySelector(`[data-kind="mark"][data-ref="${CSS.escape(ref)}"]`);
+    const ax = Number(group?.getAttribute('data-x') || handle?.getAttribute('data-x') || 0);
+    const ay = Number(group?.getAttribute('data-y') || handle?.getAttribute('data-y') || 0);
+    const angle = Number(group?.getAttribute('data-angle') || 0);
+    const world = worldAt(event);
+    const local = world ? localOf(angle, ax, ay, world) : { x: 0, y: 0 };
+    const vx = Number(group?.getAttribute('data-vx') || 0);
+    const vy = Number(group?.getAttribute('data-vy') || 0);
+    const vw = Number(group?.getAttribute('data-vw') || 0);
+    const vh = Number(group?.getAttribute('data-vh') || 0);
+    const mw = Number(group?.getAttribute('data-mw') || vw);
+    const mh = Number(group?.getAttribute('data-mh') || vh);
+    const glyph = Number(group?.getAttribute('data-glyph')) || 1;
+    const edge = vw > 0 && vh > 0 ? frameOfSize({ x: vx, y: vy, w: vw, h: vh }, mw, mh) : null;
+    const localReal = { x: local.x / glyph, y: local.y / glyph };
     drag = {
       ref,
-      canMove: !!handle && !rotating,
+      canMove: !!handle && !rotating && !resizing,
       moved: false,
       startX: event.clientX,
       startY: event.clientY,
       ox: Number(handle?.getAttribute('data-ox') || 0),
       oy: Number(handle?.getAttribute('data-oy') || 0),
-      sx: Number(handle?.getAttribute('data-sx') || 0),
-      sy: Number(handle?.getAttribute('data-sy') || 0),
-      relative: handle?.getAttribute('data-rel') === '1',
-      mode: rotating ? 'rotate' : 'move',
-      ax: Number(handle?.getAttribute('data-x') || 0),
-      ay: Number(handle?.getAttribute('data-y') || 0)
+      sx: Number(group?.getAttribute('data-sx') || handle?.getAttribute('data-sx') || 0),
+      sy: Number(group?.getAttribute('data-sy') || handle?.getAttribute('data-sy') || 0),
+      relative: (group?.getAttribute('data-rel') || handle?.getAttribute('data-rel')) === '1',
+      mode: rotating ? 'rotate' : resizing === 'x' || resizing === 'y' || resizing === 'xy' ? 'resize' : 'move',
+      axis: resizing === 'x' || resizing === 'y' || resizing === 'xy' ? resizing : 'xy',
+      ax,
+      ay,
+      angle,
+      vx,
+      vy,
+      vw,
+      vh,
+      mw,
+      mh,
+      grabX: edge ? localReal.x - (edge.x + edge.w) : 0,
+      grabY: edge ? localReal.y - (edge.y + edge.h) : 0
     };
     onpick?.(ref, false);
   }
@@ -257,9 +381,22 @@
     group.setAttribute('transform', `translate(${current.ax} ${current.ay}) rotate(${angle})`);
   }
 
+  function resize(ref: string, world: { x: number; y: number }, current = drag) {
+    const group = sheetEl?.querySelector(`[data-kind="mark"][data-ref="${CSS.escape(ref)}"]`);
+    if (!current || !(group instanceof SVGElement)) return null;
+    const glyph = Number(group.getAttribute('data-glyph')) || 1;
+    const local = localOf(current.angle, current.ax, current.ay, world);
+    const x = local.x / glyph;
+    const y = local.y / glyph;
+    const w = current.axis === 'y' ? current.mw : lengthFrom(x - current.grabX, current.vx, current.vw, true);
+    const h = current.axis === 'x' ? current.mh : lengthFrom(y - current.grabY, current.vy, current.vh, false);
+    paintSize(group, w, h);
+    return { w, h };
+  }
+
   function move(event: PointerEvent) {
     const current = drag;
-    if (current?.mode === 'rotate') {
+    if (current?.mode === 'rotate' || current?.mode === 'resize') {
       if (!current.moved) {
         if (Math.hypot(event.clientX - current.startX, event.clientY - current.startY) < 4) return;
         current.moved = true;
@@ -267,7 +404,8 @@
       }
       const world = worldAt(event);
       if (!world) return;
-      turn(current.ref, world.x, world.y);
+      if (current.mode === 'resize') resize(current.ref, world);
+      else turn(current.ref, world.x, world.y);
       return;
     }
     if (!current?.canMove) return;
@@ -299,6 +437,15 @@
       onrotate?.(current.ref, aim(current.ax, current.ay, world.x, world.y));
       return;
     }
+    if (current.mode === 'resize') {
+      if (!world) return;
+      const sized = resize(current.ref, world, current);
+      if (!sized) return;
+      const w = current.relative ? (current.sx ? sized.w / current.sx : null) : sized.w;
+      const h = current.relative ? (current.sy ? sized.h / current.sy : null) : sized.h;
+      onresize?.(current.ref, current.axis === 'y' ? null : w, current.axis === 'x' ? null : h);
+      return;
+    }
     if (!world) return;
     const x = current.relative ? (current.sx ? (world.x - current.ox) / current.sx : 0) : world.x - current.ox;
     const y = current.relative ? (current.sy ? (world.y - current.oy) / current.sy : 0) : world.y - current.oy;
@@ -309,6 +456,28 @@
     token;
     zoom = 1;
     fitted = null;
+  });
+
+  $effect(() => {
+    const node = lensEl;
+    const host = sheetEl;
+    const markup = svg;
+    zoom;
+    if (!host || !markup) return;
+    const root = host.querySelector('svg');
+    if (!(root instanceof SVGSVGElement)) return;
+    let frame = 0;
+    const run = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => crispStrokes(root));
+    };
+    run();
+    const observer = new ResizeObserver(run);
+    observer.observe(host);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   });
 
   $effect(() => {
@@ -346,20 +515,43 @@
     });
   }
 
+  let shownMark = '';
+
   $effect(() => {
     const root = sheetEl;
+    const lens = lensEl;
     const mark = selected;
     const markup = svg;
     if (!root || !markup) return;
     for (const node of root.querySelectorAll('circle[data-pick], rect[data-pick]')) {
       node.setAttribute('stroke', node.getAttribute('data-pick') === mark ? '#fde047' : 'transparent');
     }
-    for (const node of root.querySelectorAll('[data-rotate]')) {
+    for (const node of root.querySelectorAll('[data-zone]')) {
+      const on = node.getAttribute('data-zone') === mark;
+      node.setAttribute('stroke', on ? '#fde047' : 'transparent');
+      node.setAttribute('stroke-width', on ? '0.35' : '0.16');
+    }
+    for (const node of root.querySelectorAll('[data-rotate], [data-resize]')) {
       const on = node.closest('[data-pick]')?.getAttribute('data-pick') === mark;
       node.setAttribute('fill-opacity', on ? '1' : '0');
       node.setAttribute('stroke-opacity', on ? '1' : '0');
       node.setAttribute('pointer-events', on ? 'all' : 'none');
     }
+    if (!mark) {
+      shownMark = '';
+      return;
+    }
+    if (!lens || mark === shownMark) return;
+    shownMark = mark;
+    const hit = root.querySelector(`[data-pick="${CSS.escape(mark)}"], [data-zone="${CSS.escape(mark)}"]`);
+    if (!(hit instanceof Element)) return;
+    const box = hit.getBoundingClientRect();
+    const view = lens.getBoundingClientRect();
+    const pad = 16;
+    if (box.bottom > view.bottom - pad) lens.scrollTop += box.bottom - view.bottom + pad;
+    else if (box.top < view.top + pad) lens.scrollTop -= view.top - box.top + pad;
+    if (box.right > view.right - pad) lens.scrollLeft += box.right - view.right + pad;
+    else if (box.left < view.left + pad) lens.scrollLeft -= view.left - box.left + pad;
   });
 </script>
 
@@ -429,6 +621,9 @@
   .sheet.editing :global(circle[data-handle]),
   .sheet.editing :global(rect[data-handle]),
   .sheet.editing :global([data-rotate]) { cursor: grab; }
+  .sheet.editing :global([data-resize="x"]) { cursor: ew-resize; }
+  .sheet.editing :global([data-resize="y"]) { cursor: ns-resize; }
+  .sheet.editing :global([data-resize="xy"]) { cursor: nwse-resize; }
   .sheet.grabbing :global(svg) { cursor: grabbing; }
   .schema-bar {
     display: flex;

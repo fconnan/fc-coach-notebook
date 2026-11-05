@@ -1,42 +1,53 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import SeanceBoard from './SeanceBoard.svelte';
   import ExerciseEditor from './ExerciseEditor.svelte';
+  import ElementYamlEditor from './ElementYamlEditor.svelte';
+  import SvgEditor from './SvgEditor.svelte';
   import { RowDrag } from '$lib/utils/rowDrag.svelte';
   import { matches } from '$lib/utils/search';
   import SearchTable from './SearchTable.svelte';
   import { currentPage } from '$lib/stores/workspace';
   import {
-    styles, seasons, themes, libraryItems, screen,
+    seasons, themes, libraryItems, screen,
     exercisePaths,
     navDoor, navArea, navItem, navChild, navLeaf, missingPage,
     showHome, createCategory, openDoor, openArea, openNavItem, openNavChild, openEvaluation, createSeance,
-    createStyle, updateStyle, createSeason, createSlot, createTheme, createThemeSession, createLibraryItem,
+    createSeason, createSlot, createTheme, createThemeSession, createLibraryFolder, createLibraryItem,
     reorderThemes, reorderThemeSessions,
     commitCoachName, refreshPortrait, savePortrait, portraitUrl, trainer,
-    createPlayer, renamePlayer, loadEvaluation, saveEvaluation,
+    renamePlayer, loadEvaluation, saveEvaluation, saveSeasonMarkdown,
+    deleteSeason, deleteTheme, deleteThemeSession, deleteLibraryItem,
     playerPortraitUrl, savePlayerPortrait
   } from '$lib/workspace/state';
   import EvaluationCharts from './EvaluationCharts.svelte';
   import EvaluationTrend from './EvaluationTrend.svelte';
   import RawMarkdown from './RawMarkdown.svelte';
+  import SplitPane from './SplitPane.svelte';
   import PortraitCard from './PortraitCard.svelte';
   import QuietIconButton from './QuietIconButton.svelte';
+  import RowActions from './RowActions.svelte';
+  import ConfirmDelete, { plural, type DeleteRequest } from './ConfirmDelete.svelte';
+  import { confirmLeaveEditors, registerEditorGate, type EditorGate } from '$lib/workspace/editorLeave';
   import { renderMarkdown } from '$lib/workspace/markdownHtml';
   import { BarsOutline, PenOutline, PlusOutline } from 'flowbite-svelte-icons';
-  import { LIBRARY_KINDS, WORKSPACE_DOORS, type LibraryKind, type WorkspaceArea, type WorkspaceDoor } from '$lib/workspace/catalog';
-  import { folderSlug } from '$lib/workspace/exerciseFile';
+  import {
+    WORKSPACE_DOORS, elementRel,
+    type LibraryItem, type SeasonInfo, type ThemeInfo, type ThemeSessionInfo, type WorkspaceArea, type WorkspaceDoor
+  } from '$lib/workspace/catalog';
   import { WEEKDAYS, longFrenchDate, monthGrid, monthLabel, shiftMonth, todayParts } from '$lib/workspace/calendar';
+  import { skillsMarkerFrom, withoutSkillsMarker, type SkillsMarker } from '$lib/workspace/evaluation';
   import { fillTemplate, readTemplate } from '$lib/workspace/templates';
   import seancesArt from '$lib/assets/door-seances.jpg';
   import seasonArt from '$lib/assets/door-season.jpg';
-  import atelierArt from '$lib/assets/door-atelier.jpg';
-  import { type PageStyle } from '$lib/workspace/model';
+  import elementsArt from '$lib/assets/door-atelier.jpg';
   import {
-    Alert, Button, Card, Datepicker, Heading, Input, Label, Modal, Select,
+    Alert, Button, ButtonGroup, Card, Datepicker, Heading, Input, Label, Modal, Select,
     TableBody, TableBodyCell, TableBodyRow, TableHead, TableHeadCell
   } from 'flowbite-svelte';
 
-  let dialog = $state<'category' | 'style' | 'seance' | 'season' | 'slot' | 'theme' | 'session' | 'library' | 'player' | null>(null);
+  let dialog = $state<'category' | 'seance' | 'season' | 'slot' | 'theme' | 'session' | 'library' | null>(null);
+  let libraryKind = $state<'folder' | 'yaml' | 'svg'>('yaml');
   let entryOpen = $state(false);
   let entryName = $state('');
   let plainName = $state('');
@@ -48,10 +59,43 @@
   let evaluationEditing = $state(false);
   let evaluationNew = $state(false);
   let evaluationDate = $state<Date | undefined>(undefined);
+  let skillsMarker = $state<SkillsMarker | null>(null);
   let draftPlayer = $state('');
   let evaluationTexts = $state<Record<string, string>>({});
   let editorToken = $state('');
   let savingEvaluation = $state(false);
+  const CHART_ZOOM = 'fctactics_eval_zoom';
+  let chartZoom = $state(savedChartZoom());
+
+  function clampZoom(value: number) {
+    return Math.min(2.5, Math.max(0.5, Math.round(value * 100) / 100));
+  }
+
+  function savedChartZoom(): number {
+    try {
+      const value = Number(sessionStorage.getItem(CHART_ZOOM));
+      return value ? clampZoom(value) : 1;
+    } catch { return 1; }
+  }
+
+  function setChartZoom(value: number) {
+    chartZoom = clampZoom(value);
+    try { sessionStorage.setItem(CHART_ZOOM, String(chartZoom)); } catch { /* ignore */ }
+  }
+
+  function zoomCharts(factor: number) {
+    setChartZoom(chartZoom * factor);
+  }
+
+  function bindChartZoom(node: HTMLElement) {
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      zoomCharts(event.deltaY < 0 ? 1.1 : 1 / 1.1);
+    };
+    node.addEventListener('wheel', onWheel, { passive: false });
+    return { destroy() { node.removeEventListener('wheel', onWheel); } };
+  }
   let playerPhoto = $state('');
   let portraits = $state<Record<string, string>>({});
   let photoError = $state('');
@@ -62,13 +106,140 @@
   const today = todayParts();
   let calendarYear = $state(today.year);
   let calendarMonth = $state(today.month);
+  const SEASON_VIEW = 'fctactics_season_view';
+  let seasonView = $state<'players' | 'sessions'>(savedSeasonView());
   const drag = new RowDrag();
 
-  const openedStyle = $derived($styles.find(style => style.id === $navItem) ?? null);
+  function savedSeasonView(): 'players' | 'sessions' {
+    try { return sessionStorage.getItem(SEASON_VIEW) === 'sessions' ? 'sessions' : 'players'; } catch { return 'players'; }
+  }
+
+  function showSeasonView(next: 'players' | 'sessions') {
+    seasonView = next;
+    try { sessionStorage.setItem(SEASON_VIEW, next); } catch { /* ignore */ }
+  }
+
+  let deleteRequest = $state<DeleteRequest | null>(null);
+
+  function plannedIn(sessions: ThemeSessionInfo[]) {
+    const ids = new Set(sessions.map(session => session.id));
+    const count = $seasons.reduce((sum, season) => sum + season.slots.filter(slot => ids.has(slot.session)).length, 0);
+    return `${plural(count, 'séance planifiée', 'séances planifiées')} dans les saisons`;
+  }
+
+  function askDeleteSeason(season: SeasonInfo) {
+    deleteRequest = {
+      title: 'Supprimer la saison',
+      subject: 'La saison',
+      name: season.name,
+      deleted: 'supprimée',
+      items: [
+        plural(season.players.length, 'joueur', 'joueurs'),
+        plural(season.players.reduce((sum, player) => sum + player.evaluations.length, 0), 'évaluation', 'évaluations'),
+        plural(season.slots.length, 'séance planifiée', 'séances planifiées')
+      ],
+      note: 'Les séances restent disponibles dans les thèmes.',
+      run: () => deleteSeason(season.id)
+    };
+  }
+
+  function askDeleteTheme(theme: ThemeInfo) {
+    deleteRequest = {
+      title: 'Supprimer le thème',
+      subject: 'Le thème',
+      name: theme.name,
+      deleted: 'supprimé',
+      items: [
+        plural(theme.sessions.length, 'séance', 'séances'),
+        plural(theme.sessions.reduce((sum, session) => sum + session.exercises, 0), 'exercice', 'exercices'),
+        plannedIn(theme.sessions)
+      ],
+      run: () => deleteTheme(theme.id)
+    };
+  }
+
+  function askDeleteSession(theme: ThemeInfo, session: ThemeSessionInfo) {
+    deleteRequest = {
+      title: 'Supprimer la séance',
+      subject: 'La séance',
+      name: session.name,
+      deleted: 'supprimée',
+      items: [plural(session.exercises, 'exercice', 'exercices'), plannedIn([session])],
+      run: () => deleteThemeSession(theme.id, session.id)
+    };
+  }
+
+  function askDeleteFile(item: LibraryItem) {
+    const folder = item.kind === 'folder';
+    const inside = folder
+      ? $libraryItems.filter(entry => entry.kind !== 'folder' && entry.path.startsWith(`${item.path}/`)).length
+      : 0;
+    deleteRequest = {
+      title: folder ? 'Supprimer le dossier' : 'Supprimer le fichier',
+      subject: folder ? 'Le dossier' : 'Le fichier',
+      name: item.name,
+      deleted: 'supprimé',
+      items: folder ? [plural(inside, 'fichier', 'fichiers')] : undefined,
+      run: () => deleteLibraryItem(item.path)
+    };
+  }
+
+  let seasonEditing = $state(false);
+  let seasonDraft = $state('');
+  let seasonError = $state('');
+  let savingSeason = $state(false);
+
+  $effect(() => {
+    void $navItem;
+    seasonEditing = false;
+  });
+
+  function editSeason() {
+    seasonDraft = openedSeason?.markdown || '';
+    seasonError = '';
+    seasonEditing = true;
+  }
+
+  async function saveSeason(): Promise<boolean> {
+    savingSeason = true;
+    seasonError = '';
+    const ok = await saveSeasonMarkdown(seasonDraft);
+    savingSeason = false;
+    if (!ok) {
+      seasonError = 'Enregistrement impossible.';
+      return false;
+    }
+    seasonEditing = false;
+    return true;
+  }
+
+  function discardSeason() {
+    seasonDraft = openedSeason?.markdown || '';
+    seasonEditing = false;
+  }
+
+  const seasonGate: EditorGate = {
+    dirty: () => seasonEditing && seasonDraft !== (openedSeason?.markdown || ''),
+    save: saveSeason,
+    discard: discardSeason
+  };
+
+  async function cancelSeason() {
+    if (!(await confirmLeaveEditors(seasonGate))) return;
+    discardSeason();
+  }
+
   const openedSeason = $derived($seasons.find(season => season.id === $navItem) ?? null);
   const openedTheme = $derived($themes.find(theme => theme.id === $navItem) ?? null);
-  const domains = $derived([...new Set($libraryItems.map(item => item.domain))].sort((a, b) => a.localeCompare(b, 'fr')));
-  const files = $derived($libraryItems.filter(item => item.domain === $navItem && item.kind === $navChild));
+  const elementHere = $derived($libraryItems.find(item => elementRel(item.path) === $navItem) ?? null);
+  const elementRows = $derived($libraryItems.filter(item => {
+    const rel = elementRel(item.path);
+    const parent = rel.split('/').slice(0, -1).join('/');
+    return parent === $navItem;
+  }).sort((a, b) => {
+    if ((a.kind === 'folder') !== (b.kind === 'folder')) return a.kind === 'folder' ? -1 : 1;
+    return a.name.localeCompare(b.name, 'fr');
+  }));
   const sessionChoices = $derived($themes.flatMap(theme => theme.sessions.map(session => ({
     id: session.id,
     label: `${theme.name} — ${session.name || session.folder}`
@@ -88,10 +259,7 @@
   const todayIso = $derived(todayParts().iso);
   const visibleThemes = $derived($themes.filter(theme => matches(query, theme.name)));
   const visibleSessions = $derived(openedTheme?.sessions.filter(session => matches(query, session.name)) ?? []);
-  const visibleStyles = $derived($styles.filter(style => matches(query, style.name)));
-  const visibleDomains = $derived(domains.filter(domain => matches(query, domain)));
-  const visibleKinds = $derived(LIBRARY_KINDS.filter(kind => matches(query, kind.label)));
-  const visibleFiles = $derived(files.filter(item => matches(query, item.name)));
+  const visibleElements = $derived(elementRows.filter(item => matches(query, item.name)));
   const themeIds = $derived($themes.map(theme => theme.id));
   const sessionIds = $derived(openedTheme?.sessions.map(session => session.id) ?? []);
   const editingExercise = $derived($screen === 'exercise' && Boolean($currentPage));
@@ -175,6 +343,9 @@
     void Promise.all(dates.map(async item => [item, await loadEvaluation(player, item)] as const)).then(rows => {
       if (!stop) evaluationTexts = Object.fromEntries(rows);
     });
+    void readTemplate('evaluation').then(text => {
+      if (!stop) skillsMarker = skillsMarkerFrom(text);
+    });
     return () => { stop = true; };
   });
 
@@ -210,18 +381,20 @@
   }
 
   function evaluationBody(text: string): string {
-    return text.replace(/^#\s+[^\n]*\n+/, '');
+    return withoutSkillsMarker(text.replace(/^#[^\r\n]*\r?\n(?:\r?\n)?/, ''));
   }
 
   async function startEvaluation() {
     if (!currentPlayer) return;
     photoError = '';
-    const source = fillTemplate(await readTemplate('evaluation'), { date: '' });
+    const template = await readTemplate('evaluation');
+    skillsMarker = skillsMarkerFrom(template);
+    const source = fillTemplate(template, { date: '' });
     const body = evaluationBody(source).replace(/\n+$/, '\n');
     draftPlayer = currentPlayer.id;
     evaluationDraft = body;
     evaluationSaved = body;
-    evaluationDate = undefined;
+    evaluationDate = dateFromIso(todayParts().iso);
     evaluationEditing = true;
     evaluationNew = true;
     editorToken = `${currentPlayer.id}:new`;
@@ -236,14 +409,20 @@
     evaluationEditing = true;
   }
 
-  async function saveOpenEvaluation() {
-    if (!currentPlayer || !evaluationDate) return;
+  function evaluationDirty(): boolean {
+    if (!evaluationEditing) return false;
+    if (!evaluationDate) return evaluationDraft !== evaluationSaved;
+    return !(localIso(evaluationDate) === (evaluationNew ? '' : $navLeaf) && evaluationDraft === evaluationSaved);
+  }
+
+  async function saveOpenEvaluation(): Promise<boolean> {
+    if (!currentPlayer || !evaluationDate) return false;
     const date = localIso(evaluationDate);
     const previous = evaluationNew ? '' : $navLeaf;
-    if (!date) return;
+    if (!date) return false;
     if (date !== previous && currentPlayer.evaluations.includes(date)) {
       photoError = 'Cette date existe déjà.';
-      return;
+      return false;
     }
     const text = `# ${longFrenchDate(date)}\n\n${evaluationBody(evaluationDraft).replace(/\n+$/, '')}\n`;
     savingEvaluation = true;
@@ -251,7 +430,7 @@
     savingEvaluation = false;
     if ('error' in saved) {
       photoError = saved.error;
-      return;
+      return false;
     }
     const next = { ...evaluationTexts };
     if (previous && saved.date !== previous) delete next[previous];
@@ -266,9 +445,10 @@
       editorToken = '';
       openEvaluation(saved.date);
     }
+    return true;
   }
 
-  function cancelEvaluation() {
+  function revertEvaluation() {
     if (evaluationNew) {
       evaluationNew = false;
       evaluationDate = undefined;
@@ -284,6 +464,26 @@
     evaluationEditing = false;
     editorToken = '';
   }
+
+  const evaluationGate: EditorGate = {
+    dirty: evaluationDirty,
+    save: saveOpenEvaluation,
+    discard: revertEvaluation
+  };
+
+  async function cancelEvaluation() {
+    if (!(await confirmLeaveEditors(evaluationGate))) return;
+    revertEvaluation();
+  }
+
+  onMount(() => {
+    const stopSeason = registerEditorGate(seasonGate);
+    const stopEvaluation = registerEditorGate(evaluationGate);
+    return () => {
+      stopSeason();
+      stopEvaluation();
+    };
+  });
 
   async function onCoachPhoto(file: File) {
     photoError = (await savePortrait(file)) || '';
@@ -319,17 +519,15 @@
   const door = $derived(WORKSPACE_DOORS.find(item => item.id === $navDoor) ?? null);
   const dialogTitle = $derived(dialog === 'category' ? 'Nouvelle catégorie'
     : dialog === 'seance' || dialog === 'session' ? 'Nouvelle séance'
-    : dialog === 'style' ? 'Nouveau style'
     : dialog === 'season' ? 'Nouvelle saison'
     : dialog === 'slot' ? 'Nouveau créneau'
-    : dialog === 'player' ? 'Nouveau joueur'
     : dialog === 'theme' ? 'Nouveau thème'
-    : 'Nouveau fichier');
+    : 'Ajouter');
 
   const doorArt: Record<WorkspaceDoor, string> = {
     repertoire: seancesArt,
     season: seasonArt,
-    studio: atelierArt
+    elements: elementsArt
   };
 
   function closeDialog() {
@@ -339,6 +537,7 @@
 
   function openDialog(kind: NonNullable<typeof dialog>, date = '') {
     dialog = kind;
+    libraryKind = 'yaml';
     entryName = date;
     plainName = '';
     sessionId = sessionChoices[0]?.id ?? '';
@@ -367,14 +566,6 @@
       if (!dialogError) closeDialog();
       return;
     }
-    if (dialog === 'style') {
-      const id = entryName.trim();
-      dialogError = (await createStyle(entryName, plainName)) || '';
-      if (dialogError) return;
-      closeDialog();
-      await openNavItem(id);
-      return;
-    }
     if (dialog === 'season') {
       dialogError = (await createSeason(entryName)) || '';
       if (!dialogError) closeDialog();
@@ -383,14 +574,6 @@
     if (dialog === 'slot') {
       dialogError = (await createSlot(entryName, sessionId)) || '';
       if (!dialogError) closeDialog();
-      return;
-    }
-    if (dialog === 'player') {
-      const folder = folderSlug(entryName);
-      dialogError = (await createPlayer(entryName)) || '';
-      if (dialogError) return;
-      closeDialog();
-      await openNavChild(folder);
       return;
     }
     if (dialog === 'theme') {
@@ -406,7 +589,9 @@
       if (!dialogError) closeDialog();
       return;
     }
-    dialogError = (await createLibraryItem(entryName)) || '';
+    dialogError = libraryKind === 'folder'
+      ? (await createLibraryFolder(entryName)) || ''
+      : (await createLibraryItem(entryName, libraryKind)) || '';
     if (!dialogError) closeDialog();
   }
 
@@ -428,8 +613,10 @@
     return query.trim() ? 'Aucun résultat' : none;
   }
 
-  function kindCount(domain: string, kind: LibraryKind) {
-    return $libraryItems.filter(item => item.domain === domain && item.kind === kind).length;
+  function elementKind(kind: LibraryItem['kind']): string {
+    if (kind === 'folder') return 'Dossier';
+    if (kind === 'yaml') return 'Élément';
+    return 'Dessin';
   }
 </script>
 
@@ -495,30 +682,34 @@
       {/each}
     </div>
   {:else if $navArea === 'seasons' && !openedSeason}
-    {@render panelTitle('Saisons', () => openDialog('season'), 'Ajouter une saison')}
+    {@render panelTitle('Saisons')}
     <Card size="xl" class="p-6">
-      <SearchTable bind:query placeholder="Rechercher une saison">
+      <SearchTable bind:query placeholder="Rechercher une saison" addLabel="Ajouter une saison" onadd={() => openDialog('season')}>
         <TableHead>
           <TableHeadCell>Nom</TableHeadCell>
+          <TableHeadCell class="w-px"><span class="sr-only">Actions</span></TableHeadCell>
         </TableHead>
         <TableBody>
           {#each visibleSeasons as season (season.id)}
             <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(season.id)}>
               <TableBodyCell>{season.name}</TableBodyCell>
+              <TableBodyCell class="py-0"><RowActions ondelete={() => askDeleteSeason(season)} /></TableBodyCell>
             </TableBodyRow>
           {:else}
-            <TableBodyRow><TableBodyCell>{emptyText('Aucune saison')}</TableBodyCell></TableBodyRow>
+            <TableBodyRow><TableBodyCell colspan={2}>{emptyText('Aucune saison')}</TableBodyCell></TableBodyRow>
           {/each}
         </TableBody>
       </SearchTable>
     </Card>
   {:else if openedSeason && currentPlayer && ($navLeaf || evaluationNew)}
-    <div class="eval-split grid items-start gap-4">
-      {@render photoBanner('col-span-full')}
-      <div class="eval-frame min-w-0 rounded-xl border border-default-medium bg-white dark:bg-neutral-primary">
-        <div class="eval-tools flex items-center justify-end gap-1 rounded-t-xl border-b border-default-medium bg-gray-100 px-2 py-1 dark:bg-gray-800">
+    <div class="eval-split flex flex-col gap-4">
+      {@render photoBanner('shrink-0')}
+      <SplitPane view="evaluation" stack class="min-h-0 flex-1">
+      {#snippet left()}
+      <div class="eval-frame min-w-0 overflow-hidden rounded-xl border border-default-medium bg-white dark:bg-neutral-primary">
+        <div class="eval-tools" class:is-editing={evaluationEditing}>
           {#if evaluationEditing}
-            <QuietIconButton label="Annuler" onclick={cancelEvaluation}>
+            <QuietIconButton label="Annuler" onclick={() => { void cancelEvaluation(); }}>
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="M6 6l12 12M18 6 6 18" /></svg>
             </QuietIconButton>
             <QuietIconButton label="Sauver" disabled={savingEvaluation || !evaluationDate || (localIso(evaluationDate) === (evaluationNew ? '' : $navLeaf) && evaluationDraft === evaluationSaved)} onclick={() => { void saveOpenEvaluation(); }}>
@@ -532,29 +723,52 @@
           {#if evaluationEditing}
             {#key editorToken}
               <div class="eval-date">
+                <span class="eval-date-label">Date:</span>
+                {#if evaluationDate}
+                  <span class="eval-date-value">{longFrenchDate(localIso(evaluationDate))}</span>
+                {/if}
                 <Datepicker
                   bind:value={evaluationDate}
                   locale="fr-FR"
                   firstDayOfWeek={1}
-                  placeholder="Choisir une date"
+                  placeholder=""
                   dateFormat={{ weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }}
                   inputmode="none"
-                  color="alternative"
-                  inputProps={{ readonly: true, 'aria-label': 'Date' }}
+                  color="brand"
+                  inputProps={{ readonly: true, 'aria-label': 'Date', tabindex: -1 }}
                 />
               </div>
-              <div class="eval-editor">
-                <RawMarkdown bind:value={evaluationDraft} />
+              <div class="eval-x">
+                <div class="eval-editor">
+                  <RawMarkdown bind:value={evaluationDraft} />
+                </div>
               </div>
             {/key}
           {:else}
-            <div class="eval-md">{@html renderMarkdown(evaluationDraft.replace(/^\{\{\s*skills(?:\s+[^}]*)?\s*\}\}\s*$/gim, ''))}</div>
+            <div class="eval-x">
+              <div class="eval-md">{@html renderMarkdown(withoutSkillsMarker(evaluationDraft))}</div>
+            </div>
           {/if}
         {/if}
       </div>
-      <div class="min-w-0">
-        <EvaluationCharts markdown={evaluationLive} />
+      {/snippet}
+      {#snippet right()}
+      <div class="eval-charts-pane min-w-0 overflow-hidden rounded-xl border border-default-medium bg-white dark:bg-neutral-primary" use:bindChartZoom>
+        <div class="eval-zoom">
+          <QuietIconButton label="Réduire" disabled={chartZoom <= 0.5} onclick={() => zoomCharts(1 / 1.1)}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="M6 12h12" /></svg>
+          </QuietIconButton>
+          <button type="button" class="eval-zoom-reset" onclick={() => setChartZoom(1)}>reset</button>
+          <QuietIconButton label="Agrandir" disabled={chartZoom >= 2.5} onclick={() => zoomCharts(1.1)}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="M12 6v12M6 12h12" /></svg>
+          </QuietIconButton>
+        </div>
+        <div class="eval-x">
+          <EvaluationCharts markdown={evaluationLive} marker={skillsMarker} zoom={chartZoom} />
+        </div>
       </div>
+      {/snippet}
+      </SplitPane>
     </div>
   {:else if openedSeason && currentPlayer}
     <PortraitCard class="mb-6" photo={playerPhoto} name={currentPlayer.name} onphoto={onPlayerPhoto} onname={(value) => renamePlayer(currentPlayer.id, value)} onerror={reportPhoto} />
@@ -565,82 +779,104 @@
         rows={(currentPlayer.evaluations || []).map(date => ({ date, markdown: evaluationTexts[date] || '' }))}
         season={openedSeason.uuid || openedSeason.id}
         player={currentPlayer.id}
+        marker={skillsMarker}
         onopen={openEvaluation}
       />
     </Card>
+  {:else if openedSeason && seasonEditing}
+    <div class="mb-3 flex items-center gap-1">
+      <Heading tag="h2" class="text-xl">{openedSeason.name}</Heading>
+      <QuietIconButton label="Annuler" onclick={() => { void cancelSeason(); }}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="M6 6l12 12M18 6 6 18" /></svg>
+      </QuietIconButton>
+      <QuietIconButton label="Sauver" disabled={savingSeason || seasonDraft === openedSeason.markdown} onclick={() => { void saveSeason(); }}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m5 13 4 4L19 7" /></svg>
+      </QuietIconButton>
+    </div>
+    {#if seasonError}<Alert color="red" class="mb-3">{seasonError}</Alert>{/if}
+    <Card size="xl" class="season-editor overflow-hidden p-0">
+      <RawMarkdown bind:value={seasonDraft} uri="file:///season/content.md" />
+    </Card>
   {:else if openedSeason}
     <Heading tag="h2" class="mb-3 text-xl">{openedSeason.name}</Heading>
-    <Heading tag="h2" class="mb-3 text-xl">Séances</Heading>
-    <Card size="xl" class="mb-3 p-6">
-      <div class="mb-4 flex flex-wrap items-center gap-2">
-        <Button size="sm" color="alternative" onclick={() => showMonth(-1)}>Précédent</Button>
-        <Button size="sm" color="alternative" onclick={() => showMonth(1)}>Suivant</Button>
-        <Button size="sm" color="alternative" onclick={showToday}>Aujourd’hui</Button>
-        <p class="min-w-40 px-2 text-center text-base font-semibold">{calendarTitle}</p>
-      </div>
-      <div class="border border-default-medium bg-gray-200 dark:bg-gray-800">
-        <div class="grid grid-cols-7 border-b border-default-medium">
-          {#each WEEKDAYS as name}
-            <div class="px-1 py-2 text-center text-xs font-medium uppercase">{name}</div>
-          {/each}
-        </div>
-        <div class="grid grid-cols-7">
-          {#each calendarDays as cell, index (cell.iso)}
-            {@const slot = cell.inMonth ? slotsByDate.get(cell.iso) : undefined}
-            {@const col = index % 7}
-            {@const lastRow = index >= calendarDays.length - 7}
-            {@const leftIn = col > 0 && calendarDays[index - 1].inMonth}
-            {@const aboveIn = index >= 7 && calendarDays[index - 7].inMonth}
-            {@const rightIn = col < 6 && calendarDays[index + 1].inMonth}
-            {@const belowIn = !lastRow && calendarDays[index + 7].inMonth}
-            {#if cell.inMonth}
-              <div class="relative min-h-24 border-default-medium bg-white p-1 dark:bg-neutral-primary {col < 6 && rightIn ? 'border-r' : ''} {!lastRow && belowIn ? 'border-b' : ''} {cell.iso === todayIso ? 'z-10 ring-2 ring-inset ring-primary-700' : ''} {slot ? '' : 'cursor-pointer'}" onclick={() => { if (!slot) openDialog('slot', cell.iso); }}>
-                <div class="text-sm">{cell.day}</div>
-                {#if slot}
-                  <button type="button" class="mt-1 w-full cursor-pointer rounded px-1 py-0.5 text-left text-xs hover:underline" onclick={() => openNavChild(slot.session)}>{slot.sessionName}</button>
-                {/if}
-              </div>
-            {:else}
-              <div class="min-h-24 border-dotted border-default-medium bg-gray-100 dark:bg-gray-700 {col < 6 ? 'border-r' : ''} {!lastRow ? 'border-b' : ''} {leftIn ? 'border-l' : ''} {aboveIn ? 'border-t' : ''}"></div>
-            {/if}
-          {/each}
-        </div>
-      </div>
-    </Card>
     <div class="mb-3 flex items-center gap-1">
-      <Heading tag="h2" class="text-xl">Joueurs</Heading>
-      <QuietIconButton label="Ajouter un joueur" onclick={() => openDialog('player')}><PlusOutline size="sm" /></QuietIconButton>
+      <ButtonGroup size="sm" aria-label="Contenu de la saison">
+        <Button size="sm" color={seasonView === 'players' ? 'brand' : 'alternative'} onclick={() => showSeasonView('players')}>Joueurs</Button>
+        <Button size="sm" color={seasonView === 'sessions' ? 'brand' : 'alternative'} onclick={() => showSeasonView('sessions')}>Séances</Button>
+      </ButtonGroup>
     </div>
-    <Card size="xl" class="p-6">
-      {@render photoBanner('mb-3')}
-      <div class="flex flex-wrap gap-3">
-        {#each visiblePlayers as player (player.id)}
-          <button type="button" class="group cursor-pointer" onclick={() => openPlayer(player.id)}>
-            <span class="flex h-16 w-72 items-stretch overflow-hidden rounded-2xl border border-default-medium bg-white shadow-[0_4px_14px_rgba(15,23,42,0.14)] transition group-hover:-translate-y-0.5 group-hover:shadow-[0_8px_20px_rgba(15,23,42,0.18)] dark:bg-neutral-primary dark:shadow-[0_4px_14px_rgba(0,0,0,0.45)]">
-              <span class="flex min-w-0 flex-1 items-center justify-center px-3 text-center text-sm font-medium">{player.name}</span>
-              {#if portraits[player.id]}
-                <img src={portraits[player.id]} alt="" class="h-16 w-16 shrink-0 object-cover" />
+    {#if seasonView === 'players'}
+      <Button size="sm" color="alternative" class="mb-3 gap-2" onclick={editSeason}>
+        <PenOutline size="sm" />Modifier la liste des joueurs
+      </Button>
+    {/if}
+    {#if seasonView === 'sessions'}
+      <Card size="xl" class="p-6">
+        <div class="mb-4 flex flex-wrap items-center gap-2">
+          <Button size="sm" color="alternative" onclick={() => showMonth(-1)}>Précédent</Button>
+          <Button size="sm" color="alternative" onclick={() => showMonth(1)}>Suivant</Button>
+          <Button size="sm" color="alternative" onclick={showToday}>Aujourd’hui</Button>
+          <p class="min-w-40 px-2 text-center text-base font-semibold">{calendarTitle}</p>
+        </div>
+        <div class="border border-default-medium bg-gray-200 dark:bg-gray-800">
+          <div class="grid grid-cols-7 border-b border-default-medium">
+            {#each WEEKDAYS as name}
+              <div class="px-1 py-2 text-center text-xs font-medium uppercase">{name}</div>
+            {/each}
+          </div>
+          <div class="grid grid-cols-7">
+            {#each calendarDays as cell, index (cell.iso)}
+              {@const slot = cell.inMonth ? slotsByDate.get(cell.iso) : undefined}
+              {@const col = index % 7}
+              {@const lastRow = index >= calendarDays.length - 7}
+              {@const leftIn = col > 0 && calendarDays[index - 1].inMonth}
+              {@const aboveIn = index >= 7 && calendarDays[index - 7].inMonth}
+              {@const rightIn = col < 6 && calendarDays[index + 1].inMonth}
+              {@const belowIn = !lastRow && calendarDays[index + 7].inMonth}
+              {#if cell.inMonth}
+                <div class="relative min-h-24 border-default-medium bg-white p-1 dark:bg-neutral-primary {col < 6 && rightIn ? 'border-r' : ''} {!lastRow && belowIn ? 'border-b' : ''} {cell.iso === todayIso ? 'z-10 ring-2 ring-inset ring-primary-700' : ''} {slot ? '' : 'cursor-pointer'}" onclick={() => { if (!slot) openDialog('slot', cell.iso); }}>
+                  <div class="text-sm">{cell.day}</div>
+                  {#if slot}
+                    <button type="button" class="mt-1 w-full cursor-pointer rounded px-1 py-0.5 text-left text-xs hover:underline" onclick={() => openNavChild(slot.session)}>{slot.sessionName}</button>
+                  {/if}
+                </div>
               {:else}
-                <span class="flex h-16 w-16 shrink-0 items-center justify-center bg-gray-100 text-xs dark:bg-gray-700">Photo</span>
+                <div class="min-h-24 border-dotted border-default-medium bg-gray-100 dark:bg-gray-700 {col < 6 ? 'border-r' : ''} {!lastRow ? 'border-b' : ''} {leftIn ? 'border-l' : ''} {aboveIn ? 'border-t' : ''}"></div>
               {/if}
-            </span>
-          </button>
-        {:else}
-          <p class="text-sm">Aucun joueur</p>
-        {/each}
-      </div>
-    </Card>
+            {/each}
+          </div>
+        </div>
+      </Card>
+    {:else}
+      <Card size="xl" class="p-6">
+        {@render photoBanner('mb-3')}
+        <div class="flex flex-wrap gap-3">
+          {#each visiblePlayers as player (player.id)}
+            <button type="button" class="group cursor-pointer" onclick={() => openPlayer(player.id)}>
+              <span class="flex h-16 w-60 items-stretch overflow-hidden rounded-2xl border border-default-medium bg-white shadow-[0_4px_14px_rgba(15,23,42,0.14)] transition group-hover:-translate-y-0.5 group-hover:shadow-[0_8px_20px_rgba(15,23,42,0.18)] dark:bg-neutral-primary dark:shadow-[0_4px_14px_rgba(0,0,0,0.45)]">
+                <span class="flex min-w-0 flex-1 items-center justify-center px-3 text-center text-sm leading-tight font-medium"><span class="line-clamp-3 break-words">{player.name}</span></span>
+                {#if portraits[player.id]}
+                  <img src={portraits[player.id]} alt="" class="h-16 w-16 shrink-0 object-cover" />
+                {:else}
+                  <span class="flex h-16 w-16 shrink-0 items-center justify-center bg-gray-100 text-xs dark:bg-gray-700">Photo</span>
+                {/if}
+              </span>
+            </button>
+          {:else}
+            <p class="text-sm">Aucun joueur</p>
+          {/each}
+        </div>
+      </Card>
+    {/if}
   {:else if $navArea === 'themes' && !openedTheme}
-    <div class="mb-3 flex items-center gap-1">
-      <Heading tag="h1" class="text-xl">Thèmes de séances</Heading>
-      <QuietIconButton label="Ajouter un thème" onclick={() => openDialog('theme')}><PlusOutline size="sm" /></QuietIconButton>
-    </div>
+    {@render panelTitle('Thèmes de séances')}
     <Card size="xl" class="p-6">
     {@render orderAlert()}
-    <SearchTable bind:query placeholder="Rechercher un thème">
+    <SearchTable bind:query placeholder="Rechercher un thème" addLabel="Ajouter un thème" onadd={() => openDialog('theme')}>
       <TableHead>
         <TableHeadCell class="w-24">Ordre</TableHeadCell>
         <TableHeadCell>Nom</TableHeadCell>
+        <TableHeadCell class="w-px"><span class="sr-only">Actions</span></TableHeadCell>
       </TableHead>
       <TableBody>
         {#each visibleThemes as theme (theme.id)}
@@ -657,23 +893,25 @@
               <span class="inline-flex cursor-grab items-center gap-2"><BarsOutline class="h-4 w-4 text-gray-400" />{themeIds.indexOf(theme.id) + 1}</span>
             </TableBodyCell>
             <TableBodyCell>{theme.name}</TableBodyCell>
+            <TableBodyCell class="py-0"><RowActions ondelete={() => askDeleteTheme(theme)} /></TableBodyCell>
           </TableBodyRow>
         {:else}
-          <TableBodyRow><TableBodyCell colspan={2}>{emptyText('Aucun thème')}</TableBodyCell></TableBodyRow>
+          <TableBodyRow><TableBodyCell colspan={3}>{emptyText('Aucun thème')}</TableBodyCell></TableBodyRow>
         {/each}
       </TableBody>
     </SearchTable>
     </Card>
   {:else if openedTheme}
-    {@render panelTitle(openedTheme.name, () => openDialog('session'), 'Ajouter une séance')}
+    {@render panelTitle(openedTheme.name)}
     <Card size="xl" class="p-6">
       {@render orderAlert()}
-      <SearchTable bind:query placeholder="Rechercher une séance">
+      <SearchTable bind:query placeholder="Rechercher une séance" addLabel="Ajouter une séance" onadd={() => openDialog('session')}>
         <TableHead>
           <TableHeadCell class="w-24">Ordre</TableHeadCell>
           <TableHeadCell>Nom</TableHeadCell>
           <TableHeadCell>Public</TableHeadCell>
           <TableHeadCell>Phase</TableHeadCell>
+          <TableHeadCell class="w-px"><span class="sr-only">Actions</span></TableHeadCell>
         </TableHead>
         <TableBody>
           {#each visibleSessions as session (session.id)}
@@ -692,98 +930,42 @@
               <TableBodyCell>{session.name}</TableBodyCell>
               <TableBodyCell>{session.audience}</TableBodyCell>
               <TableBodyCell>{session.phase}</TableBodyCell>
+              <TableBodyCell class="py-0"><RowActions ondelete={() => askDeleteSession(openedTheme, session)} /></TableBodyCell>
             </TableBodyRow>
           {:else}
-            <TableBodyRow><TableBodyCell colspan={4}>{emptyText('Aucune séance')}</TableBodyCell></TableBodyRow>
+            <TableBodyRow><TableBodyCell colspan={5}>{emptyText('Aucune séance')}</TableBodyCell></TableBodyRow>
           {/each}
         </TableBody>
       </SearchTable>
     </Card>
-  {:else if $navArea === 'styles' && !openedStyle}
-    {@render panelTitle('Styles', () => openDialog('style'), 'Ajouter un style')}
+  {:else if $navArea === 'elements' && (elementHere?.kind === 'yaml' || elementHere?.kind === 'svg')}
+    <div class="element-editor">
+      {#key elementHere.path}
+        {#if elementHere.kind === 'yaml'}
+          <ElementYamlEditor file={elementHere.path} />
+        {:else}
+          <SvgEditor file={elementHere.path} />
+        {/if}
+      {/key}
+    </div>
+  {:else if $navArea === 'elements'}
+    {@render panelTitle($navItem ? ($navItem.split('/').pop() || 'Éléments') : 'Éléments')}
     <Card size="xl" class="p-6">
-      <SearchTable bind:query placeholder="Rechercher un style">
-        <TableHead><TableHeadCell>Nom</TableHeadCell></TableHead>
-        <TableBody>
-          {#each visibleStyles as style (style.id)}
-            <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(style.id)}>
-              <TableBodyCell>{style.name}</TableBodyCell>
-            </TableBodyRow>
-          {:else}
-            <TableBodyRow><TableBodyCell>{emptyText('Aucun style')}</TableBodyCell></TableBodyRow>
-          {/each}
-        </TableBody>
-      </SearchTable>
-    </Card>
-  {:else if openedStyle}
-    {@render panelTitle(openedStyle.name)}
-    <Card size="xl" class="p-6">
-      <div class="flex flex-wrap items-end gap-3">
-        <Label>Équipe 1 <Input type="color" class="mt-1 h-10 w-16 p-1" value={openedStyle.team1Color} onchange={(e) => updateStyle(openedStyle.id, { team1Color: fieldValue(e) })} /></Label>
-        <Label>Taille <Input type="number" class="mt-1 w-24" value={openedStyle.team1Size} onchange={(e) => updateStyle(openedStyle.id, { team1Size: Number(fieldValue(e)) })} /></Label>
-        <Label>Équipe 2 <Input type="color" class="mt-1 h-10 w-16 p-1" value={openedStyle.team2Color} onchange={(e) => updateStyle(openedStyle.id, { team2Color: fieldValue(e) })} /></Label>
-        <Label>Taille <Input type="number" class="mt-1 w-24" value={openedStyle.team2Size} onchange={(e) => updateStyle(openedStyle.id, { team2Size: Number(fieldValue(e)) })} /></Label>
-        <Label>Ballon <Input type="color" class="mt-1 h-10 w-16 p-1" value={openedStyle.ballColor} onchange={(e) => updateStyle(openedStyle.id, { ballColor: fieldValue(e) })} /></Label>
-        <Label>Herbe <Input type="color" class="mt-1 h-10 w-16 p-1" value={openedStyle.backgroundColor} onchange={(e) => updateStyle(openedStyle.id, { backgroundColor: fieldValue(e) })} /></Label>
-        <Label>Pelouse
-          <Select class="mt-1" placeholder="" value={openedStyle.grassType} items={[{ value: 'stripes', name: 'Rayée' }, { value: 'solid', name: 'Unie' }]} onchange={(e) => updateStyle(openedStyle.id, { grassType: fieldValue(e) } as Partial<PageStyle>)} />
-        </Label>
-      </div>
-    </Card>
-  {:else if $navArea === 'library' && !$navItem}
-    {@render panelTitle('Bibliothèque')}
-    <Card size="xl" class="p-6">
-      <SearchTable bind:query placeholder="Rechercher un domaine">
+      <SearchTable bind:query placeholder="Rechercher" addLabel="Ajouter" onadd={() => openDialog('library')}>
         <TableHead>
-          <TableHeadCell>Domaine</TableHeadCell>
-          <TableHeadCell>Objets</TableHeadCell>
-          <TableHeadCell>Terrains</TableHeadCell>
-          <TableHeadCell>Formes</TableHeadCell>
+          <TableHeadCell>Nom</TableHeadCell>
+          <TableHeadCell>Type</TableHeadCell>
+          <TableHeadCell class="w-px"><span class="sr-only">Actions</span></TableHeadCell>
         </TableHead>
         <TableBody>
-          {#each visibleDomains as domain (domain)}
-            <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(domain)}>
-              <TableBodyCell>{domain}</TableBodyCell>
-              <TableBodyCell>{kindCount(domain, 'objects')}</TableBodyCell>
-              <TableBodyCell>{kindCount(domain, 'pitches')}</TableBodyCell>
-              <TableBodyCell>{kindCount(domain, 'shapes')}</TableBodyCell>
+          {#each visibleElements as item (item.path)}
+            <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(elementRel(item.path))}>
+              <TableBodyCell>{item.name}</TableBodyCell>
+              <TableBodyCell>{elementKind(item.kind)}</TableBodyCell>
+              <TableBodyCell class="py-0"><RowActions ondelete={() => askDeleteFile(item)} /></TableBodyCell>
             </TableBodyRow>
           {:else}
-            <TableBodyRow><TableBodyCell colspan={4}>{emptyText('Aucun domaine')}</TableBodyCell></TableBodyRow>
-          {/each}
-        </TableBody>
-      </SearchTable>
-    </Card>
-  {:else if $navArea === 'library' && !$navChild}
-    {@render panelTitle($navItem)}
-    <Card size="xl" class="p-6">
-      <SearchTable bind:query placeholder="Rechercher un dossier">
-        <TableHead>
-          <TableHeadCell>Dossier</TableHeadCell>
-          <TableHeadCell>Fichiers</TableHeadCell>
-        </TableHead>
-        <TableBody>
-          {#each visibleKinds as kind (kind.id)}
-            <TableBodyRow class="cursor-pointer" onclick={() => openNavChild(kind.id)}>
-              <TableBodyCell>{kind.label}</TableBodyCell>
-              <TableBodyCell>{kindCount($navItem, kind.id)}</TableBodyCell>
-            </TableBodyRow>
-          {:else}
-            <TableBodyRow><TableBodyCell colspan={2}>{emptyText('Aucun dossier')}</TableBodyCell></TableBodyRow>
-          {/each}
-        </TableBody>
-      </SearchTable>
-    </Card>
-  {:else if $navArea === 'library'}
-    {@render panelTitle(LIBRARY_KINDS.find(kind => kind.id === $navChild)?.label || 'Fichiers', () => openDialog('library'), 'Ajouter un fichier')}
-    <Card size="xl" class="p-6">
-      <SearchTable bind:query placeholder="Rechercher un fichier">
-        <TableHead><TableHeadCell>Nom</TableHeadCell></TableHead>
-        <TableBody>
-          {#each visibleFiles as item (item.file)}
-            <TableBodyRow><TableBodyCell>{item.name}</TableBodyCell></TableBodyRow>
-          {:else}
-            <TableBodyRow><TableBodyCell>{emptyText('Aucun fichier')}</TableBodyCell></TableBodyRow>
+            <TableBodyRow><TableBodyCell colspan={3}>{emptyText('Aucun élément')}</TableBodyCell></TableBodyRow>
           {/each}
         </TableBody>
       </SearchTable>
@@ -802,12 +984,17 @@
       <Label>Séance
         <Select class="mt-1" bind:value={sessionId} items={sessionChoices.map(session => ({ value: session.id, name: session.label }))} />
       </Label>
-    {:else if dialog === 'player'}
-      <Label>Nom <Input class="mt-1" bind:value={entryName} /></Label>
     {:else if dialog === 'library'}
+      <Label>Type
+        <Select class="mt-1" bind:value={libraryKind} items={[
+          { value: 'folder', name: 'Dossier' },
+          { value: 'yaml', name: 'Élément' },
+          { value: 'svg', name: 'Dessin SVG' }
+        ]} />
+      </Label>
       <Label>Nom <Input class="mt-1" bind:value={entryName} /></Label>
     {:else}
-      <Label>{dialog === 'style' ? 'Fichier' : 'Répertoire'}
+      <Label>Répertoire
         <Input class="mt-1" bind:value={entryName} />
       </Label>
       <Label>Nom <Input class="mt-1" bind:value={plainName} /></Label>
@@ -820,18 +1007,81 @@
   {/snippet}
 </Modal>
 
+<ConfirmDelete bind:request={deleteRequest} />
+
 <style>
+  .element-editor {
+    height: calc(100dvh - 10.5rem);
+    min-height: 24rem;
+  }
   .eval-split {
-    grid-template-columns: minmax(0, 1fr);
+    height: calc(100dvh - 12.5rem);
+    min-height: 22rem;
   }
-  @media (min-width: 768px) {
-    .eval-split {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    }
-    :global(.is-wide) .eval-split {
-      grid-template-columns: minmax(0, 28rem) minmax(0, 1fr);
-    }
+  :global(.is-wide) .eval-split { --split-left: 28rem; }
+  .eval-frame,
+  .eval-charts-pane {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
   }
+  .eval-x {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow-x: scroll;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .eval-charts-pane { position: relative; }
+  .eval-tools {
+    position: sticky;
+    top: 0.45rem;
+    z-index: 30;
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-start;
+    gap: 0.25rem;
+    height: 0;
+    margin-top: 0.45rem;
+    margin-right: 2rem;
+    overflow: visible;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .eval-frame:hover .eval-tools,
+  .eval-tools.is-editing { opacity: 1; }
+  .eval-frame:hover .eval-tools :global(button),
+  .eval-tools.is-editing :global(button) { pointer-events: auto; }
+  .eval-zoom {
+    position: sticky;
+    top: 0.45rem;
+    z-index: 5;
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-start;
+    gap: 0.25rem;
+    height: 0;
+    margin-top: 0.45rem;
+    margin-right: 2rem;
+    overflow: visible;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .eval-charts-pane:hover .eval-zoom { opacity: 1; }
+  .eval-charts-pane:hover .eval-zoom :global(button) { pointer-events: auto; }
+  .eval-zoom-reset {
+    height: 1.25rem;
+    padding: 0 0.45rem;
+    border-radius: 0.375rem;
+    background: var(--color-brand);
+    color: white;
+    font-size: 0.75rem;
+    line-height: 1.25rem;
+  }
+  .eval-zoom-reset:hover { background: var(--color-brand-strong); color: white; }
   .eval-md { padding: 1rem; font-size: 0.975rem; line-height: 1.5; }
   .eval-md :global(h1) { margin: 0 0 0.75rem; font-size: 1.15rem; font-weight: 700; }
   .eval-md :global(h2) { margin: 0.9rem 0 0.3rem; font-size: 1rem; font-weight: 650; }
@@ -839,27 +1089,64 @@
   .eval-md :global(ul) { margin: 0.25rem 0 0.6rem; padding-left: 1.15rem; list-style: disc; }
   .eval-md :global(li) { margin: 0.12rem 0; }
   .eval-md :global(.md-note) { list-style: none; color: #6b7280; }
-  .eval-date { position: relative; z-index: 20; padding: 1rem 1rem 0; }
-  .eval-date :global(input[data-part="input"]) {
-    border: 0;
-    background: transparent;
-    box-shadow: none;
-    padding: 0 2.25rem 0 0;
-    font-size: 1.15rem;
-    font-weight: 700;
-    color: inherit;
+  .eval-date {
+    position: relative;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 1rem 0.85rem;
   }
-  .eval-date :global(input[data-part="input"]:focus) {
-    outline: none;
-    box-shadow: none;
+  .eval-date-label,
+  .eval-date-value {
+    font-size: 0.95rem;
+    line-height: 1.2;
+  }
+  .eval-date-label { font-weight: 650; }
+  .eval-date :global([data-scope="datepicker"]) { display: flex; }
+  .eval-date :global([data-scope="datepicker"] > .relative) {
+    display: flex;
+    align-items: center;
+  }
+  .eval-date :global(input[data-part="input"]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .eval-date :global(button[data-part="trigger"]) {
+    position: static;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
+    border-radius: 0.375rem;
+    background: var(--color-brand);
+    color: white;
+  }
+  .eval-date :global(button[data-part="trigger"]:hover) {
+    background: var(--color-brand-strong);
+    color: white;
+  }
+  .eval-date :global(button[data-part="trigger"] svg) {
+    color: white;
   }
   .eval-editor {
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
-    height: calc(100vh - 16.5rem);
-    min-height: 24rem;
+    height: 100%;
+    min-height: 0;
     padding-bottom: 1rem;
+  }
+  :global(.season-editor) :global(.raw-md) {
+    border: 0;
   }
   .eval-editor :global(.raw-md) {
     flex: 1 1 auto;

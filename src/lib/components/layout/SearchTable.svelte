@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { Button, Table, TableSearch } from 'flowbite-svelte';
-
   let { query = $bindable(''), placeholder = '', search = true, addLabel = 'Ajouter', onadd, actions, children }: {
     query?: string;
     placeholder?: string;
@@ -14,7 +13,7 @@
 </script>
 
 {#snippet addButton()}
-  <Button size="sm" color="brand" onclick={onadd}>{addLabel}</Button>
+  <Button size="sm" color="brand" class="shrink-0" onclick={onadd}>{addLabel}</Button>
 {/snippet}
 
 {#if search}

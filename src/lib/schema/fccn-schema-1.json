@@ -1,0 +1,278 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Schéma d'exercice",
+  "type": "object",
+  "required": ["version"],
+  "properties": {
+    "version": {
+      "const": "fccn-schema:1",
+      "description": "Version du document."
+    },
+    "type": {
+      "type": "string",
+      "description": "Genre de l'élément. Absent sur un exercice. Posé à la lecture."
+    },
+    "name": {
+      "type": "string",
+      "description": "Titre de l'exercice, ou nom d'une zone. Un élément est identifié par le nom de son fichier."
+    },
+    "style": {
+      "type": "string",
+      "description": "Style global, pour choisir une variante de dessin."
+    },
+    "units": {
+      "enum": ["meters", "relative"],
+      "description": "Unité des positions quand l'appel n'en donne pas. meters par défaut, relative pour une formation ou une forme."
+    },
+    "outline": {
+      "type": "boolean",
+      "description": "Relie les objets de la forme par un trait d'épaisseur constante."
+    },
+    "svg": {
+      "type": "array",
+      "description": "Variantes de dessin. Le chemin est relatif au fichier.",
+      "items": { "$ref": "#/definitions/svgVariant" }
+    },
+    "pitch": {
+      "description": "Terrain du document : un nom court, ou des arguments dont name.",
+      "oneOf": [
+        { "type": "string" },
+        { "$ref": "#/definitions/call" }
+      ]
+    },
+    "width": { "type": "number", "description": "Largeur, en mètres." },
+    "length": { "type": "number", "description": "Longueur, en mètres." },
+    "margin": { "type": "number", "description": "Marge autour du terrain, en mètres." },
+    "p": { "type": "object", "description": "Points nommés, en mètres. Un nombre absent vaut 0.", "additionalProperties": { "$ref": "#/definitions/markPoint" } },
+    "r": { "type": "object", "description": "Rectangles nommés, en mètres. Un nombre absent vaut 0.", "additionalProperties": { "$ref": "#/definitions/markRect" } },
+    "c": { "type": "object", "description": "Cercles nommés, en mètres. Un nombre absent vaut 0.", "additionalProperties": { "$ref": "#/definitions/markCircle" } },
+    "boundary": { "type": "string", "description": "Élément posé aux quatre coins." },
+    "object": {
+      "type": "array",
+      "description": "Joueurs, ballon et matériel.",
+      "items": { "$ref": "#/definitions/objectItem" }
+    },
+    "shape": {
+      "type": "array",
+      "description": "Arrangements de matériel.",
+      "items": { "$ref": "#/definitions/shapeItem" }
+    },
+    "formation": {
+      "type": "array",
+      "description": "Compositions de joueurs. Seuls les joueurs sont posés.",
+      "items": { "$ref": "#/definitions/formationItem" }
+    },
+    "zone": {
+      "type": "array",
+      "description": "Sous-aires. Une zone donne le placement de départ ; les phases restent dans le repère du document.",
+      "items": { "$ref": "#/definitions/zoneItem" }
+    },
+    "phases": {
+      "type": "array",
+      "description": "Phases de l'animation, dans le repère du document.",
+      "items": { "$ref": "#/definitions/phase" }
+    },
+    "stretch": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Étirement du dessin, prioritaire sur les attributs du SVG. Chaque axe est une suite de bandes fixed, stretch ou repeat(pas).",
+      "properties": {
+        "x": { "type": "string", "description": "Bandes horizontales, par exemple fixed -1.75 repeat(0.5) 1.75 fixed." },
+        "y": { "type": "string", "description": "Bandes verticales." }
+      }
+    },
+    "size": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Taille réelle du dessin, prioritaire sur les attributs data-real et data-min-size du SVG.",
+      "properties": {
+        "real": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Taille réelle du viewBox, en mètres. Une seule dimension garde les proportions.",
+          "properties": {
+            "w": { "type": "number", "description": "Largeur réelle, en mètres." },
+            "h": { "type": "number", "description": "Hauteur réelle, en mètres." }
+          }
+        },
+        "min": { "description": "Minimum lisible, en part du grand côté de la figure. 3.5% ou 0 pour la taille réelle." }
+      }
+    },
+    "sizes": {
+      "type": "object",
+      "description": "Affichage des objets. scale multiplie tous les minimums ; 0 laisse la taille réelle. Une clé d'élément surcharge son minimum.",
+      "properties": {
+        "scale": { "type": "number", "description": "Facteur des minimums. 0 affiche tout à la taille réelle." }
+      },
+      "additionalProperties": { "description": "Minimum de cet élément, en part du grand côté. 4% ou 0." }
+    }
+  },
+  "definitions": {
+    "markPoint": {
+      "type": "object",
+      "description": "Position. Un nombre absent vaut 0.",
+      "properties": {
+        "x": { "type": "number", "description": "Abscisse." },
+        "y": { "type": "number", "description": "Ordonnée." }
+      }
+    },
+    "markSize": {
+      "type": "object",
+      "description": "Taille. Un nombre absent vaut 0.",
+      "properties": {
+        "w": { "type": "number", "description": "Largeur." },
+        "h": { "type": "number", "description": "Hauteur." }
+      }
+    },
+    "markRect": {
+      "type": "object",
+      "description": "Rectangle. Un nombre absent vaut 0.",
+      "properties": {
+        "x": { "type": "number", "description": "Abscisse." },
+        "y": { "type": "number", "description": "Ordonnée." },
+        "w": { "type": "number", "description": "Largeur." },
+        "h": { "type": "number", "description": "Hauteur." }
+      }
+    },
+    "markCircle": {
+      "type": "object",
+      "description": "Cercle. Un nombre absent vaut 0.",
+      "properties": {
+        "x": { "type": "number", "description": "Abscisse." },
+        "y": { "type": "number", "description": "Ordonnée." },
+        "radius": { "type": "number", "description": "Rayon." }
+      }
+    },
+    "point": {
+      "description": "Point.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["x", "y"],
+          "additionalProperties": false,
+          "properties": {
+            "x": { "type": "number", "description": "Abscisse." },
+            "y": { "type": "number", "description": "Ordonnée." }
+          }
+        },
+        {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      ]
+    },
+    "svgVariant": {
+      "type": "object",
+      "description": "Fichier SVG.",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "description": "Chemin relatif au fichier YAML." },
+        "style": { "type": "string", "description": "Nom du style. Absent pour la variante par défaut." }
+      }
+    },
+    "inset": {
+      "description": "Quatre côtés, vertical puis horizontal, ou chaque côté.",
+      "oneOf": [
+        { "type": "number" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "y": { "type": "number", "description": "Haut et bas." },
+            "x": { "type": "number", "description": "Gauche et droite." },
+            "top": { "type": "number", "description": "Haut." },
+            "right": { "type": "number", "description": "Droite." },
+            "bottom": { "type": "number", "description": "Bas." },
+            "left": { "type": "number", "description": "Gauche." }
+          }
+        }
+      ]
+    },
+    "call": {
+      "description": "Arguments. Un nom seul équivaut à { name }. x, y, w et h sont à plat.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "number" },
+        {
+          "type": "object",
+          "properties": {
+            "name": { "type": ["string", "number"], "description": "Nom, ou numéro du joueur." },
+            "title": { "type": "string", "description": "Texte écrit dans le dessin, à la place de {{title}}." },
+            "team": { "type": "string", "enum": ["blue", "red", "white", "yellow"], "description": "Équipe." },
+            "pitch": { "type": "string", "description": "Demi-terrain du document. Le rectangle vient de la zone de ce nom." },
+            "style": { "type": "string", "description": "Variante de dessin." },
+            "fill": { "type": "string", "description": "Couleur du lavis." },
+            "alpha": { "type": "number", "description": "Transparence du lavis, de 0 à 1." },
+            "p": { "description": "Position. Un nombre absent vaut 0. Un texte nomme un point du terrain.", "oneOf": [{ "type": "string" }, { "$ref": "#/definitions/markPoint" }] },
+            "s": { "description": "Taille. Un nombre absent vaut 0.", "oneOf": [{ "type": "string" }, { "$ref": "#/definitions/markSize" }] },
+            "r": { "description": "Rectangle. Un nombre absent vaut 0. Un texte nomme un rectangle du terrain.", "oneOf": [{ "type": "string" }, { "$ref": "#/definitions/markRect" }] },
+            "c": { "description": "Cercle. Un nombre absent vaut 0. Un texte nomme un cercle du terrain.", "oneOf": [{ "type": "string" }, { "$ref": "#/definitions/markCircle" }] },
+            "x": { "type": "number", "description": "Abscisse. Pour une aire, origine de la boîte." },
+            "y": { "type": "number", "description": "Ordonnée. Pour une aire, origine de la boîte." },
+            "w": { "type": "number", "description": "Largeur, dans l'unité de l'appel. Pour un objet, les traits gardent leur épaisseur et les motifs se répètent. Absente, une formation ou une zone remplit son parent et un objet garde sa taille." },
+            "h": { "type": "number", "description": "Hauteur, dans l'unité de l'appel. Pour un objet, les traits gardent leur épaisseur et les motifs se répètent. Absente, une formation ou une zone remplit son parent et un objet garde sa taille." },
+            "unit": { "enum": ["meters", "relative"], "description": "Unité de cet appel." },
+            "margin": { "description": "Marge extérieure au trait.", "allOf": [{ "$ref": "#/definitions/inset" }] },
+            "padding": { "description": "Marge intérieure au trait.", "allOf": [{ "$ref": "#/definitions/inset" }] },
+            "angle": { "type": "number", "description": "Angle, en degrés." },
+            "min": { "description": "Minimum lisible de cet objet, en part du grand côté. 5% ou 0 pour la taille réelle." },
+            "player": { "type": ["string", "number"], "description": "Joueur qui porte le ballon." },
+            "width": { "type": "number", "description": "Largeur du terrain, en mètres." },
+            "length": { "type": "number", "description": "Longueur du terrain, en mètres." },
+            "boundary": { "type": "string", "description": "Élément posé aux quatre coins." },
+            "mirror": { "type": "boolean", "description": "Miroir : les deux extrémités s'échangent." },
+            "rotate": { "type": "number", "enum": [180], "description": "Demi-tour autour du centre." },
+            "object": { "type": "array", "items": { "$ref": "#/definitions/objectItem" } },
+            "shape": { "type": "array", "items": { "$ref": "#/definitions/shapeItem" } },
+            "formation": { "type": "array", "items": { "$ref": "#/definitions/formationItem" } },
+            "zone": { "type": "array", "items": { "$ref": "#/definitions/zoneItem" } }
+          }
+        }
+      ]
+    },
+    "objectItem": { "$ref": "#/definitions/item" },
+    "shapeItem": { "$ref": "#/definitions/item" },
+    "formationItem": { "$ref": "#/definitions/item" },
+    "zoneItem": { "$ref": "#/definitions/item" },
+    "item": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "description": "La clé est le nom court dans le genre de la liste. Une clé pointée est un identifiant complet.",
+      "additionalProperties": { "$ref": "#/definitions/call" }
+    },
+    "phase": {
+      "type": "object",
+      "description": "Phase.",
+      "properties": {
+        "name": { "type": "string", "description": "Nom." },
+        "duration": { "type": "number", "description": "Durée, en secondes." },
+        "moves": {
+          "type": "array",
+          "description": "Déplacements, dans le repère du document.",
+          "items": { "$ref": "#/definitions/move" }
+        }
+      }
+    },
+    "move": {
+      "type": "object",
+      "description": "Déplacement ou passe.",
+      "properties": {
+        "player": { "type": ["string", "number"], "description": "Joueur qui se déplace." },
+        "run": { "description": "Course vers un point.", "allOf": [{ "$ref": "#/definitions/point" }] },
+        "dribble": { "description": "Conduite de balle vers un point.", "allOf": [{ "$ref": "#/definitions/point" }] },
+        "from": { "type": ["string", "number"], "description": "Joueur qui passe." },
+        "pass": {
+          "description": "Joueur qui reçoit, ou point d'arrivée.",
+          "oneOf": [
+            { "type": "number" },
+            { "type": "string" },
+            { "$ref": "#/definitions/point" }
+          ]
+        }
+      }
+    }
+  }
+}

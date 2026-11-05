@@ -1,13 +1,17 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { onMount } from 'svelte';
+  import { confirmLeaveEditors, registerEditorGate, type EditorGate } from '$lib/workspace/editorLeave';
   import { pages } from '$lib/stores/workspace';
-  import { exercisePaths, navArea, seanceHeader, seasonSelection, showExercise, reorderExercises, saveSeasonExercises } from '$lib/workspace/state';
+  import { deleteExercise, exercisePaths, navArea, seanceHeader, seasons, seasonSelection, showExercise, reorderExercises, saveSeasonExercises } from '$lib/workspace/state';
   import { exerciseHtml } from '$lib/workspace/markdownHtml';
   import { RowDrag } from '$lib/utils/rowDrag.svelte';
   import { matches } from '$lib/utils/search';
   import { Alert, Button, ButtonGroup, Card, Heading, TableBody, TableBodyCell, TableBodyRow, TableHead, TableHeadCell } from 'flowbite-svelte';
   import { BarsOutline, PenOutline } from 'flowbite-svelte-icons';
   import AddExerciseButton from './AddExerciseButton.svelte';
+  import ConfirmDelete, { plural, type DeleteRequest } from './ConfirmDelete.svelte';
+  import RowActions from './RowActions.svelte';
   import QuietIconButton from './QuietIconButton.svelte';
   import SchemaPreview from './SchemaPreview.svelte';
   import SearchTable from './SearchTable.svelte';
@@ -62,10 +66,27 @@
     editingPick = true;
   }
 
-  function cancelPick() {
+  function pickDirty(): boolean {
+    if (!editingPick) return false;
+    return draft.join('\0') !== ($seasonSelection ?? []).join('\0');
+  }
+
+  function revertPick() {
     editingPick = false;
     draft = [];
     pickError = '';
+  }
+
+  const pickGate: EditorGate = {
+    dirty: pickDirty,
+    save: () => savePick(),
+    discard: revertPick
+  };
+
+  async function cancelPick(): Promise<boolean> {
+    if (!(await confirmLeaveEditors(pickGate))) return false;
+    revertPick();
+    return true;
   }
 
   function togglePick(id: string) {
@@ -80,27 +101,49 @@
     return error;
   }
 
-  async function savePick() {
+  async function savePick(): Promise<boolean> {
     pickError = '';
     const known = new Set($pages.map(page => page.id));
     const error = await saveSeasonExercises(draft.filter(id => known.has(id)));
     if (error) {
       pickError = error;
-      return;
+      return false;
     }
     editingPick = false;
+    return true;
   }
 
-  function showView(next: View) {
+  async function showView(next: View) {
+    if (next !== 'table' && !(await cancelPick())) return;
     view = next;
-    if (next !== 'table') cancelPick();
     try { sessionStorage.setItem(VIEW_KEY, next); } catch { /* quota */ }
   }
+
+  onMount(() => registerEditorGate(pickGate));
 
   function schemaAt(id: string): string {
     return $exercisePaths[id] || '';
   }
+
+  let deleteRequest = $state<DeleteRequest | null>(null);
+
+  function askDeleteExercise(id: string, name: string) {
+    const planned = $seasons.reduce((sum, season) => sum + season.slots.filter(slot => slot.session === $seanceHeader.id && slot.exercises?.includes(id)).length, 0);
+    deleteRequest = {
+      title: 'Supprimer l’exercice',
+      subject: 'L’exercice',
+      name,
+      deleted: 'supprimé',
+      items: ['sa fiche et son schéma'],
+      note: planned ? `Il sera retiré de ${plural(planned, 'séance planifiée', 'séances planifiées')}.` : '',
+      run: () => deleteExercise(id)
+    };
+  }
 </script>
+
+{#snippet addExercise()}
+  <AddExerciseButton />
+{/snippet}
 
 <div class="space-y-4">
   <SessionText {editable} />
@@ -108,20 +151,20 @@
   <div class="flex items-center justify-between gap-3">
     <div class="inline-flex items-center gap-1">
       <Heading tag="h2" class="text-xl">Exercices</Heading>
-      {#if !planning}
+      {#if !planning && view === 'sheets'}
         <AddExerciseButton />
-      {:else if view === 'table' && !editingPick}
+      {:else if planning && view === 'table' && !editingPick}
         <QuietIconButton label="Éditer" onclick={startPick}><PenOutline size="sm" /></QuietIconButton>
       {/if}
     </div>
     <div class="flex items-center gap-3">
       {#if planning && view === 'table' && editingPick}
         <Button size="sm" color="brand" onclick={() => { void savePick(); }}>Sauver</Button>
-        <Button size="sm" color="alternative" onclick={cancelPick}>Annuler</Button>
+        <Button size="sm" color="alternative" onclick={() => { void cancelPick(); }}>Annuler</Button>
       {/if}
       <ButtonGroup size="sm" aria-label="Affichage des exercices">
-        <Button size="sm" color={view === 'table' ? 'brand' : 'alternative'} onclick={() => showView('table')}>Tableau</Button>
-        <Button size="sm" color={view === 'sheets' ? 'brand' : 'alternative'} onclick={() => showView('sheets')}>Fiches</Button>
+        <Button size="sm" color={view === 'table' ? 'brand' : 'alternative'} onclick={() => { void showView('table'); }}>Tableau</Button>
+        <Button size="sm" color={view === 'sheets' ? 'brand' : 'alternative'} onclick={() => { void showView('sheets'); }}>Fiches</Button>
       </ButtonGroup>
     </div>
   </div>
@@ -141,7 +184,7 @@
     <Card size="xl" class="p-6">
       {#if drag.error}<Alert color="red" class="mb-3">{drag.error}</Alert>{/if}
       {#if pickError}<Alert color="red" class="mb-3">{pickError}</Alert>{/if}
-      <SearchTable bind:query placeholder="Rechercher un exercice">
+      <SearchTable bind:query placeholder="Rechercher un exercice" actions={planning ? undefined : addExercise}>
         <TableHead>
           {#if editingPick}<TableHeadCell class="w-12 px-3"></TableHeadCell>{/if}
           <TableHeadCell class="w-20 px-3">Ordre</TableHeadCell>
@@ -150,6 +193,7 @@
             <TableHeadCell class="px-3">{label}</TableHeadCell>
           {/each}
           <TableHeadCell class="w-48 px-3">Schéma</TableHeadCell>
+          {#if editable}<TableHeadCell class="w-px px-3"><span class="sr-only">Actions</span></TableHeadCell>{/if}
         </TableHead>
         <TableBody>
           {#each visiblePages as page (page.id)}
@@ -177,9 +221,10 @@
               <TableBodyCell class="w-48 px-3 py-2">
                 <div class="w-44"><SchemaPreview at={schemaAt(page.id)} exerciseId={page.id} compact /></div>
               </TableBodyCell>
+              {#if editable}<TableBodyCell class="px-3 py-0"><RowActions ondelete={() => askDeleteExercise(page.id, page.name)} /></TableBodyCell>{/if}
             </TableBodyRow>
           {:else}
-            <TableBodyRow><TableBodyCell colspan={COLUMNS.length + (editingPick ? 4 : 3)}>{query.trim() ? 'Aucun résultat' : planning ? 'Aucun exercice retenu' : 'Aucun exercice'}</TableBodyCell></TableBodyRow>
+            <TableBodyRow><TableBodyCell colspan={COLUMNS.length + (editingPick ? 4 : 3) + (editable ? 1 : 0)}>{query.trim() ? 'Aucun résultat' : planning ? 'Aucun exercice retenu' : 'Aucun exercice'}</TableBodyCell></TableBodyRow>
           {/each}
         </TableBody>
       </SearchTable>
@@ -208,6 +253,8 @@
     {/each}
   {/if}
 </div>
+
+<ConfirmDelete bind:request={deleteRequest} />
 
 <style>
   .pick { accent-color: var(--color-brand); }

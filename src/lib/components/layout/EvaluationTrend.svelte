@@ -1,17 +1,19 @@
 <script lang="ts">
-  import { DOMAINS, domainAverage, formatAverage, parseEvaluation } from '$lib/workspace/evaluation';
+  import { DOMAINS, domainAverage, formatAverage, parseEvaluation, type SkillsMarker } from '$lib/workspace/evaluation';
   import { longFrenchDate } from '$lib/workspace/calendar';
 
   let {
     rows,
     season,
     player,
-    onopen
+    onopen,
+    marker = null
   } = $props<{
     rows: { date: string; markdown: string }[];
     season: string;
     player: string;
     onopen: (date: string) => void;
+    marker?: SkillsMarker | null;
   }>();
 
   const colors = ['#eb4f27', '#2563eb', '#16a34a', '#7c3aed', '#ca8a04', '#0891b2'];
@@ -25,7 +27,7 @@
   const plotWidth = width - plotLeft - padRight;
   const plotHeight = height - padTop - padBottom;
 
-  const sheets = $derived(rows.map((row: { markdown?: string }) => parseEvaluation(row.markdown || '')));
+  const sheets = $derived(rows.map((row: { markdown?: string }) => parseEvaluation(row.markdown || '', marker)));
   const series = $derived.by(() => {
     const found = new Map<string, { id: string; name: string; short: string }>();
     for (const sheet of sheets) {
@@ -38,7 +40,7 @@
     return ordered;
   });
   const points = $derived([...rows].sort((a: { date: string }, b: { date: string }) => a.date.localeCompare(b.date)).map((row: { date: string; markdown?: string }) => {
-    const sheet = parseEvaluation(row.markdown || '');
+    const sheet = parseEvaluation(row.markdown || '', marker);
     return {
       date: row.date,
       label: axisDate(row.date),

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { confirmLeaveEditors, registerEditorGate, type EditorGate } from '$lib/workspace/editorLeave';
   import { navArea, navItem, seanceHeader, seasons, sessionTheme, themes, saveSessionMarkdown, saveThemeMarkdown } from '$lib/workspace/state';
   import { themeKey } from '$lib/workspace/catalog';
   import { fillTemplate, readTemplate } from '$lib/workspace/templates';
@@ -41,7 +42,9 @@
   });
 
   onMount(() => {
+    const stop = registerEditorGate(textGate);
     void readTemplate('session').then(text => { template = text; });
+    return stop;
   });
 
   function startEdit() {
@@ -49,7 +52,44 @@
     editing = true;
   }
 
-  function cancelEdit() {
+  function sessionDirty(): boolean {
+    return editing && draft !== shown;
+  }
+
+  function themeDirty(): boolean {
+    return editingTheme && themeDraft !== themeMarkdown;
+  }
+
+  const textGate: EditorGate = {
+    dirty: () => sessionDirty() || themeDirty(),
+    save: async () => {
+      if (sessionDirty()) {
+        savingText = true;
+        const ok = await saveSessionMarkdown(draft);
+        savingText = false;
+        if (!ok) return false;
+        editing = false;
+      }
+      if (themeDirty()) {
+        if (!theme) return false;
+        savingText = true;
+        const ok = await saveThemeMarkdown(theme.id, themeDraft);
+        savingText = false;
+        if (!ok) return false;
+        editingTheme = false;
+      }
+      return true;
+    },
+    discard: () => {
+      editing = false;
+      editingTheme = false;
+      draft = '';
+      themeDraft = '';
+    }
+  };
+
+  async function cancelEdit() {
+    if (!(await confirmLeaveEditors(textGate))) return;
     editing = false;
     draft = '';
   }
@@ -64,6 +104,12 @@
   function startThemeEdit() {
     themeDraft = themeMarkdown;
     editingTheme = true;
+  }
+
+  async function cancelTheme() {
+    if (!(await confirmLeaveEditors(textGate))) return;
+    editingTheme = false;
+    themeDraft = '';
   }
 
   async function saveThemeEdit() {
@@ -87,7 +133,7 @@
 <Card size="xl" class="p-6">
   {#if editable && editingTheme}
     <div class="mb-3 flex justify-end gap-2">
-      <Button size="sm" color="alternative" onclick={() => { editingTheme = false; }}>Annuler</Button>
+      <Button size="sm" color="alternative" onclick={() => { void cancelTheme(); }}>Annuler</Button>
       <Button size="sm" color="brand" disabled={savingText} onclick={() => { void saveThemeEdit(); }}>Sauver</Button>
     </div>
     <MarkdownEditor bind:value={themeDraft} />

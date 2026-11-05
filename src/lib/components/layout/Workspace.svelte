@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { screen, restoring } from '$lib/workspace/state';
+  import { screen, catalogReady } from '$lib/workspace/state';
+  import LoadingIcon from './LoadingIcon.svelte';
   import AppShell from './AppShell.svelte';
   import WorkspaceGate from './WorkspaceGate.svelte';
   import WorkspaceBrowser from './WorkspaceBrowser.svelte';
@@ -7,15 +8,22 @@
   import ExportDialog from './ExportDialog.svelte';
   import SaveDialog from './SaveDialog.svelte';
   import ConnectionsDialog from './ConnectionsDialog.svelte';
+  import UnsavedLeave from './UnsavedLeave.svelte';
   import {
     deleteSelected, undo, redo, copySelection, cutSelection, pasteClipboard,
     duplicateSelection, showExportDialog, showSaveDialog, showConnections
   } from '$lib/stores/workspace';
   import { quickSave } from '$lib/storage';
 
+  function inField(target: HTMLElement): boolean {
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return true;
+    if (target.getAttribute('role') === 'textbox') return true;
+    return Boolean(target.closest('.monaco-editor, .native-edit-context'));
+  }
+
   function handleGlobalKeydown(e: KeyboardEvent) {
     const target = e.target as HTMLElement;
-    const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+    const isInput = inField(target);
     const mod = e.ctrlKey || e.metaKey;
 
     if (mod && e.key.toLowerCase() === 's') {
@@ -40,13 +48,13 @@
 
 <svelte:window onkeydowncapture={handleGlobalKeydown} />
 
-{#if $restoring}
+{#if !$catalogReady}
   <AppShell>
     {#snippet bar()}
       <WorkspacePath />
     {/snippet}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50" role="status">
-      <p class="rounded-base bg-neutral-primary px-8 py-6 text-sm text-heading shadow-lg">Chargement…</p>
+    <div class="flex min-h-0 flex-1 items-center justify-center text-body" role="status">
+      <LoadingIcon />
     </div>
   </AppShell>
 {:else if $screen === 'gate'}
@@ -71,4 +79,5 @@
 {#if $showConnections}
   <ConnectionsDialog />
 {/if}
+<UnsavedLeave />
 

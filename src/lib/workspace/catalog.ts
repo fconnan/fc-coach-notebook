@@ -1,13 +1,12 @@
 import { folderSlug } from './exerciseFile';
 
-export type WorkspaceArea = 'categories' | 'library' | 'seasons' | 'styles' | 'themes';
-export type WorkspaceDoor = 'repertoire' | 'season' | 'studio';
+export type WorkspaceArea = 'categories' | 'elements' | 'seasons' | 'themes';
+export type WorkspaceDoor = 'repertoire' | 'season' | 'elements';
 
 export const WORKSPACE_AREAS: { id: WorkspaceArea; label: string }[] = [
   { id: 'categories', label: 'Catégories' },
-  { id: 'library', label: 'Bibliothèque' },
+  { id: 'elements', label: 'Éléments' },
   { id: 'seasons', label: 'Saisons' },
-  { id: 'styles', label: 'Styles' },
   { id: 'themes', label: 'Thèmes' }
 ];
 
@@ -32,12 +31,11 @@ export const WORKSPACE_DOORS: {
     ]
   },
   {
-    id: 'studio',
-    label: 'Atelier',
-    line: 'Bibliothèque d\'objets pour les schémas de séances.',
+    id: 'elements',
+    label: 'Éléments',
+    line: 'Objets, terrains et compositions de base pour les schémas.',
     children: [
-      { id: 'library', label: 'Bibliothèque' },
-      { id: 'styles', label: 'Styles' }
+      { id: 'elements', label: 'Éléments' }
     ]
   }
 ];
@@ -46,14 +44,6 @@ export function doorOf(area: WorkspaceArea | ''): WorkspaceDoor | '' {
   if (area === 'themes') return 'repertoire';
   return WORKSPACE_DOORS.find(door => door.children.some(child => child.id === area))?.id || '';
 }
-
-export const LIBRARY_KINDS = [
-  { id: 'objects', label: 'Objets' },
-  { id: 'pitches', label: 'Terrains' },
-  { id: 'shapes', label: 'Formes' }
-] as const;
-
-export type LibraryKind = (typeof LIBRARY_KINDS)[number]['id'];
 
 export interface SeasonSlot {
   date: string;
@@ -90,6 +80,27 @@ export function playerNames(value: unknown): string[] {
   return names;
 }
 
+const PLAYER_ITEM = /^([-*+]\s+)(.+?)\s*$/;
+
+/** Les joueurs de la saison sont les items de premier niveau de son content.md. */
+export function seasonPlayerNames(markdown: string): string[] {
+  return playerNames(markdown.split(/\r?\n/).flatMap(line => {
+    const match = PLAYER_ITEM.exec(line);
+    return match ? [match[2]] : [];
+  }));
+}
+
+export function renameSeasonPlayer(markdown: string, playerId: string, name: string): string | null {
+  let found = false;
+  const lines = markdown.split(/\r?\n/).map(line => {
+    const match = PLAYER_ITEM.exec(line);
+    if (found || !match || folderSlug(match[2]) !== playerId) return line;
+    found = true;
+    return `${match[1]}${name}`;
+  });
+  return found ? lines.join('\n') : null;
+}
+
 export interface SeasonPlayer {
   id: string;
   name: string;
@@ -100,6 +111,7 @@ export interface SeasonInfo {
   id: string;
   uuid?: string;
   name: string;
+  markdown: string;
   players: SeasonPlayer[];
   slots: SeasonSlot[];
 }
@@ -108,6 +120,24 @@ export interface ThemeSessionInfo {
   id: string;
   folder: string;
   name: string;
+  exercises: number;
+}
+
+type StoredSlot = { session?: unknown; exercises?: unknown };
+
+/** Créneaux d'une saison sans les séances ni les exercices supprimés, ou null si rien ne change. */
+export function pruneSlots<T extends StoredSlot>(slots: T[], sessions: Set<string>, exercises: Set<string>): T[] | null {
+  let changed = false;
+  const next = slots.flatMap(slot => {
+    if (sessions.has(String(slot.session || ''))) {
+      changed = true;
+      return [];
+    }
+    if (!Array.isArray(slot.exercises) || !slot.exercises.some(id => exercises.has(id))) return [slot];
+    changed = true;
+    return [{ ...slot, exercises: slot.exercises.filter(id => !exercises.has(id)) }];
+  });
+  return changed ? next : null;
 }
 
 export interface ThemeInfo {
@@ -130,11 +160,18 @@ export function themeKey(theme: Pick<ThemeInfo, 'id' | 'uuid'>): string {
   return theme.uuid || theme.id;
 }
 
+export type LibraryFileKind = 'folder' | 'yaml' | 'svg';
+
 export interface LibraryItem {
-  domain: string;
-  kind: LibraryKind;
+  /** Chemin depuis la racine des données, par exemple `elements/objects/cone.yaml`. */
+  path: string;
   name: string;
-  file: string;
+  kind: LibraryFileKind;
+}
+
+/** Chemin sous `elements/`, sans le préfixe. */
+export function elementRel(path: string): string {
+  return path.startsWith('elements/') ? path.slice('elements/'.length) : path;
 }
 
 export function areaLabel(id: WorkspaceArea): string {

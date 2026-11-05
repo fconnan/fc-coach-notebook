@@ -31,7 +31,7 @@ function installFormatter() {
 export function mountYaml(
   host: HTMLElement,
   value: string,
-  names: string[],
+  entries: { id: string; type: string; name: string }[],
   onChange: (text: string) => void
 ) {
   const options = {
@@ -40,13 +40,29 @@ export function mountYaml(
     schemas: [{
       uri: 'http://fc-coach-notebook/schema-0.json',
       fileMatch: ['schema.yaml', '*.yaml', 'file:///exercise/schema.yaml'],
-      schema: schemaDocument(names)
+      schema: schemaDocument(entries)
     }]
   };
   installFormatter();
   if (!yamlHandle) yamlHandle = configureMonacoYaml(monaco, options);
   else void yamlHandle.update(options);
   const model = monaco.editor.createModel(value, 'yaml', monaco.Uri.parse('file:///exercise/schema.yaml'));
+  const editor = monaco.editor.create(host, {
+    model,
+    automaticLayout: true,
+    minimap: { enabled: false },
+    fontSize: 14,
+    tabSize: 2,
+    scrollBeyondLastLine: false
+  });
+  editor.onDidChangeModelContent(() => onChange(editor.getValue()));
+  return editor;
+}
+
+export function mountXml(host: HTMLElement, value: string, onChange: (text: string) => void) {
+  const modelUri = monaco.Uri.parse('file:///element/drawing.svg');
+  monaco.editor.getModel(modelUri)?.dispose();
+  const model = monaco.editor.createModel(value, 'xml', modelUri);
   const editor = monaco.editor.create(host, {
     model,
     automaticLayout: true,

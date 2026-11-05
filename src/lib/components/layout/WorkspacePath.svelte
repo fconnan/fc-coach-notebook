@@ -3,15 +3,16 @@
   import { page } from '$app/stores';
   import { currentPage } from '$lib/stores/workspace';
   import {
-    breadcrumbEpoch, libraryItems, navArea, navChild, navDoor, navItem, navLeaf, restoring, screen, seanceHeader, seasons, styles, themes,
+    breadcrumbEpoch, catalogReady, libraryItems, navArea, navChild, navDoor, navItem, navLeaf, restoring, screen, seanceHeader, seasons, themes,
     closeEvaluation, openArea, openDoor, openEvaluation, openNavChild, openNavItem, showHome, showSeanceScreen
   } from '$lib/workspace/state';
-  import { LIBRARY_KINDS, WORKSPACE_DOORS, type WorkspaceArea, type WorkspaceDoor } from '$lib/workspace/catalog';
+  import { WORKSPACE_DOORS, elementRel, type WorkspaceArea, type WorkspaceDoor } from '$lib/workspace/catalog';
   import { currentAddress, parseAddress } from '$lib/workspace/address';
 import { longFrenchDate } from '$lib/workspace/calendar';
   import { addBookmark, bookmarks, removeBookmark } from '$lib/stores/bookmarks';
   import { Select } from 'flowbite-svelte';
   import { HeartOutline, HeartSolid, TrashBinOutline } from 'flowbite-svelte-icons';
+  import LoadingIcon from './LoadingIcon.svelte';
 
   type Choice = { value: string; label: string };
   type Step = {
@@ -21,6 +22,7 @@ import { longFrenchDate } from '$lib/workspace/calendar';
     choices?: Choice[];
     change?: (value: string) => void;
     text?: string;
+    loading?: boolean;
     back?: () => void | Promise<unknown>;
     backLabel?: string;
   };
@@ -41,8 +43,6 @@ import { longFrenchDate } from '$lib/workspace/calendar';
     }
     return [...dates].map(([value, entry]) => ({ value, label: `${entry.dates.join(', ')} · ${entry.name}` }));
   });
-  const domains = $derived([...new Set($libraryItems.map(item => item.domain))].sort((a, b) => a.localeCompare(b, 'fr')));
-
   function fieldValue(event: Event): string {
     const target = event.currentTarget;
     return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
@@ -59,6 +59,31 @@ import { longFrenchDate } from '$lib/workspace/calendar';
       }
       list.push(step);
     };
+    if (!$catalogReady) {
+      const address = parseAddress($page.url.pathname);
+      if (!address?.door) return list;
+      const pendingDoor = WORKSPACE_DOORS.find(item => item.id === address.door);
+      if (!pendingDoor) return list;
+      add({
+        key: 'door',
+        label: 'Porte',
+        value: address.door,
+        choices: WORKSPACE_DOORS.map(item => ({ value: item.id, label: item.label })),
+        change: (value) => { void openDoor(value as WorkspaceDoor); }
+      });
+      const labels = address.door === 'elements'
+        ? ['Élément']
+        : address.door === 'season'
+          ? ['Saison', 'Séance', 'Évaluation']
+          : ['Thème', 'Séance', 'Schéma'];
+      const crumbs = address.door === 'elements'
+        ? (address.item ? [address.item] : [])
+        : [address.item, address.child, address.exercise].filter(Boolean);
+      crumbs.forEach((part, index) => {
+        add({ key: `pending-${part}`, label: labels[index] || 'Chargement', loading: true });
+      });
+      return list;
+    }
     if (!openedDoorId || !door) return list;
     add({
       key: 'door',
@@ -137,32 +162,40 @@ import { longFrenchDate } from '$lib/workspace/calendar';
         text: $currentPage.name || 'Schéma'
       }, () => showSeanceScreen(), `Revenir à ${$seanceHeader.name || 'Séance'}`);
     }
-    if ($navArea === 'styles' && $navItem) {
-      add({
-        key: 'style',
-        label: 'Style',
-        value: $navItem,
-        choices: $styles.map(style => ({ value: style.id, label: style.name })),
-        change: (value) => { void openNavItem(value); }
-      }, () => openNavItem(''), 'Revenir à Styles');
-    }
-    if ($navArea === 'library' && $navItem) {
-      add({
-        key: 'domain',
-        label: 'Domaine',
-        value: $navItem,
-        choices: domains.map(domain => ({ value: domain, label: domain })),
-        change: (value) => { void openNavItem(value); }
-      }, () => openNavItem(''), 'Revenir à Bibliothèque');
-    }
-    if ($navArea === 'library' && $navChild) {
-      add({
-        key: 'kind',
-        label: 'Dossier',
-        value: $navChild,
-        choices: LIBRARY_KINDS.map(kind => ({ value: kind.id, label: kind.label })),
-        change: (value) => { void openNavChild(value); }
-      }, () => openNavChild(''), `Revenir à ${$navItem}`);
+    if ($navArea === 'elements' && $navItem) {
+      const parts = $navItem.split('/').filter(Boolean);
+      parts.forEach((part, index) => {
+        const parent = parts.slice(0, index).join('/');
+        const value = parts.slice(0, index + 1).join('/');
+        const current = $libraryItems.find(item => elementRel(item.path) === value);
+        const back = () => openNavItem(parent);
+        const backLabel = parent ? `Revenir à ${parts[index - 1]}` : 'Revenir à Éléments';
+        if (current && current.kind !== 'folder') {
+          const choices = $libraryItems
+            .filter(item => item.kind !== 'folder' && elementRel(item.path).split('/').slice(0, -1).join('/') === parent)
+            .map(item => ({ value: elementRel(item.path), label: item.name }))
+            .sort((a, b) => a.label.localeCompare(b.label, 'fr', { numeric: true }));
+          add({
+            key: value,
+            label: 'Fichier',
+            value,
+            choices,
+            change: (next) => { void openNavItem(next); }
+          }, back, backLabel);
+          return;
+        }
+        const choices = $libraryItems
+          .filter(item => item.kind === 'folder' && elementRel(item.path).split('/').slice(0, -1).join('/') === parent)
+          .map(item => ({ value: elementRel(item.path), label: item.name }))
+          .sort((a, b) => a.label.localeCompare(b.label, 'fr'));
+        add({
+          key: value,
+          label: 'Dossier',
+          value,
+          choices,
+          change: (next) => { void openNavItem(next); }
+        }, back, backLabel);
+      });
     }
     return list;
   });
@@ -207,7 +240,9 @@ import { longFrenchDate } from '$lib/workspace/calendar';
         </svg>
       </button>
     {/if}
-    {#if step.choices && step.change}
+    {#if step.loading}
+      <LoadingIcon />
+    {:else if step.choices && step.change}
       {@render pathSelect(step.label, step.value || '', step.choices, step.change)}
     {:else}
       <span class="text-sm font-medium">{step.text}</span>

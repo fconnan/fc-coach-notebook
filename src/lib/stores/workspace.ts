@@ -160,7 +160,6 @@ export interface Page {
   elements: ComponentElement[];
   showPlayerDetails: boolean;
   morphology?: PageMorphology;
-  // Global styles
   team1Color: string;
   team2Color: string;
   team1Size: number;
@@ -181,8 +180,6 @@ export interface Page {
   activeFrameIndex: number;
   // Session (legacy single-page files; the séance header lives on the séance file)
   session: SessionMeta;
-  /** Shared page style in the category folder. */
-  styleId?: string;
   /** Optional official atoms. Free text, never required. */
   drill?: DrillFields;
 }
@@ -709,31 +706,12 @@ export function setMarkdownContent(content: string) {
   });
 }
 
-let styleHook: ((page: Page, updates: Partial<Page>) => void) | null = null;
-
-/** Called when the active exercise's shared visual style changes. */
-export function setStyleHook(fn: ((page: Page, updates: Partial<Page>) => void) | null) {
-  styleHook = fn;
-}
-
 export function updatePageSettings(updates: Partial<Page>, opts?: { skipHistory?: boolean }) {
   if (updates.view) updates = { ...updates, view: '2d' };
   if (!opts?.skipHistory) pushHistory();
   isDirty.set(true);
   const activeId = getCurrentPageId();
   pages.update(p => p.map(page => (page.id === activeId ? { ...page, ...updates } : page)));
-  const visual: Partial<Page> = {};
-  let any = false;
-  for (const key of STYLE_FIELDS) {
-    if (key in updates) {
-      (visual as Record<string, unknown>)[key] = updates[key];
-      any = true;
-    }
-  }
-  if (any && styleHook) {
-    const page = get(pages).find(p => p.id === activeId);
-    if (page?.styleId) styleHook(page, visual);
-  }
 }
 
 export function updateDrill(updates: Partial<DrillFields>) {
@@ -763,7 +741,6 @@ export function addExercise() {
     for (const key of STYLE_FIELDS) {
       (page as unknown as Record<string, unknown>)[key] = base[key];
     }
-    page.styleId = base.styleId;
     page.fieldTemplate = base.fieldTemplate;
     page.view = base.view;
     page.morphology = base.morphology;

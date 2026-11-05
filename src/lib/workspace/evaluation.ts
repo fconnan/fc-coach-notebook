@@ -174,13 +174,30 @@ function goalEmpty(goal: ProgressGoal): boolean {
   return GOAL_FIELDS.every(([key]) => !goal[key].trim());
 }
 
+export interface SkillsMarker {
+  heading: string;
+  title: string | null;
+}
+
+/** Le repère `{{skills}}` vit dans le template, sur le `##` des compétences. */
+export function skillsMarkerFrom(template: string): SkillsMarker | null {
+  const match = /^##\s+(.+?)\s*\{\{\s*skills(?:\s+([^}]*))?\s*\}\}\s*$/im.exec(template.replace(/^\uFEFF/, ''));
+  if (!match) return null;
+  const title = (match[2] || '').trim();
+  return { heading: match[1].trim(), title: title || null };
+}
+
+export function withoutSkillsMarker(text: string): string {
+  return text.replace(/[ \t]*\{\{\s*skills(?:\s+[^}]*)?\s*\}\}/gi, '');
+}
+
 export function formatEvaluation(sheet: EvaluationModel): string {
   const lines = [`# ${sheet.title.trim() || 'Évaluation'}`, ''];
   if (sheet.training) lines.push('Contexte: Entraînement');
   if (sheet.match) lines.push('Contexte: Match');
   if (sheet.position.trim()) lines.push(`Poste: ${clean(sheet.position)}`);
   if (lines.length > 2) lines.push('');
-  lines.push('## Compétences', '', sheet.skillsTitle ? `{{skills ${sheet.skillsTitle}}}` : '{{skills}}', '');
+  lines.push('## Compétences', '');
   for (const domain of sheet.domains) {
     lines.push(`- ${domain.name}`);
     for (const item of domain.criteria) {
@@ -224,7 +241,7 @@ function splitScore(text: string): { name: string; score: number | null } {
   return { name: match[1].trim(), score: score >= 1 && score <= 5 ? score : null };
 }
 
-export function parseEvaluation(markdown: string): EvaluationModel {
+export function parseEvaluation(markdown: string, marker: SkillsMarker | null = null): EvaluationModel {
   const sheet = blankSheet('');
   let goal: ProgressGoal | null = null;
   let noteId = '';
@@ -240,7 +257,7 @@ export function parseEvaluation(markdown: string): EvaluationModel {
     if (skills) {
       sawSkills = true;
       inSkills = true;
-      skillsTitle = (skills[1] || '').trim() || null;
+      skillsTitle = marker ? marker.title : ((skills[1] || '').trim() || null);
       noteId = '';
       if (line.trim() === skills[0]) continue;
     }
@@ -253,7 +270,17 @@ export function parseEvaluation(markdown: string): EvaluationModel {
     if (line.startsWith('## ')) {
       noteId = '';
       goal = null;
-      if (!skills) inSkills = false;
+      const heading = line.slice(3).replace(/\{\{\s*skills(?:\s+[^}]*)?\s*\}\}/i, '').trim();
+      if (skills || (marker != null && heading === marker.heading)) {
+        sawSkills = true;
+        inSkills = true;
+        domainIndent = -1;
+        group = null;
+        if (marker) skillsTitle = marker.title;
+        else if (skills) skillsTitle = (skills[1] || '').trim() || null;
+      } else {
+        inSkills = false;
+      }
       continue;
     }
     if (line.startsWith('### ')) {

@@ -1,10 +1,14 @@
 import { parse } from 'yaml';
-import { buildScene, libraryFor, renderSvg } from './scene';
+import { buildScene, elementKind, elementScene, libraryFor, renderSvg } from './scene';
 import type { LibraryEntry, SchemaDoc } from './types';
 
-const DEFAULT_SOURCE = 'type: fccn-schema:0\nname: exercise\npitch:\n  template: half\n';
+const DEFAULT_SOURCE = 'version: fccn-schema:1\nname: exercise\npitch: half-attack\n';
 
 let libraryTask: Promise<LibraryEntry[]> | null = null;
+
+export function refreshLibrary() {
+  libraryTask = null;
+}
 
 function loadLibrary(): Promise<LibraryEntry[]> {
   if (!libraryTask) {
@@ -29,6 +33,25 @@ export interface ExercisePreview {
 
 function svgOf(scene: ReturnType<typeof buildScene>, picks = false): string {
   return renderSvg(scene, picks).replace(/<\?xml[\s\S]*?\?>\s*/, '');
+}
+
+export async function liveElementPreview(source: string, elementId = ''): Promise<ExercisePreview> {
+  const library = await loadLibrary();
+  const doc = parse(source) as SchemaDoc;
+  if (!doc || typeof doc !== 'object') throw new Error('YAML illisible');
+  if (elementId) {
+    doc.id = elementId;
+    doc.type = elementKind(elementId);
+  }
+  const names = libraryFor('elements', library);
+  const phases = (doc.phases || []).map(item => ({
+    name: item.name || 'Phase',
+    duration: typeof item.duration === 'number' && Number.isFinite(item.duration) ? item.duration : 4
+  }));
+  return {
+    phases,
+    render: (phase, progress, picks) => elementScene(doc, names, phase, progress, Boolean(picks))
+  };
 }
 
 export async function liveExercisePreview(source: string, at = '', id = ''): Promise<ExercisePreview> {

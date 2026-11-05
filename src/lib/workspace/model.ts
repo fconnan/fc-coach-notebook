@@ -1,10 +1,7 @@
 import {
   DEFAULT_PAGE,
-  STYLE_FIELDS,
-  migratePage,
   type DrillFields,
-  type Page,
-  type PageMorphology
+  type Page
 } from '$lib/stores/workspace';
 
 export const ODS_NAME = 'classeur-fff-ligue-bretagne.ods';
@@ -88,24 +85,6 @@ export interface SeanceFile extends SeanceHeader {
   exercises: Page[];
 }
 
-export interface PageStyle {
-  id: string;
-  name: string;
-  team1Color: string;
-  team2Color: string;
-  team1Size: number;
-  team2Size: number;
-  ballColor: string;
-  ballSize: number;
-  showFieldStripes: boolean;
-  grassType: string;
-  backgroundColor: string;
-  hideGoals: boolean;
-  goalNetOpacity: number;
-  hidePitchLines: boolean;
-  morphology: PageMorphology;
-}
-
 export function emptyTrainer(): TrainerInfo {
   return { type: WORKSPACE_TYPE, name: '' };
 }
@@ -146,34 +125,6 @@ export function slug(name: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
   return s || 'sans-titre';
-}
-
-export function styleFromPage(page: Page, id: string, name: string): PageStyle {
-  return {
-    id,
-    name,
-    team1Color: page.team1Color,
-    team2Color: page.team2Color,
-    team1Size: page.team1Size,
-    team2Size: page.team2Size,
-    ballColor: page.ballColor,
-    ballSize: page.ballSize,
-    showFieldStripes: page.showFieldStripes,
-    grassType: page.grassType,
-    backgroundColor: page.backgroundColor,
-    hideGoals: page.hideGoals,
-    goalNetOpacity: page.goalNetOpacity ?? 0.25,
-    hidePitchLines: page.hidePitchLines,
-    morphology: page.morphology || 'man'
-  };
-}
-
-export function visualsFromStyle(style: PageStyle): Partial<Page> {
-  const out: Partial<Page> = { styleId: style.id };
-  for (const key of STYLE_FIELDS) {
-    (out as Record<string, unknown>)[key] = style[key as keyof PageStyle];
-  }
-  return out;
 }
 
 export function blankExercise(name = 'Exercice 1'): Page {
@@ -263,9 +214,4 @@ export function drillFromBlock(block: {
     headcount: block.headcount || '',
     equipment: ''
   };
-}
-
-/** L’ancienne copie navigateur n’est plus reprise. */
-export function legacySeance(): { seance: SeanceFile; style: PageStyle } | null {
-  return null;
 }

@@ -3,11 +3,35 @@ import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse } from 'yaml';
 import type { RequestHandler } from './$types';
-import { SCHEMA_TYPE, type SchemaDoc } from '$lib/schema/types';
+import { dottedId, elementKind, elementScene, libraryFor } from '$lib/schema/scene';
+import { readSvg } from '$lib/schema/svg';
+import { parseShare } from '$lib/schema/size';
+import { SCHEMA_VERSION, type LibraryEntry, type SchemaDoc, type SizeSpec, type StretchSpec, type SvgAsset, type SvgVariant } from '$lib/schema/types';
 import { isUuidFolder, markdownTitle } from '$lib/workspace/exerciseFile';
 import { renameToTitle } from '$lib/workspace/renameFolder';
 
 const root = path.resolve('data');
+
+/** Le YAML de l’élément l’emporte sur les attributs du SVG, axe par axe. */
+function applyStretch(asset: SvgAsset, doc: SchemaDoc): SvgAsset {
+  const spec: StretchSpec = {
+    x: doc.stretch?.x || asset.stretch?.x,
+    y: doc.stretch?.y || asset.stretch?.y
+  };
+  if (!spec.x && !spec.y) return applySize({ ...asset, stretch: undefined }, doc);
+  return applySize({ ...asset, stretch: spec }, doc);
+}
+
+/** Le YAML de l’élément l’emporte sur les attributs du SVG. */
+function applySize(asset: SvgAsset, doc: SchemaDoc): SvgAsset {
+  const fromDoc = doc.size;
+  const realW = fromDoc?.real?.w ?? asset.size?.realW;
+  const realH = fromDoc?.real?.h ?? asset.size?.realH;
+  const min = fromDoc?.min !== undefined ? parseShare(fromDoc.min) : asset.size?.min;
+  if (realW === undefined && realH === undefined && min === undefined) return { ...asset, size: undefined };
+  const size: SizeSpec = { realW, realH, min };
+  return { ...asset, size };
+}
 
 function inside(target: string): string | null {
   const abs = path.resolve(root, target);
@@ -52,68 +76,89 @@ async function resolveDir(at: string, id: string): Promise<string | null> {
   return findExerciseDir(id);
 }
 
-function drawingFromSvg(file: string, source: string): { type?: string; name: string; svg: string; pitch?: { width: number; length: number; margin: number } } | null {
-  const name = path.basename(file, path.extname(file));
-  const opened = /<svg\b([^>]*)>/i.exec(source);
-  const svg = source
-    .replace(/<\?xml[\s\S]*?\?>/g, '')
-    .replace(/<svg\b[^>]*>/i, '')
-    .replace(/<\/svg>\s*$/i, '')
-    .trim();
-  if (!name || !svg) return null;
-  const doc: { name: string; svg: string; viewBox?: string; pitch?: { width: number; length: number; margin: number } } = { name, svg };
-  const rel = file.replaceAll('\\', '/');
-  const box = opened && /viewBox\s*=\s*"([^"]+)"/i.exec(opened[1]);
-  if (box) doc.viewBox = box[1];
-  if (rel.includes('/pitches/') && box) {
-    const [x, y, w, h] = box[1].trim().split(/[\s,]+/).map(Number);
-    const margin = Math.max(x < 0 ? -x : 0, y < 0 ? -y : 0);
-    if ([x, y, w, h].every(Number.isFinite)) doc.pitch = { width: w - margin * 2, length: h - margin * 2, margin };
-  }
-  return doc;
-}
-
 async function walk(dir: string, out: string[]) {
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const next = path.join(dir, entry.name);
     if (entry.isDirectory()) await walk(next, out);
-    else if (entry.isFile() && (/\.ya?ml$/i.test(entry.name) || /\.svg$/i.test(entry.name))) out.push(next);
+    else if (entry.isFile() && /\.(ya?ml|svg)$/i.test(entry.name)) out.push(next);
   }
 }
 
-function stemKey(file: string): string {
-  return file.replace(/\.(ya?ml|svg)$/i, '').toLowerCase();
+async function variantAssets(file: string, variants: SvgVariant[] | undefined, doc: SchemaDoc): Promise<SvgAsset[]> {
+  const assets: SvgAsset[] = [];
+  const dir = path.dirname(file);
+  const home = path.join(root, 'elements');
+  for (const variant of variants || []) {
+    if (!variant?.path || typeof variant.path !== 'string') continue;
+    const abs = path.resolve(dir, variant.path);
+    const rel = path.relative(home, abs);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) continue;
+    try {
+      const parsed = readSvg(await readFile(abs, 'utf8'));
+        if (parsed.markup) assets.push(applyStretch({ style: variant.style || '', markup: parsed.markup, viewBox: parsed.viewBox, stretch: parsed.stretch, size: parsed.size }, doc));
+    } catch { /* dessin absent */ }
+  }
+  return assets;
 }
 
-async function readLibrary(skip = '') {
+async function readLibrary(skip = ''): Promise<LibraryEntry[]> {
   const files: string[] = [];
-  try { await walk(path.join(root, 'studio', 'library'), files); } catch { /* bibliothèque absente */ }
-  const yamlStems = new Set(files.filter(file => /\.ya?ml$/i.test(file)).map(stemKey));
-  const library = [];
+  try { await walk(path.join(root, 'elements'), files); } catch { /* éléments absents */ }
+  const groups = new Map<string, { yaml?: string; svg?: string }>();
   for (const file of files) {
     if (file === skip) continue;
-    const svg = /\.svg$/i.test(file);
-    if (svg && yamlStems.has(stemKey(file))) continue;
-    try {
-      const source = await readFile(file, 'utf8');
-      const doc = svg
-        ? drawingFromSvg(file, source)
-        : parse(source) as SchemaDoc;
-      if (!doc?.name || (doc.type && doc.type !== SCHEMA_TYPE)) continue;
-      if (!svg && doc.type !== SCHEMA_TYPE) continue;
-      if (!svg) {
-        const preview = files.find(item => /\.svg$/i.test(item) && stemKey(item) === stemKey(file));
-        if (preview) doc.preview = (await readFile(preview, 'utf8')).replace(/<\?xml[\s\S]*?\?>/g, '').trim();
+    const id = dottedId(path.basename(file));
+    if (!id) continue;
+    const group = groups.get(id) || {};
+    if (/\.svg$/i.test(file)) { if (!group.svg) group.svg = file; }
+    else if (!group.yaml) group.yaml = file;
+    groups.set(id, group);
+  }
+  const library: LibraryEntry[] = [];
+  for (const [id, group] of groups) {
+    const kind = elementKind(id);
+    const leaf = id.slice(kind.length + 1);
+    let doc: SchemaDoc = { version: SCHEMA_VERSION, type: kind, id };
+    let held = group.svg || '';
+    if (group.yaml) {
+      try {
+        const parsed = parse(await readFile(group.yaml, 'utf8')) as SchemaDoc;
+        if (!parsed || parsed.version !== SCHEMA_VERSION) continue;
+        doc = parsed;
+      } catch { continue; }
+      held = group.yaml;
+    } else if (!group.svg) continue;
+    doc.type = kind;
+    doc.id = id;
+    const rel = path.relative(root, held).replaceAll('\\', '/');
+    const svgs: SvgAsset[] = [];
+    if (group.svg) {
+      try {
+        const parsed = readSvg(await readFile(group.svg, 'utf8'));
+        if (parsed.markup) svgs.push(applyStretch({ style: '', markup: parsed.markup, viewBox: parsed.viewBox, stretch: parsed.stretch, size: parsed.size }, doc));
+      } catch { /* dessin absent */ }
+    }
+    if (group.yaml) {
+      for (const asset of await variantAssets(group.yaml, doc.svg, doc)) {
+        if (svgs.some(item => item.style === asset.style)) continue;
+        svgs.push(asset);
       }
-      const rel = path.relative(root, file).replaceAll('\\', '/');
-      library.push({
-        name: doc.name,
-        file: rel,
-        dir: path.posix.dirname(rel) === '.' ? '' : path.posix.dirname(rel),
-        doc
-      });
-    } catch { /* yaml illisible */ }
+    }
+    library.push({
+      id,
+      name: leaf,
+      type: kind,
+      file: rel,
+      dir: path.posix.dirname(rel) === '.' ? '' : path.posix.dirname(rel),
+      doc,
+      svgs
+    });
+  }
+  const names = libraryFor('', library);
+  for (const entry of library) {
+    try { entry.doc.preview = elementScene(entry.doc, names); }
+    catch { /* aperçu impossible */ }
   }
   return library;
 }

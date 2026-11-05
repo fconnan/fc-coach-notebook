@@ -14,19 +14,19 @@ export const playerTokenRadius = 1.15;
  */
 export const ballCarryGap = playerTokenRadius + ballRadius * 0.4;
 
-export function ballBeside(x: number, y: number, towardX: number, towardY: number): { x: number; y: number } {
+export function ballBeside(x: number, y: number, towardX: number, towardY: number, gap = ballCarryGap): { x: number; y: number } {
   const dx = towardX - x;
   const dy = towardY - y;
   const len = Math.hypot(dx, dy);
   if (len < 1e-4) return { x, y };
-  const step = Math.min(ballCarryGap, len * 0.45);
+  const step = Math.min(gap, len * 0.45);
   return { x: x + (dx / len) * step, y: y + (dy / len) * step };
 }
 
 let ballSerial = 0;
 
-export function ballTransform(x: number, y: number): string {
-  const scale = ballRadius / 100;
+export function ballTransform(x: number, y: number, radius = ballRadius): string {
+  const scale = radius / 100;
   return `translate(${x} ${y}) scale(${scale} -${scale})`;
 }
 
@@ -35,7 +35,16 @@ export function ballFace(): string {
   return `<defs>${face.replaceAll('{{id}}', id)}</defs>${paint.replaceAll('{{id}}', id)}`;
 }
 
-export function ballMarkup(x: number, y: number, picks: boolean): string {
-  const attr = picks ? ` data-ball="1" data-x="${x}" data-y="${y}"` : '';
-  return `<g${attr} transform="${ballTransform(x, y)}">${ballFace()}</g>`;
+function stamp(markup: string): string {
+  const id = `ball${ballSerial++}`;
+  return markup
+    .replaceAll('id="ball-', `id="${id}-`)
+    .replaceAll('url(#ball-', `url(#${id}-`)
+    .replaceAll('href="#ball-', `href="#${id}-`);
+}
+
+export function ballMarkup(x: number, y: number, picks: boolean, markup = '', radius = ballRadius): string {
+  const attr = picks ? ` data-ball="1" data-x="${x}" data-y="${y}" data-radius="${radius}"` : '';
+  const face = markup ? stamp(markup) : ballFace();
+  return `<g${attr} transform="${ballTransform(x, y, radius)}">${face}</g>`;
 }

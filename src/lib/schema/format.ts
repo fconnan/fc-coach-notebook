@@ -39,6 +39,7 @@ function flowMap(path: readonly unknown[], node: YAMLMap) {
   const key = pairKey(path);
   if (INLINE_MAPS.has(key)) return true;
   const parent = path[path.length - 1];
+  if (parent instanceof Pair && !hasBlockChild(node)) return true;
   if (parent instanceof YAMLSeq) return !hasBlockChild(node);
   return false;
 }

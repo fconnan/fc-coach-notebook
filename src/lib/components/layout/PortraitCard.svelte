@@ -68,9 +68,22 @@
     if (file) void onphoto?.(file);
   }
 
+  const CLIPBOARD_BLOCKED = 'Le navigateur refuse la lecture du presse-papiers : fais Ctrl+V sur la page.';
+
+  function pastedImage(event: ClipboardEvent) {
+    if (!onphoto) return;
+    const target = event.target;
+    if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select'))) return;
+    const item = [...(event.clipboardData?.items || [])].find(entry => entry.kind === 'file' && entry.type.startsWith('image/'));
+    const blob = item?.getAsFile();
+    if (!blob) return;
+    event.preventDefault();
+    void onphoto(new File([blob], 'photo', { type: blob.type }));
+  }
+
   async function pastePhoto() {
     if (!navigator.clipboard?.read) {
-      onerror?.('Impossible de lire le presse-papiers.');
+      onerror?.(CLIPBOARD_BLOCKED);
       return;
     }
     try {
@@ -84,7 +97,7 @@
       }
       onerror?.('Aucune image à coller.');
     } catch {
-      onerror?.('Impossible de lire le presse-papiers.');
+      onerror?.(CLIPBOARD_BLOCKED);
     }
   }
 
@@ -97,6 +110,8 @@
     return () => clearTimeout(timer);
   });
 </script>
+
+<svelte:window onpaste={pastedImage} />
 
 <Card size="xl" class="overflow-hidden p-0 {className}">
   <div class="panel flex items-stretch">
@@ -150,11 +165,11 @@
     position: absolute;
     inset: 0;
     display: flex;
-    flex-direction: column;
-    align-items: center;
+    align-items: flex-end;
     justify-content: center;
     gap: 0.5rem;
-    background: rgb(0 0 0 / 0.45);
+    padding-bottom: 0.5rem;
+    background: linear-gradient(to top, rgb(0 0 0 / 0.5), transparent 40%);
     opacity: 0;
     pointer-events: none;
   }

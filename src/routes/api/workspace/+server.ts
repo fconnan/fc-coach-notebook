@@ -6,15 +6,14 @@ import { canonicalIso, frenchDateOrder, longFrenchDate } from '$lib/workspace/ca
 import { applyExerciseDocument, exerciseFolder, folderSlug, isUuidFolder, markdownTitle, orderByIds, orderSessionIndex, orderThemeIndex, splitExerciseRecord } from '$lib/workspace/exerciseFile';
 import { renameToTitle } from '$lib/workspace/renameFolder';
 import { fillTemplate, TEMPLATE_NAMES, type TemplateName } from '$lib/workspace/templates';
-import { coachName, EVALUATIONS_DIR, PLAYERS_DIR, playerNames, REPERTOIRE_TYPE, SEASONS_DIR, THEMES_DIR, themeKey, type SeasonPlayer } from '$lib/workspace/catalog';
+import { coachName, EVALUATIONS_DIR, PLAYERS_DIR, pruneSlots, renameSeasonPlayer, REPERTOIRE_TYPE, seasonPlayerNames, SEASONS_DIR, THEMES_DIR, themeKey, type SeasonPlayer } from '$lib/workspace/catalog';
 
 const root = path.resolve('data');
 const file = path.join(root, 'index.json');
 const themesRoot = path.join(root, THEMES_DIR);
 const categoriesRoot = path.join(themesRoot, 'categories');
 const seasonRoot = path.join(root, SEASONS_DIR);
-const libraryRoot = path.join(root, 'studio', 'library');
-const stylesRoot = path.join(root, 'studio', 'styles');
+const libraryRoot = path.join(root, 'elements');
 
 async function readIndex(): Promise<Record<string, unknown>> {
   try {
@@ -60,25 +59,6 @@ async function readCategories(): Promise<Array<{ id: string; name: string; audie
     }
     categories.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
     return categories;
-  } catch {
-    return [];
-  }
-}
-
-async function readStyles(): Promise<Array<Record<string, unknown>>> {
-  try {
-    const entries = await readdir(stylesRoot, { withFileTypes: true });
-    const styles = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-      try {
-        const style = JSON.parse(await readFile(path.join(stylesRoot, entry.name), 'utf8')) as { id?: string; name?: string };
-        if (!style.id) continue;
-        styles.push(style);
-      } catch { /* fichier illisible */ }
-    }
-    styles.sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), 'fr'));
-    return styles;
   } catch {
     return [];
   }
@@ -279,9 +259,13 @@ function seasonAbs(id: string): string | null {
   return dir;
 }
 
-async function listPlayers(absDir: string, names: unknown): Promise<SeasonPlayer[]> {
+async function seasonMarkdown(absDir: string): Promise<string> {
+  try { return await readFile(path.join(absDir, 'content.md'), 'utf8'); } catch { return ''; }
+}
+
+async function listPlayers(absDir: string, markdown: string): Promise<SeasonPlayer[]> {
   const players: SeasonPlayer[] = [];
-  for (const name of playerNames(names)) {
+  for (const name of seasonPlayerNames(markdown)) {
     const id = folderSlug(name);
     if (!id || !PLAYER_SLUG.test(id)) continue;
     const playerDir = path.join(absDir, PLAYERS_DIR, id);
@@ -402,36 +386,39 @@ async function writeExercises(absDir: string, relDir: string, exercises: Array<R
   return paths;
 }
 
-const LIBRARY_KINDS = new Set(['objects', 'pitches', 'shapes']);
-
 async function readLibrary() {
-  const out: Array<{ domain: string; kind: string; name: string; file: string }> = [];
-  let domains;
-  try { domains = await readdir(libraryRoot, { withFileTypes: true }); }
-  catch { return out; }
-  for (const domain of domains) {
-    if (!domain.isDirectory()) continue;
-    let kinds;
-    try { kinds = await readdir(path.join(libraryRoot, domain.name), { withFileTypes: true }); }
-    catch { continue; }
-    for (const kind of kinds) {
-      if (!kind.isDirectory() || !LIBRARY_KINDS.has(kind.name)) continue;
-      let files;
-      try { files = await readdir(path.join(libraryRoot, domain.name, kind.name), { withFileTypes: true }); }
-      catch { continue; }
-      for (const file of files) {
-        if (!file.isFile() || !/\.(svg|ya?ml)$/i.test(file.name)) continue;
-        out.push({
-          domain: domain.name,
-          kind: kind.name,
-          name: file.name.replace(/\.(svg|ya?ml)$/i, ''),
-          file: `studio/library/${domain.name}/${kind.name}/${file.name}`
-        });
+  const out: Array<{ path: string; name: string; kind: 'folder' | 'yaml' | 'svg' }> = [];
+  async function walk(dir: string, prefix: string[]) {
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); }
+    catch { return; }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const next = [...prefix, entry.name];
+      const itemPath = ['elements', ...next].join('/');
+      if (entry.isDirectory()) {
+        out.push({ path: itemPath, name: entry.name, kind: 'folder' });
+        await walk(path.join(dir, entry.name), next);
+      } else if (/\.ya?ml$/i.test(entry.name)) {
+        out.push({ path: itemPath, name: entry.name.replace(/\.ya?ml$/i, ''), kind: 'yaml' });
+      } else if (/\.svg$/i.test(entry.name)) {
+        out.push({ path: itemPath, name: entry.name.replace(/\.svg$/i, ''), kind: 'svg' });
       }
     }
   }
-  out.sort((a, b) => a.domain.localeCompare(b.domain, 'fr') || a.kind.localeCompare(b.kind, 'fr') || a.name.localeCompare(b.name, 'fr'));
+  await walk(libraryRoot, []);
+  out.sort((a, b) => a.path.localeCompare(b.path, 'fr'));
   return out;
+}
+
+function elementAbs(file: string): string | null {
+  const parts = file.split('/').filter(Boolean);
+  if (parts[0] !== 'elements' || parts.length < 2) return null;
+  if (parts.some(part => directoryIssue(part, 'fichier'))) return null;
+  const abs = path.resolve(libraryRoot, ...parts.slice(1));
+  const home = path.resolve(libraryRoot);
+  if (abs !== home && !abs.startsWith(home + path.sep)) return null;
+  return abs;
 }
 
 function text(value: unknown): string {
@@ -452,11 +439,13 @@ async function readBrowse() {
         exercises: Array.isArray(slot.exercises) ? idList(slot.exercises) : undefined
       };
     });
+    const markdown = await seasonMarkdown(entry.absDir);
     return {
       id: entry.dir,
       uuid: text(entry.data.id),
       name: entry.title || text(entry.data.name) || entry.dir.split('/')[1],
-      players: await listPlayers(entry.absDir, entry.data.players),
+      markdown,
+      players: await listPlayers(entry.absDir, markdown),
       slots
     };
   }));
@@ -478,7 +467,8 @@ function themesOf(entries: CatalogEntry[]) {
       .map(item => ({
         id: text(item.data.id) || item.dir.split('/').pop() || '',
         folder: item.dir.split('/').pop() || '',
-        name: item.title || text(item.data.name)
+        name: item.title || text(item.data.name),
+        exercises: idList(item.data.exercises).length
       }));
     return { id, name: entry.title || text(entry.data.name) || id, uuid: text(entry.data.id), sessions: orderByIds(sessions, entry.data.sessions) };
   }).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
@@ -501,6 +491,37 @@ async function writeSessionOrder(themeDir: string, sessions: string[]) {
   const file = path.join(themeDir, 'index.json');
   const current = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
   await writeFile(file, JSON.stringify({ ...current, sessions }, null, 2) + '\n');
+}
+
+const LOCKED = 'Suppression impossible : un fichier est utilisé par un autre programme.';
+
+async function removePath(target: string): Promise<Response | null> {
+  try {
+    await rm(target, { recursive: true, maxRetries: 3 });
+    return null;
+  } catch {
+    return json({ error: LOCKED }, { status: 409 });
+  } finally {
+    invalidateCatalog();
+  }
+}
+
+async function dropSeasonRefs(sessions: Set<string>, exercises: Set<string>) {
+  for (const season of (await catalog()).filter(entry => entry.data.type === 'fccn-season:0')) {
+    if (!Array.isArray(season.data.slots)) continue;
+    const slots = pruneSlots(season.data.slots as Slot[], sessions, exercises);
+    if (slots) await writeFile(path.join(season.absDir, 'index.json'), JSON.stringify({ ...season.data, slots }, null, 2) + '\n');
+  }
+  invalidateCatalog();
+}
+
+async function exerciseDir(sessionDir: string, id: string): Promise<string> {
+  for (const entry of await readdir(sessionDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const dir = path.join(sessionDir, entry.name);
+    if (await exerciseIdOf(dir) === id) return dir;
+  }
+  return '';
 }
 
 async function listDirNames(dir: string): Promise<string[]> {
@@ -591,11 +612,13 @@ async function scanSeasons(sessions: SessionHit[]) {
         exercises: Array.isArray(slot.exercises) ? idList(slot.exercises) : undefined
       };
     });
+    const markdown = await seasonMarkdown(entry.absDir);
     return {
       id: entry.dir,
       uuid: text(entry.data.id),
       name: entry.title || text(entry.data.name) || entry.dir.split('/')[1],
-      players: await listPlayers(entry.absDir, entry.data.players),
+      markdown,
+      players: await listPlayers(entry.absDir, markdown),
       slots
     };
   }));
@@ -720,7 +743,6 @@ export const GET: RequestHandler = async ({ url }) => {
     ...index,
     folder: path.basename(root),
     categories: await readCategories(),
-    styles: await readStyles(),
     ...browse
   });
 };
@@ -738,8 +760,6 @@ export const POST: RequestHandler = async ({ request }) => {
     phase?: string;
     principle?: string;
     means?: string;
-    update?: boolean;
-    style?: Record<string, unknown>;
     exercises?: Array<Record<string, unknown>>;
     zone?: string;
     from?: string;
@@ -751,7 +771,10 @@ export const POST: RequestHandler = async ({ request }) => {
     sessions?: unknown;
     domain?: string;
     kind?: string;
+    dir?: string;
     markdown?: string;
+    player?: string;
+    file?: string;
   };
   if (body.type === 'save-slot-exercises') {
     if (body.explicit !== true) return json({ ok: false });
@@ -819,11 +842,54 @@ export const POST: RequestHandler = async ({ request }) => {
     await writeFile(path.join(dir, 'index.json'), JSON.stringify({
       type: 'fccn-season:0',
       id,
-      players: [],
       slots: []
     }, null, 2) + '\n');
     await writeFile(path.join(dir, 'content.md'), await markdownFrom('season', { name: title }));
     return json({ id: `${SEASONS_DIR}/${folder}`, name: title });
+  }
+  if (body.type === 'delete-season') {
+    const seasonDir = seasonAbs(String(body.id || ''));
+    if (!seasonDir || !(await exists(path.join(seasonDir, 'index.json')))) return json({ error: 'Cette saison n’existe pas.' }, { status: 404 });
+    return await removePath(seasonDir) || json({ ok: true });
+  }
+  if (body.type === 'delete-theme') {
+    const entries = await catalog();
+    const id = String(body.id || '').trim();
+    const theme = themesOf(entries).find(item => item.id === id);
+    if (!theme || directoryIssue(id, 'répertoire')) return json({ error: 'Ce thème n’existe pas.' }, { status: 404 });
+    const failed = await removePath(path.join(themesRoot, id));
+    if (failed) return failed;
+    await writeThemeOrder(themesOf(entries).filter(item => item.id !== id).map(themeKey));
+    await dropSeasonRefs(new Set(theme.sessions.map(session => session.id)), new Set());
+    return json({ ok: true });
+  }
+  if (body.type === 'delete-session') {
+    const entries = await catalog();
+    const theme = themesOf(entries).find(item => item.id === String(body.theme || '').trim());
+    const session = theme?.sessions.find(item => item.id === String(body.id || '').trim());
+    if (!theme || !session || directoryIssue(session.folder, 'répertoire')) return json({ error: 'Cette séance n’existe pas.' }, { status: 404 });
+    const failed = await removePath(path.join(themesRoot, theme.id, session.folder));
+    if (failed) return failed;
+    await writeSessionOrder(path.join(themesRoot, theme.id), theme.sessions.filter(item => item.id !== session.id).map(item => item.id));
+    await dropSeasonRefs(new Set([session.id]), new Set());
+    return json({ ok: true });
+  }
+  if (body.type === 'delete-exercise') {
+    const session = themeSession(await catalog(), String(body.session || '').trim());
+    const id = String(body.id || '').trim();
+    if (!session || !id) return json({ error: 'Cet exercice n’existe pas.' }, { status: 404 });
+    const dir = await exerciseDir(session.absDir, id);
+    const failed = dir ? await removePath(dir) : null;
+    if (failed) return failed;
+    const exercises = idList(session.data.exercises).filter(item => item !== id);
+    await writeFile(path.join(session.absDir, 'index.json'), JSON.stringify(orderSessionIndex({ ...session.data, exercises }), null, 2) + '\n');
+    await dropSeasonRefs(new Set(), new Set([id]));
+    return json({ ok: true });
+  }
+  if (body.type === 'delete-library') {
+    const file = elementAbs(String(body.file || ''));
+    if (!file || !(await exists(file))) return json({ error: 'Cet élément n’existe pas.' }, { status: 404 });
+    return await removePath(file) || json({ ok: true });
   }
   if (body.type === 'slot') {
     const season = String(body.season || '').trim();
@@ -858,39 +924,19 @@ export const POST: RequestHandler = async ({ request }) => {
     }, null, 2) + '\n');
     return json({ ok: true });
   }
-  if (body.type === 'player') {
-    const seasonDir = seasonAbs(String(body.season || ''));
-    const indexPath = seasonDir ? path.join(seasonDir, 'index.json') : '';
-    if (!indexPath || !(await exists(indexPath))) return json({ error: 'Saison invalide.' }, { status: 400 });
-    const label = String(body.name || '').trim();
-    const folder = folderSlug(label);
-    if (!folder || !PLAYER_SLUG.test(folder)) return json({ error: 'Indique un nom.' }, { status: 400 });
-    const data = JSON.parse(await readFile(indexPath, 'utf8')) as Record<string, unknown>;
-    const names = playerNames(data.players);
-    if (names.some(name => folderSlug(name) === folder)) return json({ error: 'Ce joueur existe déjà.' }, { status: 409 });
-    const { type, id, slots, players: _players, ...rest } = data;
-    await writeFile(indexPath, JSON.stringify({
-      type,
-      id,
-      players: [...names, label],
-      ...rest,
-      slots
-    }, null, 2) + '\n');
-    return json({ id: folder });
-  }
   if (body.type === 'rename-player') {
     const seasonDir = seasonAbs(String(body.season || ''));
-    const indexPath = seasonDir ? path.join(seasonDir, 'index.json') : '';
-    if (!indexPath || !(await exists(indexPath))) return json({ error: 'Saison invalide.' }, { status: 400 });
+    const contentPath = seasonDir ? path.join(seasonDir, 'content.md') : '';
+    if (!contentPath || !(await exists(contentPath))) return json({ error: 'Saison invalide.' }, { status: 400 });
     const currentId = String(body.player || '').trim();
     if (!PLAYER_SLUG.test(currentId)) return json({ error: 'Joueur invalide.' }, { status: 400 });
     const label = String(body.name || '').trim();
     const folder = folderSlug(label);
     if (!folder || !PLAYER_SLUG.test(folder)) return json({ error: 'Indique un nom.' }, { status: 400 });
-    const data = JSON.parse(await readFile(indexPath, 'utf8')) as Record<string, unknown>;
-    const names = playerNames(data.players);
-    const index = names.findIndex(item => folderSlug(item) === currentId);
-    if (index < 0) return json({ error: 'Ce joueur n’existe pas.' }, { status: 404 });
+    const markdown = await readFile(contentPath, 'utf8');
+    const names = seasonPlayerNames(markdown);
+    const renamed = renameSeasonPlayer(markdown, currentId, label);
+    if (renamed == null) return json({ error: 'Ce joueur n’existe pas.' }, { status: 404 });
     if (folder !== currentId && names.some(item => folderSlug(item) === folder)) {
       return json({ error: 'Ce joueur existe déjà.' }, { status: 409 });
     }
@@ -901,9 +947,7 @@ export const POST: RequestHandler = async ({ request }) => {
         if (path.basename(next) !== folder) return json({ error: 'Ce joueur existe déjà.' }, { status: 409 });
       }
     }
-    names[index] = label;
-    const { type, id, slots, players: _players, ...rest } = data;
-    await writeFile(indexPath, JSON.stringify({ type, id, players: names, ...rest, slots }, null, 2) + '\n');
+    await writeFile(contentPath, renamed);
     return json({ id: folder });
   }
   if (body.type === 'save-player-markdown') {
@@ -919,7 +963,7 @@ export const POST: RequestHandler = async ({ request }) => {
   if (body.type === 'evaluation') {
     const seasonDir = seasonAbs(String(body.season || ''));
     const playerDir = seasonDir ? playerDirOf(seasonDir, String(body.player || '')) : null;
-    const listed = seasonDir ? playerNames(JSON.parse(await readFile(path.join(seasonDir, 'index.json'), 'utf8')).players) : [];
+    const listed = seasonDir ? seasonPlayerNames(await seasonMarkdown(seasonDir)) : [];
     if (!playerDir || !listed.some(name => folderSlug(name) === String(body.player || ''))) return json({ error: 'Ce joueur n’existe pas.' }, { status: 404 });
     const date = canonicalIso(String(body.date || ''));
     if (!date) return json({ error: 'Date invalide.' }, { status: 400 });
@@ -935,7 +979,7 @@ export const POST: RequestHandler = async ({ request }) => {
     const playerDir = seasonDir ? playerDirOf(seasonDir, String(body.player || '')) : null;
     const date = canonicalIso(String(body.date || ''));
     if (!playerDir || !date) return json({ error: 'Évaluation invalide.' }, { status: 400 });
-    const listed = playerNames(JSON.parse(await readFile(path.join(seasonDir!, 'index.json'), 'utf8')).players);
+    const listed = seasonPlayerNames(await seasonMarkdown(seasonDir!));
     if (!listed.some(name => folderSlug(name) === String(body.player || ''))) return json({ error: 'Ce joueur n’existe pas.' }, { status: 404 });
     const current = path.join(playerDir, EVALUATIONS_DIR, `${date}.md`);
     const text = String(body.markdown || '').replace(/\r\n/g, '\n').replace(/\n+$/, '') + '\n';
@@ -1033,38 +1077,33 @@ export const POST: RequestHandler = async ({ request }) => {
     return json({ id: sessionId, name });
   }
   if (body.type === 'library') {
-    const domain = String(body.domain || '').trim();
     const kind = String(body.kind || '').trim();
     const name = String(body.name || '').trim();
-    const domainIssue = directoryIssue(domain, 'répertoire');
-    const nameIssue = directoryIssue(name, 'fichier');
-    if (domainIssue || nameIssue) return json({ error: domainIssue || nameIssue }, { status: 400 });
-    if (!LIBRARY_KINDS.has(kind)) return json({ error: 'Dossier de bibliothèque invalide.' }, { status: 400 });
-    const ext = kind === 'shapes' ? 'yaml' : 'svg';
-    const dir = path.join(libraryRoot, domain, kind);
-    const file = path.join(dir, `${name}.${ext}`);
-    if (await exists(file)) return json({ error: 'Ce fichier existe déjà.' }, { status: 409 });
+    const nameIssue = directoryIssue(name, kind === 'folder' ? 'répertoire' : 'fichier');
+    if (nameIssue) return json({ error: nameIssue }, { status: 400 });
+    if (kind !== 'folder' && kind !== 'yaml' && kind !== 'svg') return json({ error: 'Type invalide.' }, { status: 400 });
+    if (kind !== 'folder' && !name.includes('.')) return json({ error: 'Le nom est un chemin pointé, par exemple object.plot.' }, { status: 400 });
+    const dirParts = String(body.dir || '').split('/').filter(Boolean);
+    if (dirParts.some(part => directoryIssue(part, 'répertoire'))) return json({ error: 'Dossier invalide.' }, { status: 400 });
+    const dir = path.resolve(libraryRoot, ...dirParts);
+    const home = path.resolve(libraryRoot);
+    if (dir !== home && !dir.startsWith(home + path.sep)) return json({ error: 'Dossier invalide.' }, { status: 400 });
+    if (dirParts.length && !(await exists(dir))) return json({ error: 'Ce dossier n’existe pas.' }, { status: 404 });
+    const ext = kind === 'yaml' ? 'yaml' : 'svg';
+    const target = kind === 'folder' ? path.join(dir, name) : path.join(dir, `${name}.${ext}`);
+    if (await exists(target)) return json({ error: kind === 'folder' ? 'Ce dossier existe déjà.' : 'Ce fichier existe déjà.' }, { status: 409 });
     await mkdir(dir, { recursive: true });
-    const source = kind === 'shapes'
-      ? `type: fccn-schema:0\nname: ${name}\nunits: relative\nplayers: []\n`
-      : kind === 'pitches'
-        ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 72 56.5">\n</svg>\n`
-        : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.5 -0.5 1 1">\n</svg>\n`;
-    await writeFile(file, source, 'utf8');
-    return json({ name, file: `studio/library/${domain}/${kind}/${name}.${ext}` });
-  }
-  if (body.type === 'style') {
-    const style = body.style || {};
-    const id = String(style.id || '').trim();
-    const issue = directoryIssue(id, 'fichier');
-    if (issue) return json({ error: issue }, { status: 400 });
-    const name = String(style.name || '').trim();
-    if (!name) return json({ error: 'Indique un nom.' }, { status: 400 });
-    const file = path.join(stylesRoot, `${id}.json`);
-    if (!body.update && await exists(file)) return json({ error: 'Ce fichier existe déjà.' }, { status: 409 });
-    await mkdir(stylesRoot, { recursive: true });
-    await writeFile(file, JSON.stringify({ ...style, id, name }, null, 2) + '\n');
-    return json({ id, name });
+    if (kind === 'folder') {
+      await mkdir(target, { recursive: true });
+      return json({ path: path.relative(root, target).replaceAll('\\', '/') });
+    }
+    const yaml = `version: fccn-schema:1\n`;
+    if (kind === 'yaml') {
+      await writeFile(target, yaml, 'utf8');
+    } else {
+      await writeFile(target, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-1 -1 2 2">\n</svg>\n', 'utf8');
+    }
+    return json({ path: path.relative(root, target).replaceAll('\\', '/') });
   }
   return json({ error: 'Requête inconnue.' }, { status: 400 });
 };
