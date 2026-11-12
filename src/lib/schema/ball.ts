@@ -25,9 +25,8 @@ export function ballBeside(x: number, y: number, towardX: number, towardY: numbe
 
 let ballSerial = 0;
 
-export function ballTransform(x: number, y: number, radius = ballRadius): string {
-  const scale = radius / 100;
-  return `translate(${x} ${y}) scale(${scale} -${scale})`;
+export function ballTransform(x: number, y: number, radius = ballRadius, radiusY = radius): string {
+  return `translate(${x} ${y}) scale(${radius / 100} ${-(radiusY ?? radius) / 100})`;
 }
 
 export function ballFace(): string {
@@ -43,8 +42,8 @@ function stamp(markup: string): string {
     .replaceAll('href="#ball-', `href="#${id}-`);
 }
 
-export function ballMarkup(x: number, y: number, picks: boolean, markup = '', radius = ballRadius): string {
-  const attr = picks ? ` data-ball="1" data-x="${x}" data-y="${y}" data-radius="${radius}"` : '';
+export function ballMarkup(x: number, y: number, picks: boolean, markup = '', radius = ballRadius, radiusY = radius, fit?: 'ratio' | 'free'): string {
+  const attr = picks ? ` data-ball="1" data-x="${x}" data-y="${y}" data-radius="${radius}" data-radius-y="${radiusY}"${fit ? ` data-fit="${fit}"` : ''}` : '';
   const face = markup ? stamp(markup) : ballFace();
-  return `<g${attr} transform="${ballTransform(x, y, radius)}">${face}</g>`;
+  return `<g${attr} transform="${ballTransform(x, y, radius, radiusY)}">${face}</g>`;
 }

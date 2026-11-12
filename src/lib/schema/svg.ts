@@ -1,3 +1,4 @@
+import { fitMode } from './fit';
 import { parseShare } from './size';
 import type { SizeSpec, StretchSpec } from './types';
 
@@ -7,7 +8,7 @@ function quoted(source: string, name: string): string {
 }
 
 /** Contenu d’un fichier SVG, sans la balise racine. */
-export function readSvg(source: string): { markup: string; viewBox: string; stretch?: StretchSpec; size?: SizeSpec } {
+export function readSvg(source: string): { markup: string; viewBox: string; stretch?: StretchSpec; size?: SizeSpec; fit?: 'ratio' | 'free' } {
   const opened = /<svg\b([^>]*)>/i.exec(source);
   const markup = source
     .replace(/<\?xml[\s\S]*?\?>/g, '')
@@ -30,7 +31,8 @@ export function readSvg(source: string): { markup: string; viewBox: string; stre
       min
     }
     : undefined;
-  return { markup, viewBox, stretch, size };
+  const fit = fitMode(quoted(attrs, 'data-fit'));
+  return { markup, viewBox, stretch, size, fit: fit === 'none' ? undefined : fit };
 }
 
 /** Largeur, longueur et marge déduites d’un viewBox de terrain. */

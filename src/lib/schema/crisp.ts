@@ -162,7 +162,7 @@ export function crispStrokes(svg: SVGSVGElement) {
   const dpr = window.devicePixelRatio || 1;
   for (const node of svg.querySelectorAll('line, rect, path')) {
     if (!(node instanceof SVGGeometryElement)) continue;
-    if (node.closest('[data-pick], [data-zone], [data-handle], [data-rotate], [data-resize], [data-mold], #svg-edit')) continue;
+    if (node.closest('[data-pick], [data-zone], [data-handle], [data-rotate], [data-resize], [data-mold], #svg-edit, #svg-selection')) continue;
     const stroke = paintedWidth(node);
     const ctm = node.getScreenCTM();
     if (!stroke || !ctm || !axisAligned(ctm)) continue;

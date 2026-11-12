@@ -1,7 +1,7 @@
 import { isMap, isSeq, Pair, parseDocument, visit, YAMLMap, YAMLSeq } from 'yaml';
 
 /** Petits objets géométriques : toujours sur une ligne. */
-const INLINE_MAPS = new Set(['rect', 'pos', 'at', 'box', 'run', 'dribble', 'pass', 'ball', 'margin', 'padding']);
+const INLINE_MAPS = new Set(['rect', 'pos', 'at', 'box', 'run', 'dribble', 'pass', 'ball', 'margin', 'padding', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'path']);
 /** Suites courtes de nombres, pas des listes d’objets. */
 const INLINE_SEQS = new Set(['at', 'box', 'ball', 'pass', 'run', 'dribble']);
 

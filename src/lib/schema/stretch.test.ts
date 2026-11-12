@@ -46,6 +46,21 @@ const yFixed = layoutAxis('fixed', -0.55, 0.55, 1.1);
 assert.equal(yFixed.uniform, false);
 assert.ok(Math.abs(yFixed.map(0.36) - 0.36) < 0.001);
 
+const yTall = layoutAxis('fixed', -0.55, 0.55, 2.2);
+assert.equal(yTall.uniform, false);
+assert.ok(Math.abs(yTall.map(0)) < 0.001);
+assert.ok(Math.abs(yTall.map(0.32) - 0.64) < 0.001);
+assert.ok(Math.abs(yTall.map(-0.32) + 0.64) < 0.001);
+
+const doubled = stretchSvg({
+  markup: '<polygon data-lock="y" points="3,-0.32 4,0 3,0.32"/><g data-repeat="x" data-span="1"><path d="M 0 0 Q 0.25 0.36 0.5 0 T 1 0"/></g>',
+  viewBox: '0 -0.55 4 1.1',
+  stretch: { x: 'repeat(2) 3 fixed', y: 'fixed' }
+}, 4, 1.1);
+assert.equal(doubled.markup.match(/<path\b/g)?.length, 2);
+assert.match(doubled.markup, /T 3 0/);
+assert.match(doubled.markup, /points="3,-0.32 4,0 3,0.32"/);
+
 const wave = stretchSvg({
   markup: '<polygon points="3,-0.32 4,0 3,0.32"/><g data-repeat="x"><path d="M 0 0 Q 0.25 0.36 0.5 0 T 1 0"/></g>',
   viewBox: '0 -0.55 4 1.1',

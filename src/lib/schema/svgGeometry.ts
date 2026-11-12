@@ -111,6 +111,42 @@ export function formatPath(segs: PathSeg[]): string {
   return parts.join(' ');
 }
 
+/** Projette chaque point. Les courbes lisses sont développées pour que le point de contrôle suive. */
+export function mapPathPoints(d: string, project: (x: number, y: number) => [number, number]): string {
+  const segs = parsePath(d);
+  let cx = 0;
+  let cy = 0;
+  let px = 0;
+  let py = 0;
+  const out: PathSeg[] = [];
+  const put = (op: string, abs: number[], control?: [number, number]) => {
+    const projected: number[] = [];
+    for (let i = 0; i + 1 < abs.length; i += 2) {
+      const [x, y] = project(abs[i], abs[i + 1]);
+      projected.push(x, y);
+    }
+    out.push({ rel: false, op, abs: projected });
+    if (control) { px = control[0]; py = control[1]; }
+    else if (abs.length >= 2) { px = abs[abs.length - 2]; py = abs[abs.length - 1]; }
+    if (abs.length >= 2) { cx = abs[abs.length - 2]; cy = abs[abs.length - 1]; }
+  };
+  for (const seg of segs) {
+    if (seg.op === 'Z') {
+      out.push({ rel: false, op: 'Z', abs: [] });
+      continue;
+    }
+    if (seg.op === 'H') put('L', [seg.abs[0], cy]);
+    else if (seg.op === 'V') put('L', [cx, seg.abs[0]]);
+    else if (seg.op === 'T') {
+      const control: [number, number] = [2 * cx - px, 2 * cy - py];
+      put('Q', [control[0], control[1], seg.abs[0], seg.abs[1]], control);
+    } else if (seg.op === 'Q') {
+      put('Q', seg.abs, [seg.abs[0], seg.abs[1]]);
+    } else put(seg.op, seg.abs);
+  }
+  return formatPath(out);
+}
+
 /** Réécrit le chemin en absolu. Les rayons d’arc restent, le point d’arrivée est mappé. */
 export function mapPath(d: string, mapX: (value: number) => number, mapY: (value: number) => number): string {
   const segs = parsePath(d).map(seg => ({ ...seg, abs: seg.abs.slice(), rel: false }));

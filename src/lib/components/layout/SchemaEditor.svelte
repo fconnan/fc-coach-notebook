@@ -1,8 +1,12 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
-  import { childFolders, folderEntries, insertElement, libraryIcon, pitchOfSource } from '$lib/schema/assist';
-  import { itemAt, itemOffset, movePoint, setAngle, setSize } from '$lib/schema/edit';
+  import { untrack, type Snippet } from 'svelte';
+  import { parse } from 'yaml';
+  import { childFolders, folderEntries, insertElement, insertShape, libraryIcon, pitchOfSource } from '$lib/schema/assist';
+  import { addVia, itemAt, itemOffset, moveKnot, movePoint, paintShape, relocate, removeItems, removeVia, retagShape, setAngle, setSize, setTravel, writeShape, type KnotRole } from '$lib/schema/edit';
+  import { DRAW_SHAPES } from '$lib/editor/drawShapes';
   import type { LibraryEntry } from '$lib/schema/types';
+  import DrawTools from './DrawTools.svelte';
+  import DrawingStage from './DrawingStage.svelte';
   import LoadingIcon from './LoadingIcon.svelte';
   import RawWait from './RawWait.svelte';
   import SchemaPreview from './SchemaPreview.svelte';
@@ -35,6 +39,10 @@
   let picker = $state<string | null>(null);
   let pickerDir = $state('');
   let pickerHost = $state<HTMLDivElement | null>(null);
+  let look = $state<{ x: number; y: number } | null>(null);
+  let fitHome = $state(true);
+  let fitZoom = $state<(() => void) | undefined>(undefined);
+  let animation = $state<Snippet | undefined>();
 
   type YamlEditor = {
     setValue(value: string): void;
@@ -51,6 +59,8 @@
     onDidChangeCursorPosition(listener: () => void): { dispose(): void };
     setPosition(position: { lineNumber: number; column: number }): void;
     revealPositionInCenter(position: { lineNumber: number; column: number }): void;
+    pushUndoStop(): void;
+    trigger(source: string, handlerId: string, payload: null): void;
     executeEdits(source: string, edits: { range: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number }; text: string }[]): void;
   };
   let yamlEditor: YamlEditor | null = null;
@@ -73,9 +83,26 @@
   const pickerItems = $derived(pickerDir ? folderEntries(library, pickerDir) : []);
   const pickerRoot = $derived(picker ? `elements/${picker}` : '');
 
+  function takeAnimation(bar: Snippet | undefined) {
+    animation = bar;
+  }
+
+  /** Une action du dessin = un pas d’annulation Monaco. Sans arrêt, Ctrl+Z revient au début. */
+  function commitYaml(next: string) {
+    const editor = yamlEditor;
+    const model = editor?.getModel();
+    if (!editor || !model) {
+      emit(next);
+      return;
+    }
+    if (next === editor.getValue()) return;
+    editor.pushUndoStop();
+    editor.executeEdits('schema', [{ range: model.getFullModelRange(), text: next }]);
+    editor.pushUndoStop();
+  }
+
   function writeYaml(next: string) {
-    if (yamlEditor) yamlEditor.setValue(next);
-    else emit(next);
+    commitYaml(next);
   }
 
   function revealItem(ref: string, focus: boolean) {
@@ -110,39 +137,70 @@
     if (!editor || !model) return;
     const current = editor.getValue();
     const next = setAngle(current, ref, angle);
-    if (next === current) {
-      revealItem(ref, true);
-      return;
-    }
-    editor.executeEdits('schema', [{ range: model.getFullModelRange(), text: next }]);
+    if (next !== current) commitYaml(next);
     revealItem(ref, true);
   }
 
   function moveItemAt(ref: string, x: number, y: number) {
-    const editor = yamlEditor;
-    const model = editor?.getModel();
-    if (!editor || !model) return;
-    const current = editor.getValue();
-    const next = movePoint(current, ref, x, y);
-    if (next === current) {
-      revealItem(ref, true);
-      return;
-    }
-    editor.executeEdits('schema', [{ range: model.getFullModelRange(), text: next }]);
-    revealItem(ref, true);
+    writeMove(movePoint(yamlEditor?.getValue() || '', ref, x, y), ref);
   }
 
-  function resizeItem(ref: string, w: number | null, h: number | null) {
+  function moveMany(
+    moves: { ref: string; x: number; y: number }[],
+    slides: { ref: string; dx: number; dy: number }[],
+    shapes: { ref: string; attrs: Record<string, string> }[] = []
+  ) {
+    const editor = yamlEditor;
+    if (!editor) return;
+    let next = relocate(editor.getValue(), moves, slides);
+    for (const shape of shapes) next = writeShape(next, shape.ref, shape.attrs);
+    const ref = moves[0]?.ref || slides[0]?.ref || shapes[0]?.ref || '';
+    writeMove(next, ref);
+  }
+
+  function writeMove(next: string, ref: string) {
     const editor = yamlEditor;
     const model = editor?.getModel();
     if (!editor || !model) return;
     const current = editor.getValue();
-    const next = setSize(current, ref, w, h);
-    if (next === current) {
-      revealItem(ref, true);
-      return;
-    }
-    editor.executeEdits('schema', [{ range: model.getFullModelRange(), text: next }]);
+    if (next !== current) commitYaml(next);
+    if (ref) revealItem(ref, true);
+  }
+
+  function writeItem(ref: string, next: string, focus = true) {
+    const editor = yamlEditor;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    if (next !== editor.getValue()) commitYaml(next);
+    revealItem(ref, focus);
+  }
+
+  function knotItem(ref: string, role: KnotRole, index: number, x: number, y: number) {
+    const editor = yamlEditor;
+    if (!editor) return;
+    writeItem(ref, moveKnot(editor.getValue(), ref, role, index, x, y));
+  }
+
+  function viaItem(ref: string, action: 'add' | 'remove', index: number, x = 0, y = 0) {
+    const editor = yamlEditor;
+    if (!editor) return;
+    const current = editor.getValue();
+    writeItem(ref, action === 'add' ? addVia(current, ref, index, x, y) : removeVia(current, ref, index));
+  }
+
+  function tuneItem(ref: string, key: 'wave' | 'amp', value: number) {
+    const editor = yamlEditor;
+    if (!editor) return;
+    writeItem(ref, setTravel(editor.getValue(), ref, key, value), false);
+  }
+
+  function resizeItem(ref: string, w: number | null, h: number | null, x?: number | null, y?: number | null) {
+    const editor = yamlEditor;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    const current = editor.getValue();
+    const next = setSize(current, ref, w, h, x, y);
+    if (next !== current) commitYaml(next);
     revealItem(ref, true);
   }
 
@@ -163,11 +221,57 @@
   function choose(entry: LibraryEntry) {
     picker = null;
     if (entry.type === 'pitch' && entry.id === currentPitch) return;
-    assist(() => insertElement(source, entry, library));
+    assist(() => insertElement(source, entry, library, look));
+  }
+
+  function drawShape(kind: string) {
+    try {
+      const next = insertShape(source, kind, library, look);
+      const doc = parse(next) as { object?: unknown[] };
+      const index = Math.max(0, (doc.object?.length || 1) - 1);
+      const ref = `object/${index}/${kind}`;
+      fault = '';
+      writeYaml(next);
+      picked = ref;
+      revealItem(ref, false);
+    } catch (err) {
+      fault = err instanceof Error ? err.message : 'YAML illisible';
+    }
+  }
+
+  function paintDrawn(ref: string, name: 'fill' | 'stroke', value: string) {
+    const current = yamlEditor?.getValue() || source;
+    writeItem(ref, paintShape(current, ref, name, value), false);
+  }
+
+  function forgetDrawn(ref: string | string[]) {
+    const refs = (Array.isArray(ref) ? ref : [ref]).filter(Boolean);
+    if (!refs.length) return;
+    const current = yamlEditor?.getValue() || source;
+    writeYaml(removeItems(current, refs));
+    if (refs.includes(picked)) picked = '';
+  }
+
+  function reshape(ref: string, attrs: Record<string, string>, tag?: string) {
+    const current = yamlEditor?.getValue() || source;
+    const tagged = retagShape(current, ref, tag || ref.split('/').pop() || '', attrs);
+    if (tagged.ref !== ref && picked === ref) picked = tagged.ref;
+    writeItem(tagged.ref, tagged.source, false);
   }
 
   function onPickerKey(event: KeyboardEvent) {
     if (event.key === 'Escape') picker = null;
+    const target = event.target;
+    if (!(target instanceof Element) || !yamlEditor) return;
+    if (target.closest('input, textarea, select, [contenteditable="true"], .monaco-editor')) return;
+    const mod = event.ctrlKey || event.metaKey;
+    if (!mod) return;
+    const key = event.key.toLowerCase();
+    const undo = key === 'z' && !event.shiftKey;
+    const redo = key === 'y' || (key === 'z' && event.shiftKey);
+    if (!undo && !redo) return;
+    event.preventDefault();
+    yamlEditor.trigger('keyboard', undo ? 'undo' : 'redo', null);
   }
 
   $effect(() => {
@@ -222,8 +326,8 @@
   </div>
   {/snippet}
   {#snippet right()}
-  <div class="panel schema-slot">
-    <div class="tools">
+  <DrawingStage class="schema-stage">
+    {#snippet top()}
       {#if loaded}
         {#each roots as folder (folder)}
           <button type="button" class="tool" onclick={() => openPicker(folder)}>{folder}</button>
@@ -231,15 +335,19 @@
       {:else}
         <LoadingIcon />
       {/if}
-    </div>
-    <div class="schema-fit">
-      {#if loaded}
-        <SchemaPreview {at} {exerciseId} {element} {elementId} {source} editable selected={picked} onpick={pickItem} onmove={moveItemAt} onrotate={turnItem} onresize={resizeItem} />
-      {:else}
-        <div class="flex h-full items-center justify-center text-body"><LoadingIcon /></div>
-      {/if}
-    </div>
-  </div>
+    {/snippet}
+    {#snippet tools()}
+      <DrawTools shapes={DRAW_SHAPES} oninsert={drawShape} {fitHome} onzoom={fitZoom} />
+    {/snippet}
+    {#snippet bottom()}
+      {#if animation}{@render animation()}{/if}
+    {/snippet}
+    {#if loaded}
+      <SchemaPreview {at} {exerciseId} {element} {elementId} {source} editable selected={picked} bind:fitHome bind:fitZoom onpick={pickItem} onmove={moveItemAt} onmoves={moveMany} onknot={knotItem} onvia={viaItem} ontune={tuneItem} onrotate={turnItem} onresize={resizeItem} onlook={(point) => look = point} onfooter={takeAnimation} onshape={reshape} onpaint={paintDrawn} onforget={forgetDrawn} />
+    {:else}
+      <div class="flex h-full items-center justify-center text-body"><LoadingIcon /></div>
+    {/if}
+  </DrawingStage>
   {/snippet}
 </SplitPane>
 </div>
@@ -272,8 +380,7 @@
 {/if}
 
 <style>
-  .editor,
-  .schema-slot { overflow: hidden; }
+  .editor { overflow: hidden; }
   .editor {
     display: flex;
     min-height: 0;
@@ -291,16 +398,6 @@
     border-radius: var(--radius-base);
     background: var(--color-neutral-primary);
   }
-  .schema-slot {
-    display: flex;
-    flex-direction: column;
-    padding: 0;
-  }
-  .tools {
-    display: flex;
-    flex-shrink: 0;
-    border-bottom: 1px solid var(--color-default-medium);
-  }
   .tool {
     border: 0;
     border-right: 1px solid var(--color-default-medium);
@@ -311,31 +408,28 @@
     color: var(--color-heading);
   }
   .tool:hover { background: var(--color-neutral-secondary-medium); }
-  .schema-fit {
-    flex: 1 1 auto;
-    min-height: 0;
-  }
-  .schema-slot :global(.schema) {
+  :global(.schema-stage .schema) {
     display: flex;
     flex-direction: column;
     height: 100%;
     border: 0;
+    background: transparent;
   }
-  .schema-slot :global(.pitch) {
+  :global(.schema-stage .pitch) {
     flex: 1 1 auto;
     min-height: 0;
     display: flex;
   }
-  .schema-slot :global(.lens) {
+  :global(.schema-stage .lens) {
     flex: 1 1 auto;
     min-height: 0;
     min-width: 0;
   }
-  .schema-slot :global(.sheet) {
+  :global(.schema-stage .sheet) {
     flex: none;
     min-height: 0;
   }
-  .schema-slot :global(.sheet svg) {
+  :global(.schema-stage .sheet svg) {
     width: 100%;
     height: 100%;
   }

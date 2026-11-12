@@ -163,6 +163,41 @@
         }
       ]
     },
+    "travel": {
+      "description": "Trajet. Sans via, une ligne droite.",
+      "oneOf": [
+        {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        {
+          "type": "object",
+          "required": ["x", "y"],
+          "additionalProperties": false,
+          "properties": {
+            "x": { "type": "number", "description": "Abscisse d'arrivée." },
+            "y": { "type": "number", "description": "Ordonnée d'arrivée." },
+            "arrow": { "type": "string", "description": "Préréglage, par exemple zigzag. none dessine rien." },
+            "via": {
+              "type": "array",
+              "description": "Points de passage, dans l'ordre.",
+              "items": { "$ref": "#/definitions/point" }
+            },
+            "wave": { "type": "number", "description": "Longueur d'onde, en mètres." },
+            "amp": { "type": "number", "description": "Amplitude, en mètres." },
+            "phase": { "type": "number", "description": "Décalage de phase." },
+            "side": { "enum": [1, -1], "description": "Côté du motif." },
+            "taper": { "type": "number", "description": "Adoucissement, en mètres." },
+            "neck": { "type": "number", "description": "Arrivée droite, en mètres." },
+            "width": { "type": "number", "description": "Épaisseur, en mètres." },
+            "dash": { "type": "string", "description": "Pointillés, ou none." },
+            "ink": { "type": "string", "description": "Encre." }
+          }
+        }
+      ]
+    },
     "svgVariant": {
       "type": "object",
       "description": "Fichier SVG.",
@@ -261,15 +296,15 @@
       "description": "Déplacement ou passe.",
       "properties": {
         "player": { "type": ["string", "number"], "description": "Joueur qui se déplace." },
-        "run": { "description": "Course vers un point.", "allOf": [{ "$ref": "#/definitions/point" }] },
-        "dribble": { "description": "Conduite de balle vers un point.", "allOf": [{ "$ref": "#/definitions/point" }] },
+        "run": { "description": "Course vers un point.", "allOf": [{ "$ref": "#/definitions/travel" }] },
+        "dribble": { "description": "Conduite de balle vers un point.", "allOf": [{ "$ref": "#/definitions/travel" }] },
         "from": { "type": ["string", "number"], "description": "Joueur qui passe." },
         "pass": {
           "description": "Joueur qui reçoit, ou point d'arrivée.",
           "oneOf": [
             { "type": "number" },
             { "type": "string" },
-            { "$ref": "#/definitions/point" }
+            { "$ref": "#/definitions/travel" }
           ]
         }
       }

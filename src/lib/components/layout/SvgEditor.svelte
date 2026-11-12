@@ -1,31 +1,31 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import { Button } from 'flowbite-svelte';
-  import { registerEditorGate, unsavedAsk } from '$lib/workspace/editorLeave';
+  import { registerEditorGate } from '$lib/workspace/editorLeave';
   import { applyParams, hexForInput, isColorValue, paramsOf } from '$lib/schema/params';
   import { readSvg } from '$lib/schema/svg';
   import { layoutAxis, parseStretch, stretchSvg, viewBoxOf as stretchBox } from '$lib/schema/stretch';
-  import { attrOf, graphicTags, insertMarkup, knotsOf, moveKnot, removeTag, setAttr, setViewBox, shapeMarkup, tagAt, viewBoxOf, viewBoxRange } from '$lib/schema/svgEdit';
+  import { insertAnchor, nearestSegment, pathHint, pathKind, removeAnchor, setPathKind, stampPath, type PathKind } from '$lib/editor/pathEdit';
+  import { bindShapeControls } from '$lib/editor/shapeHandles';
+  import ShapeMenu from './ShapeMenu.svelte';
+  import { attrOf, graphicTags, insertMarkup, insertTrackPoint, knotsOf, moveKnot, moveTrackPoint, removeTag, removeTrackPoint, setAttr, setViewBox, shapeMarkup, tagAt, tagAttrs, trackAnchors, viewBoxOf, viewBoxRange } from '$lib/schema/svgEdit';
+  import { get } from 'svelte/store';
   import { elementRel } from '$lib/workspace/catalog';
   import LoadingIcon from './LoadingIcon.svelte';
   import RawWait from './RawWait.svelte';
   import SplitPane from './SplitPane.svelte';
-  import { openNavItem } from '$lib/workspace/state';
-
-  const SHAPES = [
-    { kind: 'rect', label: 'Rectangle', d: 'M4 6h16v12H4z' },
-    { kind: 'circle', label: 'Cercle', d: 'M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16z' },
-    { kind: 'ellipse', label: 'Ellipse', d: 'M12 6.5a9 5.5 0 1 0 0 11a9 5.5 0 1 0 0-11z' },
-    { kind: 'line', label: 'Ligne', d: 'M5 19 19 5' },
-    { kind: 'polygon', label: 'Polygone', d: 'M12 4.5 20 18.5H4z' },
-    { kind: 'path', label: 'Chemin', d: 'M4 18C8 3 16 21 20 6' },
-    { kind: 'text', label: 'Texte', d: 'M6 5h12M12 5v14M9 19h6' }
-  ];
+  import { libraryDraft, openNavItem, rememberLibraryFile } from '$lib/workspace/state';
+  import { fileFrame } from '$lib/editor/board';
+  import { DRAW_SHAPES, TEXT_SHAPE } from '$lib/editor/drawShapes';
+  import DrawTools from './DrawTools.svelte';
+  import DrawingBoard from './DrawingBoard.svelte';
+  import DrawingStage from './DrawingStage.svelte';
 
   let { file }: { file: string } = $props();
 
   let source = $state('');
   let disk = $state('');
+  let opened = $state('');
   let error = $state('');
   let status = $state('');
   let loaded = $state(false);
@@ -35,14 +35,37 @@
   let host = $state<HTMLDivElement | null>(null);
   let lens = $state<HTMLDivElement | null>(null);
   let sheet = $state<HTMLDivElement | null>(null);
-  let zoom = $state(1);
-  let fitted = $state<{ w: number; h: number } | null>(null);
+  let board = $state<{ settle(retry?: boolean): void } | null>(null);
+  let fitHome = $state(true);
+  let fitZoom = $state<(() => void) | undefined>(undefined);
   let viewFocus = $state(false);
+  let shapeMenu = $state<{
+    x: number;
+    y: number;
+    index: number;
+    track: boolean;
+    fill: string;
+    stroke: string;
+    scope: 'shape' | 'path' | 'point';
+    kind: PathKind | null;
+    canAdd: boolean;
+    canRemove: boolean;
+    addLabel: string;
+    removeLabel: string;
+    addAt: number;
+    addX: number;
+    addY: number;
+    remove: number | null;
+  } | null>(null);
   let bandFocus = $state<'x' | 'y' | null>(null);
   let growX = $state(1);
   let growY = $state(1);
   let paramValues = $state<Record<string, string>>({});
   let layout = $state(0);
+
+  function refreshOverlay() {
+    layout += 1;
+  }
   type XmlRange = { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number };
   type XmlModel = {
     dispose(): void;
@@ -58,6 +81,7 @@
     dispose(): void;
     focus(): void;
     pushUndoStop(): void;
+    trigger(source: string, handlerId: string, payload: null): void;
     executeEdits(source: string, edits: { range: XmlRange; text: string }[]): void;
     onDidChangeCursorPosition(listener: () => void): { dispose(): void };
     getModel(): XmlModel | null;
@@ -66,33 +90,51 @@
     revealPositionInCenter(position: { lineNumber: number; column: number }): void;
   };
   let editor: XmlEditor | null = null;
+  let releaseShape: (() => void) | null = null;
 
   function canon(text: string): string {
     return text.replace(/\r\n/g, '\n').replace(/\n+$/, '');
   }
 
   const dirty = $derived(loaded && canon(source) !== canon(disk));
-  const fill = $derived(selected >= 0 ? attrOf(source, selected, 'fill') : '');
-  const stroke = $derived(selected >= 0 ? attrOf(source, selected, 'stroke') : '');
   const shown = $derived(source.replace(/<script\b[\s\S]*?<\/script>/gi, ''));
   const drawnAsset = $derived(readSvg(shown));
   const stretchOn = $derived(Boolean(drawnAsset.stretch?.x || drawnAsset.stretch?.y));
   const fields = $derived(paramsOf(shown));
+  const ordered = $derived([...fields].sort((a, b) => Number(isColorValue(b.fallback)) - Number(isColorValue(a.fallback))));
+  /** L'encre du trait est déjà le contour de la barre d'outils. */
+  const tuned = $derived(ordered.filter(field => !((/(^|\/)arrow\.svg$/).test(file) && field.name === 'ink')));
   const preview = $derived.by(() => {
     const chosen: Record<string, string> = {};
     for (const field of fields) chosen[field.name] = paramValues[field.name] ?? field.fallback;
     const filled = applyParams(shown, chosen);
-    if (!stretchOn) return filled;
+    if (!stretchOn) return withFrameMargin(filled);
     const asset = readSvg(filled);
     const box = stretchBox(asset.viewBox);
-    if (!box) return filled;
+    if (!box) return withFrameMargin(filled);
+    const length = box.w * growX;
+    const height = box.h * growY;
     const out = stretchSvg(
       { markup: asset.markup, viewBox: asset.viewBox, stretch: asset.stretch },
-      box.w * growX,
-      box.h * growY
+      length,
+      height
     );
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${out.viewBox}">${out.markup}</svg>`;
+    return withFrameMargin(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${out.viewBox}">${out.markup}</svg>`);
   });
+  const frameKey = $derived(`${file}\n${readSvg(preview).viewBox}\n${drawnAsset.size?.realW ?? ''}\n${drawnAsset.size?.realH ?? ''}`);
+
+  /** Marge d’affichage autour du viewBox. Le cadre jaune reste celui du fichier. */
+  function withFrameMargin(markup: string): string {
+    const box = stretchBox(readSvg(markup).viewBox);
+    if (!box) return markup;
+    const share = 0.06;
+    const padX = box.w * share;
+    const padY = box.h * share;
+    const frame = `${fmt(box.x)} ${fmt(box.y)} ${fmt(box.w)} ${fmt(box.h)}`;
+    const shown = `${fmt(box.x - padX)} ${fmt(box.y - padY)} ${fmt(box.w + padX * 2)} ${fmt(box.h + padY * 2)}`;
+    const tagged = markup.replace(/<svg\b/i, `<svg data-frame="${frame}"`);
+    return setViewBox(tagged, shown);
+  }
 
   function setParam(name: string, value: string) {
     paramValues = { ...paramValues, [name]: value };
@@ -102,9 +144,12 @@
     const value = paramValues[field.name];
     return value !== undefined && value !== field.fallback;
   }));
+  const stretchDirty = $derived(stretchOn && (Math.abs(growX - 1) > 1e-6 || Math.abs(growY - 1) > 1e-6));
 
-  function resetParams() {
+  function resetPreview() {
     paramValues = {};
+    growX = 1;
+    growY = 1;
   }
 
   function onText(text: string) {
@@ -171,13 +216,26 @@
   async function load() {
     loaded = false;
     error = '';
+    const draft = get(libraryDraft);
+    if (draft && draft.path === file) {
+      source = opened = draft.source;
+      disk = '';
+      selected = -1;
+      growX = 1;
+      growY = 1;
+      paramValues = {};
+      bandFocus = null;
+      loaded = true;
+      status = '';
+      return;
+    }
     const response = await fetch(`/api/elements?file=${encodeURIComponent(file)}`);
     const body = await response.json() as { source?: string; error?: string };
     if (!response.ok) {
       error = body.error || 'Lecture impossible';
       return;
     }
-    source = disk = body.source || '';
+    source = disk = opened = body.source || '';
     selected = -1;
     growX = 1;
     growY = 1;
@@ -194,6 +252,18 @@
     epoch += 1;
     source = disk;
     editor?.setValue(disk);
+  }
+
+  function revert() {
+    epoch += 1;
+    source = opened;
+    editor?.setValue(opened);
+    paramValues = {};
+    growX = 1;
+    growY = 1;
+    selected = -1;
+    shapeMenu = null;
+    status = '';
   }
 
   async function persist(): Promise<boolean> {
@@ -215,6 +285,7 @@
         return false;
       }
       if (source === snapshot) disk = snapshot;
+      rememberLibraryFile(file);
       status = 'Enregistré';
       return true;
     } catch {
@@ -297,7 +368,7 @@
     else if (name === 'text') put('x', 'y');
   }
 
-  function beginDrag(event: PointerEvent, index: number, knot: number) {
+  function beginDrag(event: PointerEvent, index: number, knot: number, track = false) {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
@@ -305,12 +376,15 @@
     const node = root ? shapeNodes(root)[index] : undefined;
     if (!(root instanceof SVGSVGElement) || !(node instanceof SVGGraphicsElement)) return;
     const start = editor?.getValue() || source;
+    const placed = markerKnots(node, root);
     let working = start;
     const move = (pointer: PointerEvent) => {
-      const matrix = node.getScreenCTM();
+      const matrix = (placed ? placed.host : node).getScreenCTM();
       if (!matrix) return;
-      const local = new DOMPoint(pointer.clientX, pointer.clientY).matrixTransform(matrix.inverse());
-      working = moveKnot(start, index, knot, local.x, local.y);
+      const point = new DOMPoint(pointer.clientX, pointer.clientY).matrixTransform(matrix.inverse());
+      const local = placed ? placed.local(point.x, point.y) : point;
+      if (!local) return;
+      working = track ? moveTrackPoint(start, index, knot, local.x, local.y) : moveKnot(start, index, knot, local.x, local.y);
       applyLive(node, working, index);
       paintOverlay(root, index, working);
     };
@@ -327,14 +401,6 @@
     const parent = elementRel(file).split('/').slice(0, -1).join('/');
     void openNavItem(parent);
   }
-
-  $effect(() => {
-    const text = source;
-    const asking = $unsavedAsk;
-    if (!loaded || asking || canon(text) === canon(disk)) return;
-    const timer = setTimeout(() => { void save(); }, 600);
-    return () => clearTimeout(timer);
-  });
 
   onMount(() => {
     const stopGate = registerEditorGate({ dirty: () => dirty, save, discard });
@@ -379,6 +445,68 @@
     const to = root.getScreenCTM();
     if (!from || !to) return null;
     return new DOMPoint(x, y).matrixTransform(to.inverse().multiply(from));
+  }
+
+  /** Poignées d’un tracé de marqueur, posées sur la pointe réellement dessinée. */
+  function markerKnots(node: SVGGraphicsElement, root: SVGSVGElement): { host: SVGGraphicsElement; at(x: number, y: number): DOMPoint | null; local(x: number, y: number): { x: number; y: number } | null } | null {
+    const marker = node.closest('marker');
+    if (!(marker instanceof SVGMarkerElement) || !marker.id) return null;
+    const uses = (attr: string) => [...root.querySelectorAll(`[${attr}]`)].find(el => (el.getAttribute(attr) || '').includes(`#${marker.id})`));
+    const host = uses('marker-end') || uses('marker-start');
+    if (!(host instanceof SVGGraphicsElement) || host === node) return null;
+    const where = uses('marker-end') ? 'end' : 'start';
+    const spot = markerSpot(host, where);
+    if (!spot) return null;
+    const orient = marker.getAttribute('orient') || '0';
+    let angle = Number(orient) * Math.PI / 180;
+    if (orient === 'auto' || orient === 'auto-start-reverse') {
+      angle = spot.angle;
+      if (orient === 'auto-start-reverse' && where === 'start') angle += Math.PI;
+    }
+    const stroke = Number(host.getAttribute('stroke-width'));
+    const unit = marker.getAttribute('markerUnits') === 'userSpaceOnUse' || !(stroke > 0) ? 1 : stroke;
+    const box = marker.viewBox.baseVal;
+    const sx = box.width > 0 ? Number(marker.getAttribute('markerWidth') || 3) * unit / box.width : unit;
+    const sy = box.height > 0 ? Number(marker.getAttribute('markerHeight') || 3) * unit / box.height : unit;
+    if (!(sx > 0) || !(sy > 0)) return null;
+    const refX = marker.refX.baseVal.value;
+    const refY = marker.refY.baseVal.value;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    return {
+      host,
+      at(x: number, y: number) {
+        const dx = (x - refX) * sx;
+        const dy = (y - refY) * sy;
+        return toRoot(host, root, spot.x + dx * cos - dy * sin, spot.y + dx * sin + dy * cos);
+      },
+      local(x: number, y: number) {
+        const dx = x - spot.x;
+        const dy = y - spot.y;
+        return { x: (dx * cos + dy * sin) / sx + refX, y: (-dx * sin + dy * cos) / sy + refY };
+      }
+    };
+  }
+
+  function markerSpot(host: SVGGraphicsElement, where: 'start' | 'end'): { x: number; y: number; angle: number } | null {
+    if (host instanceof SVGPathElement) {
+      const len = host.getTotalLength();
+      if (!(len > 0)) return null;
+      const step = Math.min(0.5, len / 2);
+      const at = host.getPointAtLength(where === 'end' ? len : 0);
+      const other = host.getPointAtLength(where === 'end' ? len - step : step);
+      const angle = where === 'end' ? Math.atan2(at.y - other.y, at.x - other.x) : Math.atan2(other.y - at.y, other.x - at.x);
+      return { x: at.x, y: at.y, angle };
+    }
+    if (host instanceof SVGLineElement) {
+      const x1 = host.x1.baseVal.value;
+      const y1 = host.y1.baseVal.value;
+      const x2 = host.x2.baseVal.value;
+      const y2 = host.y2.baseVal.value;
+      const angle = Math.atan2(y2 - y1, x2 - x1);
+      return where === 'end' ? { x: x2, y: y2, angle } : { x: x1, y: y1, angle };
+    }
+    return null;
   }
 
   const NS = 'http://www.w3.org/2000/svg';
@@ -443,12 +571,21 @@
     if (best) taken.push(badge(parent, unit, best.spot[0], best.spot[1], label, best.spot[2]).box);
   }
 
-  function paintFrame(group: Element, root: SVGSVGElement) {
+  function authoredBox(root: SVGSVGElement): { x: number; y: number; w: number; h: number } | null {
+    const stamped = root.getAttribute('data-frame');
+    const parsed = stamped ? stretchBox(stamped) : null;
+    if (parsed) return parsed;
     const view = root.viewBox.baseVal;
-    if (!viewFocus || !view || view.width <= 0 || view.height <= 0) return;
+    if (!view || view.width <= 0 || view.height <= 0) return null;
+    return { x: view.x, y: view.y, w: view.width, h: view.height };
+  }
+
+  function paintFrame(group: Element, root: SVGSVGElement) {
+    const frameBox = authoredBox(root);
+    if (!viewFocus || !frameBox) return;
     const unit = rootUnit(root, 1);
     const layer = svgNode(group, 'g', { 'pointer-events': 'none' });
-    const { x, y, width: w, height: h } = view;
+    const { x, y, w, h } = frameBox;
     const weight = 2 * unit;
     svgNode(layer, 'rect', {
       x: x + weight / 2,
@@ -494,8 +631,9 @@
     const start = bandFocus === 'x' ? box.x : box.y;
     const end = bandFocus === 'x' ? box.x + box.w : box.y + box.h;
     const bands = parseStretch(spec, start, end);
-    const view = root.viewBox.baseVal;
-    const target = bandFocus === 'x' ? view.width : view.height;
+    const frame = authoredBox(root);
+    if (!frame) return;
+    const target = bandFocus === 'x' ? frame.w : frame.h;
     const layout = layoutAxis(spec, start, end, target);
     if (!bands || layout.uniform) return;
     const unit = rootUnit(root, 1);
@@ -506,13 +644,13 @@
       const tint = band.mode === 'fixed' ? '#3b82f6' : band.mode === 'repeat' ? '#f59e0b' : '#22c55e';
       if (bandFocus === 'x') {
         node.setAttribute('x', String(Math.min(a, b)));
-        node.setAttribute('y', String(view.y));
+        node.setAttribute('y', String(frame.y));
         node.setAttribute('width', String(Math.abs(b - a)));
-        node.setAttribute('height', String(view.height));
+        node.setAttribute('height', String(frame.h));
       } else {
-        node.setAttribute('x', String(view.x));
+        node.setAttribute('x', String(frame.x));
         node.setAttribute('y', String(Math.min(a, b)));
-        node.setAttribute('width', String(view.width));
+        node.setAttribute('width', String(frame.w));
         node.setAttribute('height', String(Math.abs(b - a)));
       }
       node.setAttribute('fill', tint);
@@ -535,15 +673,48 @@
     if (!group.childNodes.length) group.remove();
   }
 
+  function commitShape(index: number, attrs: Record<string, string>) {
+    let next = editor?.getValue() || source;
+    const before = tagAttrs(next, index);
+    for (const [key, value] of Object.entries(attrs)) {
+      if ((before[key] ?? '') !== value) next = setAttr(next, index, key, value);
+    }
+    if (next !== (editor?.getValue() || source)) write(next);
+  }
+
   function paintKnots(group: Element, root: SVGSVGElement, index: number, text: string) {
+    releaseShape?.();
+    releaseShape = null;
     const node = shapeNodes(root)[index];
     const knots = knotsOf(text, index);
     if (!(node instanceof SVGGraphicsElement) || !knots.length) return;
-    const placed = knots.map(knot => ({ ...knot, at: toRoot(node, root, knot.x, knot.y) })).filter(knot => knot.at);
+    const marker = node.closest('marker') ? markerKnots(node, root) : null;
+    if (node.closest('marker') && !marker) return;
+    const track = node.getAttribute('data-track') === '1';
+    if (!track && group instanceof SVGGElement) {
+      const tag = graphicTags(text)[index];
+      if (!tag) return;
+      releaseShape = bindShapeControls({
+        root,
+        node,
+        group,
+        tag: tag.name,
+        attrs: tagAttrs(text, index),
+        onSelect: () => {
+          selected = index;
+          if (tag) reveal(tag.start);
+        },
+        onEdit: (attrs, commit) => {
+          if (commit) commitShape(index, attrs);
+        }
+      }).dispose;
+      return;
+    }
+    const placed = knots.map(knot => ({ ...knot, at: marker ? marker.at(knot.x, knot.y) : toRoot(node, root, knot.x, knot.y) })).filter(knot => knot.at);
     if (!placed.length) return;
     const unit = rootUnit(root, 1);
     for (const knot of placed) {
-      if (knot.role !== 'control' || !knot.at) continue;
+      if (track || knot.role !== 'control' || !knot.at) continue;
       const anchor = placed.find(item => item.seg === knot.seg && item.role === 'anchor' && item.at);
       if (!anchor?.at) continue;
       const line = document.createElementNS(NS, 'line');
@@ -556,7 +727,8 @@
       line.setAttribute('pointer-events', 'none');
       group.appendChild(line);
     }
-    placed.forEach((knot, knotIndex) => {
+    const shown = track ? placed.filter(knot => knot.role === 'anchor') : placed;
+    shown.forEach((knot, knotIndex) => {
       if (!knot.at) return;
       const handle = document.createElementNS(NS, 'circle');
       const radius = rootUnit(root, knot.role === 'control' ? 4 : 6);
@@ -567,58 +739,150 @@
       handle.setAttribute('stroke', '#111827');
       handle.setAttribute('stroke-width', String(unit));
       handle.setAttribute('cursor', 'grab');
-      handle.addEventListener('pointerdown', event => beginDrag(event, index, knotIndex));
+      if (track) handle.setAttribute('data-track-knot', String(knotIndex));
+      handle.addEventListener('pointerdown', event => beginDrag(event, index, knotIndex, track));
       handle.addEventListener('click', event => event.stopPropagation());
+      if (track) handle.addEventListener('contextmenu', event => openShapeMenu(event, index, knotIndex));
       group.appendChild(handle);
     });
   }
 
-  $effect(() => {
-    const node = lens;
-    if (!node) return;
-    const onWheel = (event: WheelEvent) => { void zoomAt(event); };
-    node.addEventListener('wheel', onWheel, { passive: false });
-    return () => node.removeEventListener('wheel', onWheel);
-  });
+  function pathLocal(node: SVGGraphicsElement, event: MouseEvent): { x: number; y: number } | null {
+    const matrix = node.getScreenCTM();
+    if (!matrix) return null;
+    const local = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+    const round = (value: number) => Math.round(value * 1000) / 1000;
+    return { x: round(local.x), y: round(local.y) };
+  }
 
-  function zoomAt(event: WheelEvent) {
-    if (!event.ctrlKey && !event.metaKey) return;
+  function openShapeMenu(event: MouseEvent, index: number, anchor: number | null) {
+    const root = sheet?.querySelector('svg');
+    const node = root ? shapeNodes(root)[index] : undefined;
+    if (!(node instanceof SVGGraphicsElement)) return;
+    const local = pathLocal(node, event);
+    if (!local) return;
     event.preventDefault();
-    const node = lens;
-    const board = sheet;
-    if (!node || !board) return;
-    const origin = fitted ?? { w: board.clientWidth, h: board.clientHeight };
-    if (!origin.w || !origin.h) return;
-    let delta = event.deltaY;
-    if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
-    else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= node.clientHeight;
-    const next = Math.min(8, Math.max(0.4, zoom * Math.exp(-delta * 0.0018)));
-    if (Math.abs(next - zoom) < 0.001) return;
-    const ratio = next / zoom;
-    const before = board.getBoundingClientRect();
-    const pointX = event.clientX - before.left;
-    const pointY = event.clientY - before.top;
-    if (!fitted) fitted = origin;
-    zoom = next;
-    void tick().then(() => {
-      const after = board.getBoundingClientRect();
-      node.scrollLeft += after.left + pointX * ratio - event.clientX;
-      node.scrollTop += after.top + pointY * ratio - event.clientY;
-    });
+    event.stopPropagation();
+    const text = editor?.getValue() || source;
+    const tag = graphicTags(text)[index];
+    const attrs = tagAttrs(text, index);
+    const track = node.getAttribute('data-track') === '1';
+    const isPath = tag?.name.toLowerCase() === 'path';
+    const kind = isPath && !track ? pathKind(attrs.d || '', pathHint(attrs)) : null;
+    const anchors = isPath ? trackAnchors(attrs.d || '') : [];
+    const onPoint = anchor != null;
+    selected = index;
+    if (tag) reveal(tag.start);
+    shapeMenu = {
+      x: event.clientX,
+      y: event.clientY,
+      index,
+      track,
+      fill: attrs.fill || '',
+      stroke: attrs.stroke || '',
+      scope: onPoint && (track || isPath) ? 'point' : track || isPath ? 'path' : 'shape',
+      kind,
+      canAdd: !onPoint && (track || kind != null) && anchors.length >= 2,
+      canRemove: onPoint && (track ? anchor > 0 && anchor < anchors.length - 1 : anchors.length > 2),
+      addLabel: track ? 'Ajouter une poignée' : 'Ajouter un point',
+      removeLabel: track ? 'Enlever cette poignée' : 'Enlever ce point',
+      addAt: nearestSegment(anchors, local) + 1,
+      addX: local.x,
+      addY: local.y,
+      remove: anchor
+    };
+  }
+
+  function onShapeContext(event: MouseEvent) {
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest('[role="menu"]')) return;
+    const knot = target.closest('[data-track-knot], [data-path-anchor]');
+    if (knot && selected >= 0) {
+      const anchor = Number(knot.getAttribute('data-track-knot') ?? knot.getAttribute('data-path-anchor'));
+      openShapeMenu(event, selected, Number.isFinite(anchor) ? anchor : null);
+      return;
+    }
+    if (target.closest('#svg-edit')) {
+      if (selected >= 0) openShapeMenu(event, selected, null);
+      else event.preventDefault();
+      return;
+    }
+    const root = sheet?.querySelector('svg');
+    const graphic = target.closest('path, polygon, polyline, rect, circle, ellipse, line, text');
+    if (!(graphic instanceof Element) || !(root instanceof SVGSVGElement)) {
+      event.preventDefault();
+      return;
+    }
+    const index = shapeNodes(root).indexOf(graphic);
+    if (index < 0) {
+      event.preventDefault();
+      return;
+    }
+    openShapeMenu(event, index, null);
+  }
+
+  function paintFromMenu(name: 'fill' | 'stroke', value: string) {
+    const menu = shapeMenu;
+    if (!menu) return;
+    shapeMenu = { ...menu, [name]: value };
+    selected = menu.index;
+    paint(name, value);
+  }
+
+  function deleteFromMenu() {
+    const menu = shapeMenu;
+    shapeMenu = null;
+    if (!menu) return;
+    selected = menu.index;
+    removeSelected();
+  }
+
+  function addFromMenu() {
+    const menu = shapeMenu;
+    shapeMenu = null;
+    if (!menu) return;
+    const text = editor?.getValue() || source;
+    if (menu.track) {
+      write(insertTrackPoint(text, menu.index, menu.addAt, menu.addX, menu.addY));
+      return;
+    }
+    const attrs = tagAttrs(text, menu.index);
+    const kind = menu.kind || 'smooth';
+    commitShape(menu.index, stampPath(attrs, insertAnchor(attrs.d || '', kind, menu.addAt, menu.addX, menu.addY), kind));
+  }
+
+  function removeFromMenu() {
+    const menu = shapeMenu;
+    shapeMenu = null;
+    if (!menu || menu.remove == null) return;
+    const text = editor?.getValue() || source;
+    if (menu.track) {
+      write(removeTrackPoint(text, menu.index, menu.remove));
+      return;
+    }
+    const attrs = tagAttrs(text, menu.index);
+    const kind = menu.kind || 'smooth';
+    commitShape(menu.index, stampPath(attrs, removeAnchor(attrs.d || '', kind, menu.remove), kind));
+  }
+
+  function kindFromMenu(kind: PathKind) {
+    const menu = shapeMenu;
+    if (!menu) return;
+    const text = editor?.getValue() || source;
+    const attrs = tagAttrs(text, menu.index);
+    commitShape(menu.index, stampPath(attrs, setPathKind(attrs.d || '', kind), kind));
+    shapeMenu = { ...menu, kind };
   }
 
   $effect(() => {
-    const node = lens;
-    if (!node) return;
-    const observer = new ResizeObserver(() => { layout += 1; });
-    observer.observe(node);
-    return () => observer.disconnect();
+    preview;
+    frameKey;
+    board?.settle();
   });
 
   $effect(() => {
     const text = source;
     const index = selected;
-    zoom;
     viewFocus;
     bandFocus;
     growX;
@@ -639,6 +903,7 @@
   <div class="flex shrink-0 items-center gap-3">
     <p class="text-sm text-body">{status}</p>
     <div class="ms-auto flex items-center gap-2">
+      <Button size="sm" color="alternative" disabled={!loaded || saving || canon(source) === canon(opened)} onclick={revert}>Annuler</Button>
       <Button size="sm" color="brand" disabled={!dirty || saving} onclick={() => { void save(); }}>Sauver</Button>
       <Button size="sm" color="alternative" onclick={close}>Fermer</Button>
     </div>
@@ -653,44 +918,21 @@
     </div>
     {/snippet}
     {#snippet right()}
-    <div class="stage">
-      <div class="tools">
-        {#each SHAPES as shape (shape.kind)}
-          <button type="button" title={shape.label} aria-label={shape.label} onclick={() => insert(shape.kind)}>
-            {@render icon(shape.d)}
-          </button>
-        {/each}
-        <span class="sep"></span>
-        <label class="swatch" class:off={selected < 0} title="Remplissage">
-          <span class="chip" style:background={fill || '#f59e0b'}></span>
-          <input type="color" aria-label="Remplissage" value={fill || '#f59e0b'} disabled={selected < 0} oninput={(event) => paint('fill', event.currentTarget.value)} />
-        </label>
-        <label class="swatch" class:off={selected < 0} title="Contour">
-          <span class="chip ring" style:border-color={stroke || '#b45309'}></span>
-          <input type="color" aria-label="Contour" value={stroke || '#b45309'} disabled={selected < 0} oninput={(event) => paint('stroke', event.currentTarget.value)} />
-        </label>
-        <span class="sep"></span>
-        <button type="button" title="Supprimer" aria-label="Supprimer" disabled={selected < 0} onclick={removeSelected}>
-          {@render icon('M5 7h14M10 11v6M14 11v6M6 7l1 12h10l1-12M9 7V4h6v3')}
-        </button>
-        <button type="button" title="Ajuster le viewBox" aria-label="Ajuster le viewBox" onclick={fit}>
-          {@render icon('M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5M9 9h6v6H9z')}
-        </button>
-        {#if stretchOn}
-          <span class="sep"></span>
-          <label class="range" title="Largeur d'étirement">
-            <span>L</span>
-            <input type="range" min="0.5" max="4" step="0.05" value={growX} aria-label="Largeur d'étirement" oninput={(event) => { growX = Number(event.currentTarget.value); }} />
-          </label>
-          <label class="range" title="Hauteur d'étirement">
-            <span>H</span>
-            <input type="range" min="0.5" max="4" step="0.05" value={growY} aria-label="Hauteur d'étirement" oninput={(event) => { growY = Number(event.currentTarget.value); }} />
-          </label>
-        {/if}
-      </div>
-      {#if fields.length}
+    <DrawingStage>
+      {#snippet tools()}
+        <DrawTools
+          shapes={[...DRAW_SHAPES, TEXT_SHAPE]}
+          fittable
+          {fitHome}
+          oninsert={insert}
+          onfit={fit}
+          onzoom={fitZoom}
+        />
+      {/snippet}
+      {#snippet extra()}
+      {#if tuned.length || stretchOn}
         <div class="params">
-          {#each fields as field (field.name)}
+          {#each tuned as field (field.name)}
             {@const current = paramValues[field.name] ?? field.fallback}
             {#if isColorValue(field.fallback) || isColorValue(current)}
               <label class="param" title={field.name}>
@@ -700,6 +942,11 @@
                   <input type="color" aria-label={field.name} value={hexForInput(current)} oninput={(event) => setParam(field.name, event.currentTarget.value)} />
                 </span>
               </label>
+            {:else if field.name === 'width'}
+              <label class="param" title="Épaisseur du trait, en mètres">
+                <span>width</span>
+                <input type="range" min="0.04" max="0.4" step="0.01" value={current} aria-label="width" oninput={(event) => setParam(field.name, String(Math.round(Number(event.currentTarget.value) * 100) / 100))} />
+              </label>
             {:else}
               <label class="param" title={field.name}>
                 <span>{field.name}</span>
@@ -707,34 +954,88 @@
               </label>
             {/if}
           {/each}
-          <button type="button" class="reset" disabled={!paramsDirty} onclick={resetParams}>Reset</button>
+          {#if stretchOn}
+            <label class="param" title="Largeur d'étirement">
+              <span>largeur</span>
+              <input type="range" min="0.5" max="4" step="0.05" value={growX} aria-label="Largeur d'étirement" oninput={(event) => { growX = Number(event.currentTarget.value); }} />
+            </label>
+            <label class="param" title="Hauteur d'étirement">
+              <span>hauteur</span>
+              <input type="range" min="0.5" max="4" step="0.05" value={growY} aria-label="Hauteur d'étirement" oninput={(event) => { growY = Number(event.currentTarget.value); }} />
+            </label>
+          {/if}
+          <button type="button" class="reset" disabled={!paramsDirty && !stretchDirty} onclick={resetPreview}>Reset</button>
         </div>
       {/if}
+      {/snippet}
       {#if !loaded}
         <div class="flex flex-1 items-center justify-center text-body"><LoadingIcon /></div>
       {/if}
-      <div class="lens" class:hidden={!loaded} bind:this={lens}>
-        <div
-          class="sheet"
-          style:width={fitted ? `${fitted.w * zoom}px` : '100%'}
-          style:height={fitted ? `${fitted.h * zoom}px` : '100%'}
-          bind:this={sheet}
-          role="presentation"
+      {#if loaded}
+        <DrawingBoard
+          bind:this={board}
+          bind:sheet
+          bind:lens
+          bind:home={fitHome}
+          bind:fitZoom
+          ruled
+          editing
+          resetKey={frameKey}
+          frameOf={fileFrame}
+          onview={refreshOverlay}
           onclick={pick}
-          onkeydown={() => {}}
-        >{@html preview}</div>
-      </div>
-    </div>
+          oncontextmenu={onShapeContext}
+        >{@html preview}</DrawingBoard>
+      {/if}
+    </DrawingStage>
     {/snippet}
   </SplitPane>
 </div>
 
-{#snippet icon(d: string)}
-  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path {d} /></svg>
-{/snippet}
+{#if shapeMenu}
+  <ShapeMenu
+    x={shapeMenu.x}
+    y={shapeMenu.y}
+    fill={shapeMenu.fill}
+    stroke={shapeMenu.stroke}
+    scope={shapeMenu.scope}
+    kind={shapeMenu.kind}
+    canAdd={shapeMenu.canAdd}
+    canRemove={shapeMenu.canRemove}
+    addLabel={shapeMenu.addLabel}
+    removeLabel={shapeMenu.removeLabel}
+    onpaint={paintFromMenu}
+    ondelete={deleteFromMenu}
+    onadd={addFromMenu}
+    onremove={removeFromMenu}
+    onkind={kindFromMenu}
+  />
+{/if}
+
+<svelte:window
+  onkeydown={(event) => {
+    if (event.key === 'Escape') shapeMenu = null;
+    const target = event.target;
+    if (!(target instanceof Element) || !editor) return;
+    if (target.closest('input, textarea, select, [contenteditable="true"], .monaco-editor')) return;
+    const mod = event.ctrlKey || event.metaKey;
+    if (!mod) return;
+    const key = event.key.toLowerCase();
+    const undo = key === 'z' && !event.shiftKey;
+    const redo = key === 'y' || (key === 'z' && event.shiftKey);
+    if (!undo && !redo) return;
+    event.preventDefault();
+    editor.trigger('keyboard', undo ? 'undo' : 'redo', null);
+  }}
+  onpointerdown={(event) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest('[role="menu"]')) return;
+    shapeMenu = null;
+  }}
+/>
 
 <style>
-  .panel, .stage {
+  .panel {
     display: flex;
     min-height: 0;
     min-width: 0;
@@ -744,72 +1045,12 @@
     background: var(--color-neutral-primary);
   }
   .monaco { flex: 1 1 auto; min-width: 0; min-height: 0; }
-  .stage { flex-direction: column; background: #166534; }
-  .lens {
-    display: flex;
-    flex: 1 1 auto;
-    min-width: 0;
-    min-height: 0;
-    overflow: auto;
-  }
-  .sheet {
-    display: flex;
-    flex: none;
-    margin: auto;
-    min-width: 0;
-    min-height: 0;
-  }
-  .sheet :global(svg) { display: block; width: 100%; height: 100%; }
-  .tools {
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    gap: 0.2rem;
-    overflow: auto;
-    border-bottom: 1px solid var(--color-default-medium);
-    background: var(--color-neutral-primary);
-    padding: 0.3rem;
-  }
-  .tools button, .swatch {
-    position: relative;
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: center;
-    width: 1.9rem;
-    height: 1.9rem;
-    border: 1px solid transparent;
-    border-radius: 0.3rem;
-    background: transparent;
-    color: var(--color-heading);
-  }
-  .tools button:hover:not(:disabled), .swatch:not(.off):hover {
-    border-color: var(--color-default-medium);
-    background: var(--color-neutral-secondary-medium);
-  }
-  .tools button:disabled, .swatch.off { opacity: 0.4; }
-  .sep {
-    flex-shrink: 0;
-    width: 1px;
-    height: 1.2rem;
-    margin: 0 0.15rem;
-    background: var(--color-default-medium);
-  }
-  .range {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    color: #f8fafc;
-    font-size: 11px;
-    font-weight: 600;
-  }
-  .range input { width: 72px; accent-color: #fde047; }
   .params {
     display: flex;
     flex-shrink: 0;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.45rem;
-    overflow: auto;
     border-bottom: 1px solid var(--color-default-medium);
     background: var(--color-neutral-primary);
     padding: 0.3rem 0.45rem;
@@ -834,6 +1075,13 @@
   }
   .reset:hover:not(:disabled) { background: var(--color-neutral-secondary-medium); }
   .reset:disabled { color: var(--color-body); cursor: default; }
+  .param input[type='range'] {
+    width: 5.5rem;
+    height: auto;
+    border: 0;
+    padding: 0;
+    accent-color: #ca8a04;
+  }
   .param input {
     width: 4.5rem;
     height: 1.6rem;
@@ -843,6 +1091,15 @@
     padding: 0 0.35rem;
     color: var(--color-heading);
     font-size: 0.8rem;
+  }
+  .swatch {
+    position: relative;
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 1.9rem;
+    height: 1.9rem;
   }
   .chip {
     width: 1.05rem;

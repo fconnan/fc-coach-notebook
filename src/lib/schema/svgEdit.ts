@@ -1,4 +1,6 @@
-import { formatPath, parsePath, type PathSeg } from './svgGeometry';
+import { moveShapeKnot, shapeKnots } from '$lib/editor/shapeModel';
+import { curvePath } from '$lib/trajectory';
+import { parsePath, type PathSeg } from './svgGeometry';
 
 export interface SvgTag {
   name: string;
@@ -154,125 +156,69 @@ function pathPoints(segs: PathSeg[]): EditPoint[] {
   return points;
 }
 
-function movePathPoint(d: string, knot: number, x: number, y: number): string {
-  const segs = parsePath(d).map(seg => ({ ...seg, abs: seg.abs.slice() }));
-  const points = pathPoints(segs);
-  const point = points[knot];
-  if (!point) return d;
-  const seg = segs[point.seg];
-  if (seg.op === 'H') seg.abs[0] = x;
-  else if (seg.op === 'V') seg.abs[0] = y;
-  else if (seg.op === 'A') { seg.abs[5] = x; seg.abs[6] = y; }
-  else {
-    seg.abs[point.part * 2] = x;
-    seg.abs[point.part * 2 + 1] = y;
-  }
-  return formatPath(segs);
-}
-
-function readNum(source: string, index: number, name: string, fallback = 0): number {
-  const match = /[+-]?(?:\d*\.\d+|\d+)/.exec(attrOf(source, index, name));
-  const value = match ? Number(match[0]) : Number.NaN;
-  return Number.isFinite(value) ? value : fallback;
-}
-
-function pointList(text: string): [number, number][] {
-  const values = text.trim().split(/[\s,]+/).map(Number).filter(Number.isFinite);
-  const points: [number, number][] = [];
-  for (let i = 0; i + 1 < values.length; i += 2) points.push([values[i], values[i + 1]]);
-  return points;
+/** Attributs de la balise ouverte, sans le balisage. */
+export function tagAttrs(source: string, index: number): Record<string, string> {
+  const tag = graphicTags(source)[index];
+  if (!tag) return {};
+  const open = source.slice(tag.start, tag.openEnd);
+  const attrs: Record<string, string> = {};
+  for (const match of open.matchAll(/([\w:-]+)\s*=\s*"([^"]*)"/g)) attrs[match[1]] = match[2];
+  return attrs;
 }
 
 /** Sommets éditables de l’élément, dans son repère. */
 export function knotsOf(source: string, index: number): EditPoint[] {
   const tag = graphicTags(source)[index];
   if (!tag) return [];
-  const name = tag.name.toLowerCase();
-  if (name === 'path') return pathPoints(parsePath(attrOf(source, index, 'd')));
-  if (name === 'polygon' || name === 'polyline') {
-    return pointList(attrOf(source, index, 'points')).map(([x, y], seg) => ({ x, y, role: 'anchor' as const, seg, part: 0 }));
-  }
-  if (name === 'line') {
-    return [
-      { x: readNum(source, index, 'x1'), y: readNum(source, index, 'y1'), role: 'anchor', seg: 0, part: 0 },
-      { x: readNum(source, index, 'x2'), y: readNum(source, index, 'y2'), role: 'anchor', seg: 1, part: 0 }
-    ];
-  }
-  if (name === 'rect') {
-    const x = readNum(source, index, 'x');
-    const y = readNum(source, index, 'y');
-    const w = readNum(source, index, 'width');
-    const h = readNum(source, index, 'height');
-    return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]].map(([px, py], seg) => ({ x: px, y: py, role: 'anchor' as const, seg, part: 0 }));
-  }
-  if (name === 'circle') {
-    const cx = readNum(source, index, 'cx');
-    const cy = readNum(source, index, 'cy');
-    const r = readNum(source, index, 'r');
-    return [
-      { x: cx, y: cy, role: 'anchor', seg: 0, part: 0 },
-      { x: cx + r, y: cy, role: 'control', seg: 1, part: 0 }
-    ];
-  }
-  if (name === 'ellipse') {
-    const cx = readNum(source, index, 'cx');
-    const cy = readNum(source, index, 'cy');
-    return [
-      { x: cx, y: cy, role: 'anchor', seg: 0, part: 0 },
-      { x: cx + readNum(source, index, 'rx'), y: cy, role: 'control', seg: 1, part: 0 },
-      { x: cx, y: cy + readNum(source, index, 'ry'), role: 'control', seg: 2, part: 0 }
-    ];
-  }
-  if (name === 'text') return [{ x: readNum(source, index, 'x'), y: readNum(source, index, 'y'), role: 'anchor', seg: 0, part: 0 }];
-  return [];
+  return shapeKnots(tag.name, tagAttrs(source, index));
 }
 
 /** Déplace un sommet et réécrit l’attribut concerné. Les autres sommets restent en place. */
 export function moveKnot(source: string, index: number, knot: number, x: number, y: number): string {
   const tag = graphicTags(source)[index];
   if (!tag) return source;
-  const name = tag.name.toLowerCase();
-  if (name === 'path') return setAttr(source, index, 'd', movePathPoint(attrOf(source, index, 'd'), knot, x, y));
-  if (name === 'polygon' || name === 'polyline') {
-    const points = pointList(attrOf(source, index, 'points'));
-    if (!points[knot]) return source;
-    points[knot] = [x, y];
-    return setAttr(source, index, 'points', points.map(pair => `${num(pair[0])},${num(pair[1])}`).join(' '));
+  const before = tagAttrs(source, index);
+  const after = moveShapeKnot(tag.name, before, knot, x, y);
+  let next = source;
+  for (const [key, value] of Object.entries(after)) {
+    if ((before[key] ?? '') !== value) next = setAttr(next, index, key, value);
   }
-  if (name === 'line') {
-    const key = knot === 0 ? ['x1', 'y1'] : ['x2', 'y2'];
-    return setAttr(setAttr(source, index, key[0], num(x)), index, key[1], num(y));
-  }
-  if (name === 'rect') {
-    const left = readNum(source, index, 'x');
-    const top = readNum(source, index, 'y');
-    const right = left + readNum(source, index, 'width');
-    const bottom = top + readNum(source, index, 'height');
-    const xs = [left, right];
-    const ys = [top, bottom];
-    if (knot === 0 || knot === 3) xs[0] = x;
-    else xs[1] = x;
-    if (knot === 0 || knot === 1) ys[0] = y;
-    else ys[1] = y;
-    const nx = Math.min(...xs);
-    const ny = Math.min(...ys);
-    return setAttr(setAttr(setAttr(setAttr(source, index, 'x', num(nx)), index, 'y', num(ny)), index, 'width', num(Math.abs(xs[1] - xs[0]))), index, 'height', num(Math.abs(ys[1] - ys[0])));
-  }
-  if (name === 'circle') {
-    const cx = readNum(source, index, 'cx');
-    const cy = readNum(source, index, 'cy');
-    if (knot === 0) return setAttr(setAttr(source, index, 'cx', num(x)), index, 'cy', num(y));
-    return setAttr(source, index, 'r', num(Math.hypot(x - cx, y - cy)));
-  }
-  if (name === 'ellipse') {
-    const cx = readNum(source, index, 'cx');
-    const cy = readNum(source, index, 'cy');
-    if (knot === 0) return setAttr(setAttr(source, index, 'cx', num(x)), index, 'cy', num(y));
-    if (knot === 1) return setAttr(source, index, 'rx', num(Math.abs(x - cx)));
-    return setAttr(source, index, 'ry', num(Math.abs(y - cy)));
-  }
-  if (name === 'text') return setAttr(setAttr(source, index, 'x', num(x)), index, 'y', num(y));
-  return source;
+  return next;
+}
+
+/** Sommets du tracé, sans les poignées de tangente. */
+export function trackAnchors(d: string): { x: number; y: number }[] {
+  return pathPoints(parsePath(d)).filter(point => point.role === 'anchor').map(point => ({ x: point.x, y: point.y }));
+}
+
+function writeAnchors(source: string, index: number, points: { x: number; y: number }[]): string {
+  if (points.length < 2) return source;
+  return setAttr(source, index, 'd', curvePath(points));
+}
+
+/** Insère un sommet. `at` est sa place dans la suite, entre les extrémités. */
+export function insertTrackPoint(source: string, index: number, at: number, x: number, y: number): string {
+  const points = trackAnchors(attrOf(source, index, 'd'));
+  if (points.length < 2) return source;
+  const spot = Math.max(1, Math.min(at, points.length - 1));
+  points.splice(spot, 0, { x, y });
+  return writeAnchors(source, index, points);
+}
+
+/** Retire un sommet de passage. Les deux extrémités restent. */
+export function removeTrackPoint(source: string, index: number, anchor: number): string {
+  const points = trackAnchors(attrOf(source, index, 'd'));
+  if (anchor <= 0 || anchor >= points.length - 1) return source;
+  points.splice(anchor, 1);
+  return writeAnchors(source, index, points);
+}
+
+/** Déplace un sommet et reconstruit la courbe qui passe par tous. */
+export function moveTrackPoint(source: string, index: number, anchor: number, x: number, y: number): string {
+  const points = trackAnchors(attrOf(source, index, 'd'));
+  if (!points[anchor]) return source;
+  points[anchor] = { x, y };
+  return writeAnchors(source, index, points);
 }
 
 export function shapeMarkup(kind: string, viewBox: string): string {
@@ -288,7 +234,14 @@ export function shapeMarkup(kind: string, viewBox: string): string {
     const points = [[cx, cy - s], [cx + s, cy + s * 0.7], [cx - s, cy + s * 0.7]].map(pair => pair.map(num).join(',')).join(' ');
     return `<polygon points="${points}" fill="#f59e0b" stroke="#b45309" stroke-width="${sw}"/>`;
   }
-  if (kind === 'path') return `<path d="M ${num(cx - s)} ${num(cy)} L ${num(cx)} ${num(cy - s)} L ${num(cx + s)} ${num(cy)}" fill="none" stroke="#ffffff" stroke-width="${sw}"/>`;
+  if (kind === 'path') {
+    const d = curvePath([
+      { x: cx - s, y: cy },
+      { x: cx, y: cy - s * 0.75 },
+      { x: cx + s, y: cy }
+    ]);
+    return `<path data-curve="smooth" d="${d}" fill="none" stroke="#ffffff" stroke-width="${sw}"/>`;
+  }
   if (kind === 'text') return `<text x="${num(cx)}" y="${num(cy)}" font-size="${num(s)}" text-anchor="middle" fill="#ffffff">texte</text>`;
   return `<rect x="${num(cx - s)}" y="${num(cy - s * 0.7)}" width="${num(s * 2)}" height="${num(s * 1.4)}" fill="#f59e0b" stroke="#b45309" stroke-width="${sw}"/>`;
 }

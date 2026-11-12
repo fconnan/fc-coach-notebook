@@ -4,6 +4,8 @@ import path from 'node:path';
 import { parse } from 'yaml';
 import type { RequestHandler } from './$types';
 import { dottedId, elementKind, elementScene, libraryFor } from '$lib/schema/scene';
+import { fitMode } from '$lib/schema/fit';
+import { hasStretch } from '$lib/schema/stretch';
 import { readSvg } from '$lib/schema/svg';
 import { parseShare } from '$lib/schema/size';
 import { SCHEMA_VERSION, type LibraryEntry, type SchemaDoc, type SizeSpec, type StretchSpec, type SvgAsset, type SvgVariant } from '$lib/schema/types';
@@ -18,8 +20,17 @@ function applyStretch(asset: SvgAsset, doc: SchemaDoc): SvgAsset {
     x: doc.stretch?.x || asset.stretch?.x,
     y: doc.stretch?.y || asset.stretch?.y
   };
-  if (!spec.x && !spec.y) return applySize({ ...asset, stretch: undefined }, doc);
-  return applySize({ ...asset, stretch: spec }, doc);
+  const stretched = !spec.x && !spec.y
+    ? applySize({ ...asset, stretch: undefined }, doc)
+    : applySize({ ...asset, stretch: spec }, doc);
+  return applyFit(stretched, doc);
+}
+
+/** Le YAML de l’élément l’emporte sur data-fit. Sans flag, un dessin à bandes reste déformable. */
+function applyFit(asset: SvgAsset, doc: SchemaDoc): SvgAsset {
+  const fromDoc = doc.fit !== undefined && String(doc.fit).trim() !== '';
+  const mode = fromDoc ? fitMode(doc.fit) : asset.fit ?? (hasStretch(asset.stretch) ? 'free' : 'none');
+  return { ...asset, fit: mode === 'none' ? undefined : mode };
 }
 
 /** Le YAML de l’élément l’emporte sur les attributs du SVG. */
@@ -96,7 +107,7 @@ async function variantAssets(file: string, variants: SvgVariant[] | undefined, d
     if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) continue;
     try {
       const parsed = readSvg(await readFile(abs, 'utf8'));
-        if (parsed.markup) assets.push(applyStretch({ style: variant.style || '', markup: parsed.markup, viewBox: parsed.viewBox, stretch: parsed.stretch, size: parsed.size }, doc));
+        if (parsed.markup) assets.push(applyStretch({ style: variant.style || '', markup: parsed.markup, viewBox: parsed.viewBox, stretch: parsed.stretch, size: parsed.size, fit: parsed.fit }, doc));
     } catch { /* dessin absent */ }
   }
   return assets;
@@ -126,6 +137,8 @@ async function readLibrary(skip = ''): Promise<LibraryEntry[]> {
         const parsed = parse(await readFile(group.yaml, 'utf8')) as SchemaDoc;
         if (!parsed || parsed.version !== SCHEMA_VERSION) continue;
         doc = parsed;
+        doc.trajectory = parsed.trajectory;
+        doc.params = parsed.params;
       } catch { continue; }
       held = group.yaml;
     } else if (!group.svg) continue;
@@ -136,7 +149,7 @@ async function readLibrary(skip = ''): Promise<LibraryEntry[]> {
     if (group.svg) {
       try {
         const parsed = readSvg(await readFile(group.svg, 'utf8'));
-        if (parsed.markup) svgs.push(applyStretch({ style: '', markup: parsed.markup, viewBox: parsed.viewBox, stretch: parsed.stretch, size: parsed.size }, doc));
+        if (parsed.markup) svgs.push(applyStretch({ style: '', markup: parsed.markup, viewBox: parsed.viewBox, stretch: parsed.stretch, size: parsed.size, fit: parsed.fit }, doc));
       } catch { /* dessin absent */ }
     }
     if (group.yaml) {

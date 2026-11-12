@@ -1,15 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import SeanceBoard from './SeanceBoard.svelte';
   import ExerciseEditor from './ExerciseEditor.svelte';
   import ElementYamlEditor from './ElementYamlEditor.svelte';
+  import ElementGallery from './ElementGallery.svelte';
   import SvgEditor from './SvgEditor.svelte';
   import { RowDrag } from '$lib/utils/rowDrag.svelte';
   import { matches } from '$lib/utils/search';
   import SearchTable from './SearchTable.svelte';
   import { currentPage } from '$lib/stores/workspace';
   import {
-    seasons, themes, libraryItems, screen,
+    seasons, themes, libraryItems, libraryDraft, screen,
     exercisePaths,
     navDoor, navArea, navItem, navChild, navLeaf, missingPage,
     showHome, createCategory, openDoor, openArea, openNavItem, openNavChild, openEvaluation, createSeance,
@@ -231,7 +233,14 @@
 
   const openedSeason = $derived($seasons.find(season => season.id === $navItem) ?? null);
   const openedTheme = $derived($themes.find(theme => theme.id === $navItem) ?? null);
-  const elementHere = $derived($libraryItems.find(item => elementRel(item.path) === $navItem) ?? null);
+  const elementHere = $derived.by(() => {
+    const found = $libraryItems.find(item => elementRel(item.path) === $navItem);
+    if (found) return found;
+    const draft = $libraryDraft;
+    if (!draft || elementRel(draft.path) !== $navItem) return null;
+    const base = draft.path.split('/').pop() || '';
+    return { path: draft.path, name: base.replace(/\.(ya?ml|svg)$/i, ''), kind: draft.kind };
+  });
   const elementRows = $derived($libraryItems.filter(item => {
     const rel = elementRel(item.path);
     const parent = rel.split('/').slice(0, -1).join('/');
@@ -259,7 +268,6 @@
   const todayIso = $derived(todayParts().iso);
   const visibleThemes = $derived($themes.filter(theme => matches(query, theme.name)));
   const visibleSessions = $derived(openedTheme?.sessions.filter(session => matches(query, session.name)) ?? []);
-  const visibleElements = $derived(elementRows.filter(item => matches(query, item.name)));
   const themeIds = $derived($themes.map(theme => theme.id));
   const sessionIds = $derived(openedTheme?.sessions.map(session => session.id) ?? []);
   const editingExercise = $derived($screen === 'exercise' && Boolean($currentPage));
@@ -589,10 +597,16 @@
       if (!dialogError) closeDialog();
       return;
     }
-    dialogError = libraryKind === 'folder'
-      ? (await createLibraryFolder(entryName)) || ''
-      : (await createLibraryItem(entryName, libraryKind)) || '';
-    if (!dialogError) closeDialog();
+    if (libraryKind === 'folder') {
+      dialogError = (await createLibraryFolder(entryName)) || '';
+      if (!dialogError) closeDialog();
+      return;
+    }
+    dialogError = (await createLibraryItem(entryName, libraryKind)) || '';
+    if (dialogError) return;
+    const draft = get(libraryDraft);
+    closeDialog();
+    if (draft) await openNavItem(elementRel(draft.path));
   }
 
   $effect(() => {
@@ -611,12 +625,6 @@
 
   function emptyText(none: string): string {
     return query.trim() ? 'Aucun résultat' : none;
-  }
-
-  function elementKind(kind: LibraryItem['kind']): string {
-    if (kind === 'folder') return 'Dossier';
-    if (kind === 'yaml') return 'Élément';
-    return 'Dessin';
   }
 </script>
 
@@ -951,24 +959,14 @@
   {:else if $navArea === 'elements'}
     {@render panelTitle($navItem ? ($navItem.split('/').pop() || 'Éléments') : 'Éléments')}
     <Card size="xl" class="p-6">
-      <SearchTable bind:query placeholder="Rechercher" addLabel="Ajouter" onadd={() => openDialog('library')}>
-        <TableHead>
-          <TableHeadCell>Nom</TableHeadCell>
-          <TableHeadCell>Type</TableHeadCell>
-          <TableHeadCell class="w-px"><span class="sr-only">Actions</span></TableHeadCell>
-        </TableHead>
-        <TableBody>
-          {#each visibleElements as item (item.path)}
-            <TableBodyRow class="cursor-pointer" onclick={() => openNavItem(elementRel(item.path))}>
-              <TableBodyCell>{item.name}</TableBodyCell>
-              <TableBodyCell>{elementKind(item.kind)}</TableBodyCell>
-              <TableBodyCell class="py-0"><RowActions ondelete={() => askDeleteFile(item)} /></TableBodyCell>
-            </TableBodyRow>
-          {:else}
-            <TableBodyRow><TableBodyCell colspan={3}>{emptyText('Aucun élément')}</TableBodyCell></TableBodyRow>
-          {/each}
-        </TableBody>
-      </SearchTable>
+      <div class="mb-4 flex justify-end">
+        <Button size="sm" color="brand" onclick={() => openDialog('library')}>Ajouter</Button>
+      </div>
+      <ElementGallery
+        items={elementRows}
+        onopen={(item) => openNavItem(elementRel(item.path))}
+        ondelete={askDeleteFile}
+      />
     </Card>
   {/if}
 </div>
@@ -992,7 +990,7 @@
           { value: 'svg', name: 'Dessin SVG' }
         ]} />
       </Label>
-      <Label>Nom <Input class="mt-1" bind:value={entryName} /></Label>
+      <Label>Nom <Input class="mt-1" data-autofocus bind:value={entryName} /></Label>
     {:else}
       <Label>Répertoire
         <Input class="mt-1" bind:value={entryName} />

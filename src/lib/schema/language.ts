@@ -1,5 +1,7 @@
 import type { JSONSchema } from 'monaco-yaml';
 import source from './fccn-schema-1.json' with { type: 'json' };
+import { isArrowId, isPlayerId } from './scene';
+import { svgGeom, svgPaint, svgTags } from './svgShape';
 import type { LibraryEntry } from './types';
 
 const TEAMS = ['blue', 'red', 'white', 'yellow'];
@@ -13,6 +15,12 @@ export function schemaDocument(entries: Pick<LibraryEntry, 'id' | 'type'>[]): JS
     const names = shortNames(entries, genre);
     const properties: Record<string, JSONSchema> = {};
     for (const name of names) properties[name] = callSchema(`${genre}.${name}`);
+    for (const tag of svgTags()) properties[tag] = svgSchema(tag);
+    if (genre === 'object') {
+      for (const entry of entries) {
+        if (isPlayerId(entry.id) || isArrowId(entry.id)) properties[entry.id] = callSchema(entry.id);
+      }
+    }
     if (definitions) {
       definitions[`${genre}Item`] = {
         type: 'object',
@@ -61,8 +69,28 @@ function shortNames(entries: Pick<LibraryEntry, 'id' | 'type'>[], genre: string)
   return [...new Set(names)].sort((a, b) => a.localeCompare(b, 'fr'));
 }
 
+function svgSchema(tag: string): JSONSchema {
+  const properties: Record<string, JSONSchema> = {};
+  for (const name of svgGeom(tag)) {
+    properties[name] = name === 'd'
+      ? { type: 'string', description: 'Tracé SVG, en mètres.' }
+      : name === 'points'
+        ? { description: 'Points, en mètres. Texte SVG ou liste de paires.', oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 } }] }
+        : { type: 'number', description: 'En mètres.' };
+  }
+  for (const name of svgPaint()) properties[name] = { type: ['string', 'number'], description: 'Attribut de dessin SVG.' };
+  if (tag === 'path') properties.curve = { type: 'string', enum: ['smooth', 'line', 'free'], description: 'Courbe lisse, segments droits, ou bézier libre.' };
+  if (tag !== 'circle') properties.fit = { type: 'string', enum: ['none', 'ratio', 'free'], description: 'none : pas de poignées. ratio : étirable en gardant les proportions. free : déformable.' };
+  return {
+    type: 'object',
+    additionalProperties: false,
+    description: `Tracé SVG ${tag}. Pas de defs ni de marker.`,
+    properties
+  };
+}
+
 function callSchema(id: string): JSONSchema {
-  const nameSchema: JSONSchema = id === 'object.player'
+  const nameSchema: JSONSchema = isPlayerId(id)
     ? { type: ['string', 'number'], description: 'Numéro.' }
     : { type: ['string', 'number'], description: 'Nom.' };
   return {
@@ -88,7 +116,12 @@ function callSchema(id: string): JSONSchema {
           padding: { description: 'Marge intérieure au trait.', allOf: [{ $ref: '#/definitions/inset' }] },
           angle: { type: 'number', description: 'Angle, en degrés.' },
           min: { description: 'Minimum lisible de cet objet, en part du grand côté. 5% ou 0 pour la taille réelle.' },
+          fit: { type: 'string', enum: ['none', 'ratio', 'free'], description: 'Étirement. none : pas de poignées. ratio : proportions gardées. free : déformable.' },
           player: { type: ['string', 'number'], description: 'Joueur qui porte le ballon.' },
+          ...(isArrowId(id) ? {
+            to: { description: 'Arrivée de la flèche.', oneOf: [{ $ref: '#/definitions/markPoint' }] },
+            via: { type: 'array', description: 'Points de passage, dans l’ordre. Sans point, le trait est droit.', items: { $ref: '#/definitions/markPoint' } }
+          } : {}),
           width: { type: 'number', description: 'Largeur.' },
           length: { type: 'number', description: 'Longueur.' },
           mirror: { type: 'boolean', description: 'Miroir : les deux extrémités s’échangent.' },

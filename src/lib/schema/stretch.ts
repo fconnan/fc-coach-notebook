@@ -1,4 +1,4 @@
-import { mapPath } from './svgGeometry';
+import { mapPath, mapPathPoints } from './svgGeometry';
 import type { StretchSpec, SvgAsset } from './types';
 
 /** Une bande le long d’un axe, en coordonnées du SVG source. */
@@ -88,8 +88,13 @@ export function layoutAxis(spec: string | undefined, start: number, end: number,
   const flex = bands.filter(band => band.mode !== 'fixed');
   const flexSource = flex.reduce((sum, band) => sum + (band.to - band.from), 0);
   const minimum = fixed + flex.filter(band => band.mode === 'repeat').reduce((sum, band) => sum + band.step, 0);
+  // Un axe entièrement fixe n’a pas de bande souple : il s’échelle, sans annuler les motifs de l’autre axe.
+  if (!flex.length && Math.abs(target - source) > EPS) {
+    const origin = targetOrigin(start, end, target);
+    const map = (value: number) => origin + ((value - start) / source) * target;
+    return { uniform: false, map, repeat: null };
+  }
   if (target < minimum - EPS) return fail;
-  if (!flex.length && Math.abs(target - source) > EPS) return fail;
   const remaining = target - fixed;
   let dst = targetOrigin(start, end, target);
   let repeat: PlacedBand | null = null;
@@ -182,7 +187,10 @@ function rewriteMarkup(markup: string, mapX: (value: number) => number, mapY: (v
   return parts.map(part => {
     if (/^<defs\b/i.test(part)) return part;
     return part.replace(GEOMETRY, (_all, name: string, body: string, slash: string) => {
-      const next = rewriteTag(name.toLowerCase(), attrsOf(body), mapX, mapY);
+      const attrs = attrsOf(body);
+      const lock = (attrs['data-lock'] || '').toLowerCase();
+      const mapAxis = (axis: 'x' | 'y', map: (value: number) => number) => lock.includes(axis) ? (value: number) => value : map;
+      const next = rewriteTag(name.toLowerCase(), attrs, mapAxis('x', mapX), mapAxis('y', mapY));
       return `<${name}${attrText(next)}${slash ? ' /' : ''}>`;
     });
   }).join('');
@@ -192,6 +200,8 @@ interface Piece {
   repeat: 'x' | 'y' | null;
   open: string;
   inner: string;
+  /** Largeur du motif dessiné. 0 : elle est déjà égale au pas. */
+  span: number;
 }
 
 /** Sépare les groupes data-repeat du reste. Un motif est dessiné dans la première période. */
@@ -219,17 +229,24 @@ function splitRepeats(markup: string): Piece[] {
       }
     }
     if (depth !== 0) break;
-    if (match.index > cursor) pieces.push({ repeat: null, open: '', inner: markup.slice(cursor, match.index) });
-    pieces.push({ repeat: repeat[1].toLowerCase() as 'x' | 'y', open: match[1], inner: markup.slice(innerStart, close) });
+    const span = Number(/\bdata-span\s*=\s*"([^"]*)"/i.exec(match[1])?.[1]);
+    if (match.index > cursor) pieces.push({ repeat: null, open: '', inner: markup.slice(cursor, match.index), span: 0 });
+    pieces.push({
+      repeat: repeat[1].toLowerCase() as 'x' | 'y',
+      open: match[1],
+      inner: markup.slice(innerStart, close),
+      span: Number.isFinite(span) && span > 0 ? span : 0
+    });
     cursor = rest.lastIndex;
     re.lastIndex = cursor;
   }
-  if (cursor < markup.length) pieces.push({ repeat: null, open: '', inner: markup.slice(cursor) });
+  if (cursor < markup.length) pieces.push({ repeat: null, open: '', inner: markup.slice(cursor), span: 0 });
   return pieces;
 }
 
-function copyMap(band: PlacedBand, index: number): (value: number) => number {
-  return (value: number) => band.targetFrom + ((value - band.from) / band.step + index) * band.adjusted;
+function copyMap(band: PlacedBand, index: number, span: number): (value: number) => number {
+  const motif = span > 0 ? span : band.step;
+  return (value: number) => band.targetFrom + ((value - band.from) / motif + index) * band.adjusted;
 }
 
 function uniformMarkup(markup: string, box: ViewBox, w: number, h: number): { markup: string; viewBox: string } {
@@ -270,7 +287,7 @@ export function stretchSvg(asset: Pick<SvgAsset, 'markup' | 'viewBox' | 'stretch
     if (!band) return rewriteMarkup(piece.inner, x.map, y.map);
     const copies: string[] = [];
     for (let index = 0; index < band.copies; index += 1) {
-      const along = copyMap(band, index);
+      const along = copyMap(band, index, piece.span);
       const mapX = piece.repeat === 'x' ? along : x.map;
       const mapY = piece.repeat === 'y' ? along : y.map;
       copies.push(`<g${piece.open}>${rewriteMarkup(piece.inner, mapX, mapY)}</g>`);
@@ -280,6 +297,49 @@ export function stretchSvg(asset: Pick<SvgAsset, 'markup' | 'viewBox' | 'stretch
   const x0 = x.map(box.x);
   const y0 = y.map(box.y);
   return { markup: out, viewBox: `${fmt(x0)} ${fmt(y0)} ${fmt(w)} ${fmt(h)}` };
+}
+
+function scaleList(value: string, scale: number): string {
+  return value.trim().split(/[\s,]+/).map(part => {
+    const n = Number(part);
+    return Number.isFinite(n) ? fmt(n * scale) : part;
+  }).join(' ');
+}
+
+function projectTag(name: string, attrs: Record<string, string>, project: (x: number, y: number) => [number, number], scale: number): Record<string, string> {
+  const next = { ...attrs };
+  if (name === 'line') {
+    const [x1, y1] = project(read(attrs, 'x1'), read(attrs, 'y1'));
+    const [x2, y2] = project(read(attrs, 'x2'), read(attrs, 'y2'));
+    next.x1 = fmt(x1); next.y1 = fmt(y1); next.x2 = fmt(x2); next.y2 = fmt(y2);
+  } else if (name === 'polygon' || name === 'polyline') {
+    const values = (attrs.points || '').trim().split(/[\s,]+/).map(Number);
+    const points: string[] = [];
+    for (let i = 0; i + 1 < values.length; i += 2) {
+      if (!Number.isFinite(values[i]) || !Number.isFinite(values[i + 1])) continue;
+      const [x, y] = project(values[i], values[i + 1]);
+      points.push(`${fmt(x)},${fmt(y)}`);
+    }
+    next.points = points.join(' ');
+  } else if (name === 'path' && attrs.d) {
+    next.d = mapPathPoints(attrs.d, project);
+  } else if (name === 'circle' || name === 'ellipse') {
+    const [x, y] = project(read(attrs, 'cx'), read(attrs, 'cy'));
+    next.cx = fmt(x); next.cy = fmt(y);
+  }
+  if (scale !== 1) {
+    if (next['stroke-width']) next['stroke-width'] = fmt(read(next, 'stroke-width') * scale);
+    if (next['stroke-dasharray']) next['stroke-dasharray'] = scaleList(next['stroke-dasharray'], scale);
+  }
+  return next;
+}
+
+/** Déforme le dessin : chaque point suit `project`. `scale` ajuste les épaisseurs. */
+export function projectSvg(markup: string, project: (x: number, y: number) => [number, number], scale = 1): string {
+  return markup.replace(GEOMETRY, (_all, name: string, body: string, slash: string) => {
+    const next = projectTag(name.toLowerCase(), attrsOf(body), project, scale);
+    return `<${name}${attrText(next)}${slash ? ' /' : ''}>`;
+  });
 }
 
 export function hasStretch(spec: StretchSpec | undefined): boolean {

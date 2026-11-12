@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { Button } from 'flowbite-svelte';
-  import { registerEditorGate, unsavedAsk } from '$lib/workspace/editorLeave';
+  import { registerEditorGate } from '$lib/workspace/editorLeave';
   import { refreshLibrary } from '$lib/schema/preview';
   import type { LibraryEntry } from '$lib/schema/types';
-  import { openNavItem } from '$lib/workspace/state';
+  import { libraryDraft, openNavItem, rememberLibraryFile } from '$lib/workspace/state';
   import { elementRel } from '$lib/workspace/catalog';
   import { dottedId } from '$lib/schema/scene';
   import SchemaEditor from './SchemaEditor.svelte';
@@ -34,6 +35,17 @@
     loaded = false;
     error = '';
     refreshLibrary();
+    const draft = get(libraryDraft);
+    if (draft && draft.path === file) {
+      const response = await fetch('/api/schema?part=library');
+      const body = await response.json() as { library?: LibraryEntry[] };
+      library = body.library || [];
+      yaml = draft.source;
+      yamlDisk = '';
+      loaded = true;
+      status = '';
+      return;
+    }
     const response = await fetch(`/api/elements?file=${encodeURIComponent(file)}`);
     const body = await response.json() as { source?: string; library?: LibraryEntry[]; error?: string };
     if (!response.ok) {
@@ -73,6 +85,7 @@
         return false;
       }
       if (yaml === snapshot) yamlDisk = snapshot;
+      rememberLibraryFile(file);
       refreshLibrary();
       status = 'Enregistré';
       return true;
@@ -95,14 +108,6 @@
     const parent = elementRel(file).split('/').slice(0, -1).join('/');
     void openNavItem(parent);
   }
-
-  $effect(() => {
-    const text = yaml;
-    const asking = $unsavedAsk;
-    if (!loaded || asking || canon(text) === canon(yamlDisk)) return;
-    const timer = setTimeout(() => { void save(); }, 600);
-    return () => clearTimeout(timer);
-  });
 
   onMount(() => {
     const stop = registerEditorGate({ dirty: () => dirty, save, discard });

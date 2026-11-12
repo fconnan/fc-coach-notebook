@@ -37,6 +37,7 @@
 
 <svelte:head>
   <link rel="icon" href={logo} />
+  <link rel="stylesheet" href="/api/style" />
   <script>
     try {
       if (sessionStorage.getItem('fctactics_ui_dark') === '1') document.documentElement.classList.add('dark');

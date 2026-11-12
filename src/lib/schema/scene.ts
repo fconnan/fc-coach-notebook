@@ -1,6 +1,10 @@
+import { paintArrow } from './arrowPaint';
+import { fitMode } from './fit';
 import { ballBeside, ballMarkup, ballRadius, playerTokenRadius } from './ball';
 import { applyParams } from './params';
 import { glyphFactor, realExtent, resolveMin } from './size';
+import { drawSvg, isSvgTag, type InkBox } from './svgShape';
+import { generateTrajectory, TrajectoryError, type MotifKind } from '$lib/trajectory';
 import type {
   ArrowMark,
   BoxInset,
@@ -14,23 +18,25 @@ import type {
   Scene,
   SchemaDoc,
   SchemaUnit,
-  SvgAsset
+  SvgAsset,
+  TrajectorySpec,
+  Travel
 } from './types';
 import { SCHEMA_VERSION } from './types';
 import { frameOfSize, hasStretch, stretchSvg, viewBoxOf as parsedBox } from './stretch';
 
-/** `object.ball.svg` ou `pitch.half-attack.yaml` donne `object.ball`. Un second point marque une variante, pas un élément. */
+/** `object.ball.svg` ou `pitch.half-attack.yaml` donne `object.ball`. Un fichier sans point, comme `player.svg` ou `arrow.svg`, est la base d’une famille. Un troisième point, comme `pitch.rect.cross.svg`, reste une variante. */
 export function dottedId(filename: string): string {
   const base = filename.replace(/\.(svg|ya?ml)$/i, '');
   const parts = base.split('.');
-  if (parts.length !== 2 || !parts[0] || !parts[1]) return '';
+  if (!base || parts.some(part => !part) || parts.length > 2) return '';
   return base;
 }
 
 const GENRES = ['zone', 'formation', 'shape', 'object'] as const;
 type Genre = typeof GENRES[number];
 
-/** Premier segment : object, pitch, shape, formation, zone. */
+/** Premier segment : object, pitch, shape, formation, zone, player, arrow. */
 export function elementKind(id: string): string {
   return id.split('.')[0] || '';
 }
@@ -40,11 +46,15 @@ export function elementKey(id: string): string {
 }
 
 export function isPlayerId(id: string): boolean {
-  return id === 'object.player';
+  return id === 'player' || id.startsWith('player.');
 }
 
 export function isBallId(id: string): boolean {
   return id === 'object.ball';
+}
+
+export function isArrowId(id: string): boolean {
+  return id === 'arrow' || id.startsWith('arrow.');
 }
 
 /** La clé unique d’un item est l’identifiant pointé. Une valeur vide vaut {}. */
@@ -110,6 +120,43 @@ function pointOf(value: unknown): [number, number] | null {
   return null;
 }
 
+function optionalNum(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function viaOf(value: unknown): { x: number; y: number }[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const spots: { x: number; y: number }[] = [];
+  for (const item of value) {
+    const point = pointOf(item);
+    if (point) spots.push({ x: point[0], y: point[1] });
+  }
+  return spots.length ? spots : undefined;
+}
+
+function travelOf(value: unknown): Travel | null {
+  const point = pointOf(value);
+  if (!point) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { x: point[0], y: point[1] };
+  const spot = value as Travel;
+  const side = spot.side === -1 || spot.side === 1 ? spot.side : undefined;
+  return {
+    x: point[0],
+    y: point[1],
+    arrow: typeof spot.arrow === 'string' ? spot.arrow : undefined,
+    via: viaOf(spot.via),
+    wave: optionalNum(spot.wave),
+    amp: optionalNum(spot.amp),
+    phase: optionalNum(spot.phase),
+    side,
+    taper: optionalNum(spot.taper),
+    neck: optionalNum(spot.neck),
+    width: optionalNum(spot.width),
+    dash: typeof spot.dash === 'string' ? spot.dash : undefined,
+    ink: typeof spot.ink === 'string' ? spot.ink : undefined
+  };
+}
+
 function placedAt(item: { x?: number; y?: number; at?: unknown; pos?: unknown }): [number, number] | null {
   const pos = pointOf(item.pos);
   if (pos) return pos;
@@ -143,7 +190,25 @@ interface PlaceBag {
   zones: PlacedZone[];
   lines: number[][];
   drawings: string[];
-  ballHolder: { id: string; svg: string; ref?: string; radius: number; real: number; min?: number };
+  ink: string[];
+  inkBounds: InkBox[];
+  arrows: ArrowMark[];
+  ballHolder: {
+    id: string;
+    svg: string;
+    ref?: string;
+    radius: number;
+    radiusY?: number;
+    real: number;
+    fit?: 'ratio' | 'free';
+    min?: number;
+    locked?: boolean;
+    ox?: number;
+    oy?: number;
+    sx?: number;
+    sy?: number;
+    relative?: boolean;
+  };
 }
 
 function pitchArgs(doc: SchemaDoc): CallArgs {
@@ -155,6 +220,12 @@ function pitchArgs(doc: SchemaDoc): CallArgs {
 function qualify(kind: string, key: string): string {
   if (!key) return '';
   return key.includes('.') ? key : `${kind}.${key}`;
+}
+
+/** Identifiant d’un appel. `object.ball` s’il est dans la bibliothèque, sinon le nom écrit (`player`, `player.red`). */
+function callId(genre: string, type: string, library: Map<string, LibraryEntry>): string {
+  const qualified = qualify(genre, type);
+  return library.has(qualified) ? qualified : type;
 }
 
 function pitchId(args: CallArgs): string {
@@ -518,32 +589,51 @@ function isComposition(doc: SchemaDoc): boolean {
   return Boolean(doc.object?.length || doc.shape?.length || doc.formation?.length || doc.zone?.length || doc.outline);
 }
 
+/** Flag de la pose : l’argument l’emporte, puis le YAML de l’élément, puis le SVG. Un dessin à bandes est déformable. */
+function placedFit(args: CallArgs, doc: SchemaDoc | undefined, asset: SvgAsset | undefined): 'ratio' | 'free' | undefined {
+  const written = (value: unknown) => value !== undefined && String(value).trim() !== '';
+  const raw = written(args.fit) ? args.fit : written(doc?.fit) ? doc?.fit : asset?.fit;
+  if (written(raw)) {
+    const mode = fitMode(raw);
+    return mode === 'none' ? undefined : mode;
+  }
+  if (hasStretch(doc?.stretch) || hasStretch(asset?.stretch)) return 'free';
+  return undefined;
+}
+
 function meterOf(value: number | undefined, relative: boolean, span: number): number | undefined {
   if (typeof value !== 'number') return undefined;
   return relative ? value * span : value;
 }
 
-function placeBall(args: CallArgs, box: Box, local: Unit, xform: Xform, bag: PlaceBag, ref?: string) {
+function placeBall(args: CallArgs, box: Box, local: Unit, xform: Xform, bag: PlaceBag, ref: string | undefined, own: boolean) {
   const def = resolveElement(bag.library, 'object.ball');
   const svg = markupOf(def, String(args.style || bag.style || ''));
   if (svg) bag.ballHolder.svg = svg;
-  if (ref) bag.ballHolder.ref = ref;
   const asset = assetOf(def, String(args.style || bag.style || ''));
   const extent = realExtent(asset?.size, parsedBox(asset?.viewBox || ''));
   const declared = Boolean(asset?.size?.realW || asset?.size?.realH);
-  let diameter = declared ? extent.w : ballRadius * 2;
+  const diameter = declared ? extent.w : ballRadius * 2;
   const width = meterOf(args.w, local === 'relative', box[2]);
   const height = meterOf(args.h, local === 'relative', box[3]);
-  if (width !== undefined || height !== undefined) {
-    const sx = width !== undefined ? width / diameter : undefined;
-    const sy = height !== undefined ? height / diameter : undefined;
-    const scale = sx !== undefined && sy !== undefined ? Math.min(sx, sy) : (sx ?? sy ?? 1);
-    diameter = Math.max(0.05, diameter * scale);
-  }
-  bag.ballHolder.radius = diameter / 2;
-  bag.ballHolder.real = diameter;
+  const rx = Math.max(0.025, width !== undefined ? width / 2 : diameter / 2);
+  const ry = Math.max(0.025, height !== undefined ? height / 2 : diameter / 2);
+  bag.ballHolder.radius = rx;
+  bag.ballHolder.radiusY = ry;
+  bag.ballHolder.fit = placedFit(args, def?.doc, asset);
+  bag.ballHolder.real = Math.max(rx, ry) * 2;
   bag.ballHolder.min = resolveMin(bag.host?.sizes, def?.id || 'object.ball', asset?.size?.min, args.min);
   const at = placedAt(args);
+  const meta = spotMeta(ref, own && Boolean(at), box, local === 'relative', xform);
+  if (meta.ref) {
+    bag.ballHolder.ref = meta.ref;
+    bag.ballHolder.locked = meta.locked;
+    bag.ballHolder.ox = meta.ox;
+    bag.ballHolder.oy = meta.oy;
+    bag.ballHolder.sx = meta.sx;
+    bag.ballHolder.sy = meta.sy;
+    bag.ballHolder.relative = meta.relative;
+  }
   if (args.player !== undefined && !at) {
     bag.ballHolder.id = idOf(args.player);
     return;
@@ -556,7 +646,35 @@ function placeBall(args: CallArgs, box: Box, local: Unit, xform: Xform, bag: Pla
   if (args.player !== undefined) bag.ballHolder.id = idOf(args.player);
 }
 
-function spotMeta(ref: string | undefined, own: boolean, box: Box, relative: boolean, xform: Xform) {
+function heldBall(holder: PlaceBag['ballHolder'], x: number, y: number): NonNullable<Scene['ball']> {
+  return {
+    x,
+    y,
+    svg: holder.svg,
+    ref: holder.ref,
+    radius: holder.radius,
+    radiusY: holder.radiusY,
+    fit: holder.fit,
+    real: holder.real,
+    min: holder.min,
+    locked: holder.locked,
+    ox: holder.ox,
+    oy: holder.oy,
+    sx: holder.sx,
+    sy: holder.sy,
+    relative: holder.relative
+  };
+}
+
+function spotMeta(ref: string | undefined, own: boolean, box: Box, relative: boolean, xform: Xform): {
+  ref?: string;
+  locked?: boolean;
+  ox?: number;
+  oy?: number;
+  sx?: number;
+  sy?: number;
+  relative?: boolean;
+} {
   if (!ref) return {};
   return {
     ref,
@@ -569,11 +687,62 @@ function spotMeta(ref: string | undefined, own: boolean, box: Box, relative: boo
   };
 }
 
+function arrowLeaf(id: string): { kind: 'dribble' | 'run' | 'pass'; arrow?: string } {
+  const leaf = id.startsWith('arrow.') ? id.slice('arrow.'.length) : '';
+  if (leaf === 'dribble' || leaf === 'run' || leaf === 'pass') return { kind: leaf };
+  if (!leaf) return { kind: 'pass', arrow: 'arrow' };
+  return { kind: 'run', arrow: leaf };
+}
+
+function paintArgs(args: CallArgs): Pick<ArrowMark, 'wave' | 'amp' | 'phase' | 'side' | 'taper' | 'neck' | 'width' | 'dash' | 'ink'> {
+  const side = args.side === -1 || args.side === 1 ? args.side : undefined;
+  return {
+    wave: optionalNum(args.wave),
+    amp: optionalNum(args.amp),
+    phase: optionalNum(args.phase),
+    side,
+    taper: optionalNum(args.taper),
+    neck: optionalNum(args.neck),
+    width: optionalNum(args.width),
+    dash: typeof args.dash === 'string' ? args.dash : undefined,
+    ink: typeof args.ink === 'string' ? args.ink : undefined
+  };
+}
+
+/** Flèche posée comme un élément : départ `p`, arrivée `to`, points de passage `via`. */
+function placeArrow(id: string, args: CallArgs, box: Box, unit: Unit, xform: Xform, bag: PlaceBag, ref: string | undefined, own: boolean) {
+  const local = args.unit || unit;
+  const from = placedAt(args);
+  const to = pointOf(args.to);
+  if (!from || !to) return;
+  const relative = local === 'relative';
+  const start = mapLocal(from, box, relative, xform);
+  const end = mapLocal(to, box, relative, xform);
+  const via = (viaOf(args.via) || []).map(spot => {
+    const at = mapLocal([spot.x, spot.y], box, relative, xform);
+    return { x: at[0], y: at[1] };
+  });
+  const preset = arrowLeaf(id);
+  const meta = spotMeta(ref, own, box, relative, xform);
+  bag.arrows.push({
+    x1: start[0],
+    y1: start[1],
+    x2: end[0],
+    y2: end[1],
+    via: via.length ? via : undefined,
+    kind: preset.kind,
+    arrow: typeof args.arrow === 'string' ? args.arrow : preset.arrow,
+    start: 'free',
+    ...paintArgs(args),
+    ...meta
+  });
+}
+
 function placePoint(id: string, args: CallArgs, box: Box, unit: Unit, xform: Xform, bag: PlaceBag, ref: string | undefined, own: boolean, team: string, corners: [number, number][]) {
   const local = args.unit || unit;
   const def = resolveElement(bag.library, id);
   if (isBallId(id) || isBallId(def?.id || '')) {
-    placeBall(args, box, local, xform, bag, ref);
+    placeBall(args, box, local, xform, bag, ref, own);
     return;
   }
   const at = placedAt(args);
@@ -586,22 +755,31 @@ function placePoint(id: string, args: CallArgs, box: Box, unit: Unit, xform: Xfo
   const givenW = meterOf(args.w, local === 'relative', box[2]);
   const givenH = meterOf(args.h, local === 'relative', box[3]);
   if (isPlayerId(id) || isPlayerId(def?.id || '')) {
-    const side = args.team || team || 'blue';
-    const fit = givenW !== undefined || givenH !== undefined
-      ? Math.min(givenW !== undefined ? givenW / extent.w : Infinity, givenH !== undefined ? givenH / extent.h : Infinity)
-      : 1;
-    const scale = Number.isFinite(fit) ? Math.max(fit, 0.05) : 1;
+    const leaf = id.startsWith('player.') ? id.slice('player.'.length) : '';
+    const side = String(args.team || leaf || team || 'blue');
+    const painted = resolveElement(bag.library, `player.${side}`) || resolveElement(bag.library, 'player') || def;
+    const style = String(args.style || bag.style || '');
+    const face = assetOf(painted, style);
+    const faceExtent = realExtent(face?.size, parsedBox(face?.viewBox || ''));
+    const sx = givenW !== undefined ? Math.max(givenW / faceExtent.w, 0.05) : 1;
+    const sy = givenH !== undefined ? Math.max(givenH / faceExtent.h, 0.05) : 1;
+    const values: Record<string, string | undefined> = {};
+    for (const [key, value] of Object.entries(painted?.doc.params || {})) {
+      if (value !== undefined) values[key] = String(value);
+    }
+    values.name = idOf(args.name);
     bag.players.push({
       id: `${side}:${idOf(args.name)}`,
       team: side,
       x: spot[0],
       y: spot[1],
-      svg: paintPlayer(markupOf(def, String(args.style || bag.style || '')), idOf(args.name), side),
-      ux: extent.ux * scale,
-      uy: extent.uy * scale,
-      radius: playerTokenRadius * extent.ux * scale,
-      real: Math.max(extent.w, extent.h) * scale,
-      min: resolveMin(bag.host?.sizes, def?.id || id, asset?.size?.min, args.min),
+      svg: applyParams(markupOf(painted, style), values),
+      ux: faceExtent.ux * sx,
+      uy: faceExtent.uy * sy,
+      radius: playerTokenRadius * faceExtent.ux * Math.max(sx, sy),
+      real: Math.max(faceExtent.w * sx, faceExtent.h * sy),
+      min: resolveMin(bag.host?.sizes, 'player', face?.size?.min, args.min),
+      fit: placedFit(args, painted?.doc, face),
       ...meta
     });
     return;
@@ -634,6 +812,7 @@ function placePoint(id: string, args: CallArgs, box: Box, unit: Unit, xform: Xfo
     uy: extent.uy,
     real: widthM && heightM ? Math.max(widthM, heightM) : undefined,
     min: resolveMin(bag.host?.sizes, def?.id || id, asset?.size?.min, args.min),
+    fit: placedFit(args, def?.doc, asset),
     ...meta
   });
   corners.push(spot);
@@ -647,7 +826,7 @@ interface ZoneInk {
 
 function withInk(args: CallArgs, ink: ZoneInk | undefined): CallArgs {
   if (!ink) return args;
-  return { ...args, fill: args.fill ?? ink.fill, alpha: args.alpha ?? ink.alpha, title: args.title ?? ink.title };
+  return { ...args, fill: args.fill ?? ink.fill, alpha: args.alpha ?? ink.alpha };
 }
 
 function inkOf(args: CallArgs): ZoneInk | undefined {
@@ -655,9 +834,9 @@ function inkOf(args: CallArgs): ZoneInk | undefined {
   return { fill: args.fill, alpha: args.alpha, title: args.title };
 }
 
-/** Un groupe ne se teinte pas : la couleur descend sur ses zones. Sans couleur, le lavis reste le blanc à 0,06. */
+/** Un groupe ne se teinte pas : la couleur descend sur ses zones. Sans couleur, la feuille de style donne le blanc, à 0,06. */
 function zoneWash(args: CallArgs, group: boolean): { fill: string; alpha: number } {
-  const fill = args.fill || '#ffffff';
+  const fill = args.fill || '';
   if (group) return { fill, alpha: 0 };
   const alpha = args.alpha !== undefined ? args.alpha : (args.fill ? 0.2 : 0.06);
   return { fill, alpha };
@@ -679,9 +858,10 @@ function placeCall(
   if (depth > 8 || !id) return;
   const kind = elementKind(id);
   const local = args.unit || unit;
-  if (kind === 'object' || isPlayerId(id) || isBallId(id)) {
+  if (kind === 'object' || isPlayerId(id) || isBallId(id) || isArrowId(id)) {
     const scene = transformBox(parent, parent, parentXform);
-    placePoint(id, args, scene, local, parentXform, bag, ref, own, args.team || team, []);
+    if (isArrowId(id)) placeArrow(id, args, scene, local, parentXform, bag, ref, own);
+    else placePoint(id, args, scene, local, parentXform, bag, ref, own, args.team || team, []);
     return;
   }
   const def = resolveElement(bag.library, id);
@@ -764,13 +944,23 @@ function placeLists(
       const call = callOf(item);
       if (!call) return;
       const painted = applyGeometry(withInk(call.args, ink), bag);
-      const id = qualify(genre, call.type);
+      const id = callId(genre, call.type, bag.library);
       const ref = basePath !== undefined ? `${basePath}${genre}/${index}/${call.type}` : anchor;
       const own = basePath !== undefined;
+      if (isSvgTag(call.type)) {
+        const drawn = drawSvg(call.type, item[call.type], (x, y) => mapLocal([x, y], box, unit === 'relative', xform), own && ref ? ref : '');
+        if (drawn) {
+          bag.ink.push(drawn.markup);
+          bag.inkBounds.push(drawn.box);
+        }
+        return;
+      }
       const kind = elementKind(id);
-      if (kind === 'object' || isPlayerId(id) || isBallId(id)) {
+      if (kind === 'zone' && painted.title === undefined && ink?.title) painted.title = ink.title;
+      if (kind === 'object' || isPlayerId(id) || isBallId(id) || isArrowId(id)) {
         const scene = transformBox(box, box, xform);
-        placePoint(id, painted, scene, painted.unit || unit, xform, bag, ref, own, painted.team || team, corners);
+        if (isArrowId(id)) placeArrow(id, painted, scene, painted.unit || unit, xform, bag, ref, own);
+        else placePoint(id, painted, scene, painted.unit || unit, xform, bag, ref, own, painted.team || team, corners);
         return;
       }
       placeCall(id, painted, box, unit, xform, areaMode(id), bag, depth + 1, ref, own, painted.team || team);
@@ -800,6 +990,29 @@ function placeDocument(doc: SchemaDoc, box: Box, xform: Xform, mode: 'full' | 'c
   placeLists(doc, box, inheritedUnit(doc), xform, bag, depth, own ? '' : undefined, undefined, 'blue');
 }
 
+/** Une passe sans ballon posé reprend le dessin du ballon. S'il n'a pas de taille propre, il reste lisible à côté du jeton : environ la moitié de son rayon. */
+function primeBall(bag: PlaceBag) {
+  if (bag.ballHolder.id) return;
+  const def = resolveElement(bag.library, 'object.ball');
+  const asset = assetOf(def, bag.style || '');
+  const svg = markupOf(def, bag.style || '');
+  if (svg) bag.ballHolder.svg = svg;
+  const extent = realExtent(asset?.size, parsedBox(asset?.viewBox || ''));
+  const declared = Boolean(asset?.size?.realW || asset?.size?.realH);
+  const diameter = declared ? extent.w : ballRadius * 2;
+  bag.ballHolder.radius = diameter / 2;
+  bag.ballHolder.real = diameter;
+  const sizes = bag.host?.sizes;
+  bag.ballHolder.min = resolveMin(sizes, def?.id || 'object.ball', asset?.size?.min, undefined);
+  const explicit = sizes?.ball !== undefined || sizes?.['object.ball'] !== undefined;
+  const span = Math.max(bag.frame[2], bag.frame[3]);
+  if (explicit || !((sizes?.scale ?? 1) > 0) || !(span > 0) || !bag.players.length) return;
+  let playerR = 0;
+  for (const token of bag.players) playerR = Math.max(playerR, shownRadius(token.radius ?? playerTokenRadius, token.real, token.min, span));
+  const share = playerR / span;
+  if (share > (bag.ballHolder.min ?? 0)) bag.ballHolder.min = share;
+}
+
 function emptyBag(library: Map<string, LibraryEntry>, style: string, frameLength: number): PlaceBag {
   return {
     library,
@@ -811,6 +1024,9 @@ function emptyBag(library: Map<string, LibraryEntry>, style: string, frameLength
     zones: [],
     lines: [],
     drawings: [],
+    ink: [],
+    inkBounds: [],
+    arrows: [],
     ballHolder: { id: '', svg: '', radius: ballRadius, real: ballRadius * 2 }
   };
 }
@@ -852,37 +1068,144 @@ function shownRadius(radius: number, real: number | undefined, min: number | und
   return radius * glyphFactor(real ?? radius * 2, min, span);
 }
 
-function stretchArrow(library: Map<string, LibraryEntry>, arrow: ArrowMark, span: number, doc: SchemaDoc): ArrowMark {
-  const id = `arrow.${arrow.kind}`;
-  const asset = assetOf(resolveElement(library, id), '');
-  const box = asset ? parsedBox(asset.viewBox) : null;
-  const length = Math.hypot(arrow.x2 - arrow.x1, arrow.y2 - arrow.y1);
-  if (!asset || !box || length < 0.05) return arrow;
-  const extent = realExtent(asset.size, box);
-  const factor = glyphFactor(extent.h, resolveMin(doc.sizes, id, asset.size?.min, undefined), span);
-  const drawn = stretchSvg(asset, length / (extent.ux * factor), box.h);
-  const angle = Math.atan2(arrow.y2 - arrow.y1, arrow.x2 - arrow.x1) * 180 / Math.PI;
-  return { ...arrow, svg: drawn.markup, angle, glyph: extent.ux * factor };
+function round3(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
-function arrowsFor(before: PlacedPlayer[], after: PlacedPlayer[], moves: MoveSpec[]): ArrowMark[] {
+function scaleDash(dash: string, factor: number): string {
+  if (dash === 'none') return dash;
+  return dash.split(/[\s,]+/).filter(Boolean).map(part => {
+    const n = Number(part);
+    return Number.isFinite(n) ? String(round3(n * factor)) : part;
+  }).join(' ');
+}
+
+function asNum(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return fallback;
+}
+
+function presetIdOf(arrow: ArrowMark): string {
+  if (!arrow.arrow || arrow.arrow === 'none') return `arrow.${arrow.kind}`;
+  if (arrow.arrow === 'arrow') return 'arrow';
+  return qualify('arrow', arrow.arrow);
+}
+
+function routeOf(arrow: ArrowMark): number {
+  const points: { x: number; y: number }[] = [{ x: arrow.x1, y: arrow.y1 }];
+  for (const spot of arrow.via || []) {
+    if (typeof spot.x === 'number' && typeof spot.y === 'number') points.push({ x: spot.x, y: spot.y });
+  }
+  points.push({ x: arrow.x2, y: arrow.y2 });
+  let total = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    total += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+  }
+  return total;
+}
+
+/** Un seul tracé, en mètres de scène. Le préréglage est recouvert par le mouvement. */
+function trackArrow(library: Map<string, LibraryEntry>, arrow: ArrowMark, span: number, host: SchemaDoc, presetDoc?: SchemaDoc): ArrowMark {
+  const hidden = arrow.arrow === 'none';
+  const presetId = presetIdOf(arrow);
+  const preset = presetDoc ?? resolveElement(library, presetId)?.doc;
+  const asset = assetOf(resolveElement(library, preset?.id || presetId), '')
+    || assetOf(resolveElement(library, 'arrow'), '');
+  if (routeOf(arrow) < 0.05 || (!hidden && !asset)) return arrow;
+  const box = parsedBox(asset?.viewBox || '');
+  const extent = realExtent(asset?.size, box);
+  const factor = asset
+    ? glyphFactor(extent.h, resolveMin(host.sizes, preset?.id || presetId, asset.size?.min, undefined), span)
+    : 1;
+  const spec = hidden ? undefined : preset?.trajectory;
+  const params = preset?.params;
+  const motif = (spec?.motif || 'none') as MotifKind;
+  const via = (arrow.via || []).filter((spot): spot is { x: number; y: number } => typeof spot.x === 'number' && typeof spot.y === 'number');
+  const neck = arrow.neck ?? spec?.neck ?? (motif === 'none' ? 0 : 0.4);
+  try {
+    const path = generateTrajectory({
+      start: { x: arrow.x1, y: arrow.y1 },
+      end: { x: arrow.x2, y: arrow.y2 },
+      via,
+      motif,
+      wave: (arrow.wave ?? spec?.wave ?? (motif === 'none' ? 0 : 0.7)) * factor,
+      amp: (arrow.amp ?? spec?.amp ?? (motif === 'none' ? 0 : 0.2)) * factor,
+      phase: arrow.phase ?? spec?.phase ?? 0,
+      side: (arrow.side ?? spec?.side) === -1 ? -1 : 1,
+      taper: (arrow.taper ?? spec?.taper ?? 0) * factor,
+      neck: neck * factor,
+      trim: spec?.trim ?? 0
+    });
+    const kept = {
+      ...arrow,
+      motif,
+      wave: arrow.wave ?? spec?.wave ?? (motif === 'none' ? undefined : 0.7),
+      amp: arrow.amp ?? spec?.amp ?? (motif === 'none' ? undefined : 0.2),
+      length: path.length,
+      pointAt: path.pointAt,
+      line: path.line
+    };
+    if (hidden || !path.d || !asset) return kept;
+    const values: Record<string, string | undefined> = {
+      width: String(round3((arrow.width ?? asNum(params?.width, 0.1)) * factor))
+    };
+    const ink = arrow.ink ?? (params?.ink !== undefined ? String(params.ink) : undefined);
+    const dash = arrow.dash ?? (params?.dash !== undefined ? String(params.dash) : undefined);
+    if (ink) values.ink = ink;
+    if (dash) values.dash = scaleDash(dash, factor);
+    return { ...kept, svg: paintArrow(asset.markup, path.d, values), world: true, angle: 0, glyph: 1 };
+  } catch (err) {
+    if (!(err instanceof TrajectoryError)) throw err;
+    return arrow;
+  }
+}
+
+function paintOf(trip: Travel | null): Omit<ArrowMark, 'x1' | 'y1' | 'x2' | 'y2' | 'kind'> {
+  return {
+    arrow: trip?.arrow,
+    via: trip?.via,
+    wave: trip?.wave,
+    amp: trip?.amp,
+    phase: trip?.phase,
+    side: trip?.side,
+    taper: trip?.taper,
+    neck: trip?.neck,
+    width: trip?.width,
+    dash: trip?.dash,
+    ink: trip?.ink
+  };
+}
+
+function arrowsFor(before: PlacedPlayer[], after: PlacedPlayer[], moves: MoveSpec[], phaseIndex: number): ArrowMark[] {
   const arrows: ArrowMark[] = [];
-  for (const move of moves) {
+  moves.forEach((move, index) => {
     if (move.dribble || move.run) {
       const from = findPlayer(before, move.player);
       const to = from ? after.find(player => player.id === from.id) : undefined;
-      if (from && to) arrows.push({ x1: from.x, y1: from.y, x2: to.x, y2: to.y, kind: move.dribble ? 'dribble' : 'run' });
+      const trip = travelOf(move.dribble) || travelOf(move.run);
+      const key = move.dribble ? 'dribble' : 'run';
+      if (from && to) arrows.push({
+        x1: from.x, y1: from.y, x2: to.x, y2: to.y,
+        kind: key,
+        actor: from.id,
+        start: 'player',
+        ref: `phases/${phaseIndex}/moves/${index}/${key}`,
+        ...paintOf(trip)
+      });
     }
     if (move.pass !== undefined && move.from !== undefined) {
       const from = findPlayer(before, move.from);
-      const target = typeof move.pass === 'number' || typeof move.pass === 'string' ? null : pointOf(move.pass);
+      const trip = travelOf(move.pass);
+      const target = trip ? [trip.x, trip.y] as [number, number] : null;
       const mate = typeof move.pass === 'number' || typeof move.pass === 'string'
         ? findPlayer(after, move.pass)
         : null;
-      if (from && mate) arrows.push({ x1: from.x, y1: from.y, x2: mate.x, y2: mate.y, kind: 'pass' });
-      else if (from && target) arrows.push({ x1: from.x, y1: from.y, x2: target[0], y2: target[1], kind: 'pass' });
+      const ref = `phases/${phaseIndex}/moves/${index}/pass`;
+      if (from && mate) arrows.push({ x1: from.x, y1: from.y, x2: mate.x, y2: mate.y, kind: 'pass', start: 'player', tip: false, ref, ...paintOf(trip) });
+      else if (from && target) arrows.push({ x1: from.x, y1: from.y, x2: target[0], y2: target[1], kind: 'pass', start: 'player', ref, ...paintOf(trip) });
     }
-  }
+  });
   return arrows;
 }
 
@@ -899,6 +1222,7 @@ export function buildScene(
   bag.frame = [0, 0, frame.width, frame.length];
   bag.marks.push(...cornerMarks(frame.width, frame.length, frame.boundary, library, style));
   placeDocument(doc, [0, 0, frame.width, frame.length], IDENTITY, 'full', bag, 0, true);
+  primeBall(bag);
   const { players, marks, zones } = bag;
   const ballHolder = bag.ballHolder;
   const span = Math.max(frame.width, frame.length);
@@ -910,31 +1234,39 @@ export function buildScene(
   for (let i = 0; i < index; i += 1) {
     for (const move of doc.phases?.[i]?.moves || []) applyMove(players, move);
   }
-  let arrows: ArrowMark[] = [];
+  const placed = bag.arrows.map(arrow => trackArrow(library, arrow, span, doc));
+  let rides: ArrowMark[] = [];
   const t = Math.max(0, Math.min(progress, 1));
   if (index >= 0) {
     const moves = doc.phases?.[index]?.moves || [];
     const before = players.map(player => ({ ...player }));
     const after = players.map(player => ({ ...player }));
     for (const move of moves) applyMove(after, move);
+    rides = arrowsFor(before, after, moves, index).map(arrow => trackArrow(library, arrow, span, doc));
     for (const player of players) {
       const start = before.find(item => item.id === player.id);
       const end = after.find(item => item.id === player.id);
       if (!start || !end) continue;
-      player.x = start.x + (end.x - start.x) * t;
-      player.y = start.y + (end.y - start.y) * t;
+      const ride = rides.find(arrow => arrow.actor === player.id && arrow.pointAt);
+      if (ride?.pointAt) {
+        const at = ride.pointAt(t);
+        player.x = at.x;
+        player.y = at.y;
+      } else {
+        player.x = start.x + (end.x - start.x) * t;
+        player.y = start.y + (end.y - start.y) * t;
+      }
     }
-    arrows = arrowsFor(before, after, moves).map(arrow => stretchArrow(library, arrow, span, doc));
   }
   let ball: Scene['ball'] = null;
   if (ballHolder.id.startsWith('@')) {
     const [x, y] = ballHolder.id.slice(1).split(',').map(Number);
-    ball = { x, y, svg: ballHolder.svg, ref: ballHolder.ref, radius: ballHolder.radius, real: ballHolder.real, min: ballHolder.min };
+    ball = heldBall(ballHolder, x, y);
   } else if (ballHolder.id) {
     const carrier = findPlayer(players, ballHolder.id);
-    if (carrier) ball = { x: carrier.x, y: carrier.y, svg: ballHolder.svg, ref: ballHolder.ref, radius: ballHolder.radius, real: ballHolder.real, min: ballHolder.min };
+    if (carrier) ball = heldBall(ballHolder, carrier.x, carrier.y);
   }
-  const lastPass = [...arrows].reverse().find(arrow => arrow.kind === 'pass');
+  const lastPass = [...rides].reverse().find(arrow => arrow.kind === 'pass');
   if (lastPass) {
     const passer = players.reduce<{ d: number; player: PlacedPlayer } | null>((best, player) => {
       const d = Math.hypot(player.x - lastPass.x1, player.y - lastPass.y1);
@@ -942,17 +1274,17 @@ export function buildScene(
     }, null);
     const gap = shownRadius(passer?.player.radius ?? playerTokenRadius, passer?.player.real, passer?.player.min, span)
       + shownRadius(ballHolder.radius, ballHolder.real, ballHolder.min, span) * 0.4;
+    const total = lastPass.length || Math.hypot(lastPass.x2 - lastPass.x1, lastPass.y2 - lastPass.y1) || 1;
+    const along = lastPass.pointAt
+      ? lastPass.pointAt((total <= gap * 2 ? total * 0.5 : gap + (total - gap * 2) * t) / total)
+      : null;
     const start = ballBeside(lastPass.x1, lastPass.y1, lastPass.x2, lastPass.y2, gap);
     const end = ballBeside(lastPass.x2, lastPass.y2, lastPass.x1, lastPass.y1, gap);
-    ball = {
-      x: start.x + (end.x - start.x) * t,
-      y: start.y + (end.y - start.y) * t,
-      svg: ballHolder.svg,
-      ref: ball?.ref,
-      radius: ballHolder.radius,
-      real: ballHolder.real,
-      min: ballHolder.min
-    };
+    ball = heldBall(
+      ballHolder,
+      along?.x ?? start.x + (end.x - start.x) * t,
+      along?.y ?? start.y + (end.y - start.y) * t
+    );
   }
   return {
     width: frame.width,
@@ -960,29 +1292,15 @@ export function buildScene(
     margin: frame.margin,
     lines: bag.lines,
     drawing: bag.drawings.join(''),
+    ink: bag.ink.join(''),
+    inkBounds: bag.inkBounds,
     zones,
     players,
     marks,
-    arrows,
+    arrows: [...placed, ...rides],
     ball,
     phases
   };
-}
-
-const TEAM_COLOR: Record<string, string> = {
-  blue: '#2563eb',
-  red: '#dc2626',
-  white: '#f8fafc',
-  yellow: '#ca8a04'
-};
-
-/** Le SVG du joueur reçoit son numéro et les couleurs de l’équipe. */
-function paintPlayer(markup: string, name: string, team: string): string {
-  const fill = TEAM_COLOR[team] || '#334155';
-  const ink = team === 'white' || team === 'yellow' ? '#111827' : '#ffffff';
-  const face = applyParams(markup, { name, fill, ink });
-  return face || `<circle r="${playerTokenRadius}" fill="${fill}" stroke="#ffffff" stroke-width="0.12"/>
-    <text text-anchor="middle" y="0.38" font-size="1.1" font-family="sans-serif" fill="${ink}">${esc(name)}</text>`;
 }
 
 function esc(value: string): string {
@@ -993,12 +1311,13 @@ function escAttr(value: string): string {
   return esc(value).replace(/"/g, '&quot;');
 }
 
-function pickAttrs(node: { ref?: string; locked?: boolean }, kind: 'player' | 'mark'): string {
+function pickAttrs(node: { ref?: string; locked?: boolean; fit?: 'ratio' | 'free' }, kind: 'player' | 'mark'): string {
   if (!node.ref) return '';
   const drag = node.locked === false
     ? ` data-ref="${escAttr(node.ref)}"${kind === 'mark' ? ' data-handle="1" data-ox="0" data-oy="0"' : ''}`
     : '';
-  return ` data-pick="${escAttr(node.ref)}" data-kind="${kind}"${drag}`;
+  const fit = node.fit ? ` data-fit="${node.fit}"` : '';
+  return ` data-pick="${escAttr(node.ref)}" data-kind="${kind}"${fit}${drag}`;
 }
 
 /** Parts of `u` (one hundredth of the figure). Chosen so the handles stay the same size on every pitch and remain grabbable when the figure fits the preview. */
@@ -1021,7 +1340,7 @@ export const chrome = {
 
 function resizeHandles(x: number, y: number, w: number, h: number, size: number): string {
   const spot = (axis: string, cx: number, cy: number) =>
-    `<rect data-resize="${axis}" x="${cx - size / 2}" y="${cy - size / 2}" width="${size}" height="${size}" rx="${(size * 0.2).toFixed(4)}" fill="#ffffff" stroke="#111827" stroke-width="${(size * 0.2).toFixed(4)}" fill-opacity="0" stroke-opacity="0" pointer-events="none"/>`;
+    `<rect class="fc-handle" data-resize="${axis}" x="${cx - size / 2}" y="${cy - size / 2}" width="${size}" height="${size}" rx="${(size * 0.2).toFixed(4)}" stroke-width="${(size * 0.2).toFixed(4)}" fill-opacity="0" stroke-opacity="0" pointer-events="none"/>`;
   return spot('x', x + w, y + h / 2) + spot('y', x + w / 2, y + h) + spot('xy', x + w, y + h);
 }
 
@@ -1056,7 +1375,7 @@ function markFrame(mark: PlacedMark, u: number, glyph: number): string {
   const knob = mark.locked === false
     ? `<g data-rotate="1" fill-opacity="0" stroke-opacity="0" pointer-events="none">
         <circle cx="0" cy="${knobY}" r="${(chrome.knobHit * u).toFixed(4)}" fill="transparent"/>
-        <circle cx="0" cy="${knobY}" r="${knobR.toFixed(4)}" fill="#fde047" stroke="#111827" stroke-width="${(chrome.knobStroke * u).toFixed(4)}"/>
+        <circle class="fc-knob" cx="0" cy="${knobY}" r="${knobR.toFixed(4)}" stroke-width="${(chrome.knobStroke * u).toFixed(4)}"/>
       </g>`
     : '';
   const handles = mark.box && mark.locked === false ? resizeHandles(x, y, w, h, chrome.handle * u) : '';
@@ -1069,22 +1388,6 @@ function ring(node: { ref?: string; locked?: boolean; x: number; y: number; ox?:
     ? ` data-ref="${escAttr(node.ref)}" data-handle="1" data-ox="${node.ox ?? 0}" data-oy="${node.oy ?? 0}" data-sx="${node.sx ?? 0}" data-sy="${node.sy ?? 0}" data-rel="${node.relative ? 1 : 0}"`
     : '';
   return `<circle data-pick="${escAttr(node.ref)}" data-kind="${kind}"${handle} cx="${node.x}" cy="${node.y}" r="${radius}" fill="transparent" stroke="transparent" stroke-width="${(chrome.ringStroke * u).toFixed(4)}"/>`;
-}
-
-function wavy(x1: number, y1: number, x2: number, y2: number): string {
-  const steps = 8;
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const len = Math.hypot(dx, dy) || 1;
-  const nx = -dy / len;
-  const ny = dx / len;
-  let d = `M ${x1} ${y1}`;
-  for (let i = 1; i <= steps; i += 1) {
-    const t = i / steps;
-    const amp = Math.sin(t * Math.PI * 4) * 0.6;
-    d += ` L ${x1 + dx * t + nx * amp} ${y1 + dy * t + ny * amp}`;
-  }
-  return d;
 }
 
 function attrMap(source: string): Record<string, string> {
@@ -1145,22 +1448,44 @@ function frameOf(scene: Scene): { left: number; right: number; top: number; bott
   let right = room;
   let top = room;
   let bottom = room;
+  const cover = (x: number, y: number, pad = 0) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    left = Math.max(left, gap + pad - x);
+    right = Math.max(right, x + pad - scene.width + gap);
+    bottom = Math.max(bottom, gap + pad - y);
+    top = Math.max(top, y + pad - scene.length + gap);
+  };
   for (const mark of scene.marks) {
     const box = markExtent(mark.svg);
-    if (!box) continue;
+    if (!box) {
+      cover(mark.x, mark.y);
+      continue;
+    }
     const angle = (mark.angle || 0) * Math.PI / 180;
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     for (const [sx, sy] of [[box.minX, box.minY], [box.maxX, box.minY], [box.minX, box.maxY], [box.maxX, box.maxY]] as [number, number][]) {
       const px = sx;
       const py = -sy;
-      const x = mark.x + px * cos - py * sin;
-      const y = mark.y + px * sin + py * cos;
-      left = Math.max(left, gap - x);
-      right = Math.max(right, x - scene.width + gap);
-      bottom = Math.max(bottom, gap - y);
-      top = Math.max(top, y - scene.length + gap);
+      cover(mark.x + px * cos - py * sin, mark.y + px * sin + py * cos);
     }
+  }
+  for (const player of scene.players) cover(player.x, player.y, player.radius || 0);
+  for (const zone of scene.zones) {
+    cover(zone.x, zone.y);
+    cover(zone.x + zone.w, zone.y + zone.h);
+  }
+  for (const arrow of scene.arrows) {
+    cover(arrow.x1, arrow.y1);
+    cover(arrow.x2, arrow.y2);
+    for (const spot of arrow.via || []) {
+      if (typeof spot.x === 'number' && typeof spot.y === 'number') cover(spot.x, spot.y);
+    }
+  }
+  if (scene.ball) cover(scene.ball.x, scene.ball.y, scene.ball.radius || 0);
+  for (const box of scene.inkBounds) {
+    cover(box.minX, box.minY);
+    cover(box.maxX, box.maxY);
   }
   return { left, right, top, bottom };
 }
@@ -1175,10 +1500,10 @@ function piecesScene(doc: SchemaDoc, library: Map<string, LibraryEntry>): Scene 
   let ball: Scene['ball'] = null;
   if (bag.ballHolder.id.startsWith('@')) {
     const [x, y] = bag.ballHolder.id.slice(1).split(',').map(Number);
-    ball = { x, y, svg: bag.ballHolder.svg, radius: bag.ballHolder.radius, real: bag.ballHolder.real, min: bag.ballHolder.min };
+    ball = heldBall(bag.ballHolder, x, y);
   } else if (bag.ballHolder.id) {
     const carrier = findPlayer(bag.players, bag.ballHolder.id);
-    if (carrier) ball = { x: carrier.x, y: carrier.y, svg: bag.ballHolder.svg, radius: bag.ballHolder.radius, real: bag.ballHolder.real, min: bag.ballHolder.min };
+    if (carrier) ball = heldBall(bag.ballHolder, carrier.x, carrier.y);
   }
   return {
     width: side,
@@ -1186,10 +1511,12 @@ function piecesScene(doc: SchemaDoc, library: Map<string, LibraryEntry>): Scene 
     margin: 0,
     lines: bag.lines,
     drawing: bag.drawings.join(''),
+    ink: bag.ink.join(''),
+    inkBounds: bag.inkBounds,
     zones: [],
     players: bag.players,
     marks: bag.marks,
-    arrows: [],
+    arrows: bag.arrows.map(arrow => trackArrow(library, arrow, Math.max(side, 1), doc)),
     ball,
     phases: []
   };
@@ -1207,10 +1534,24 @@ function spanOf(bag: PlaceBag): number {
   const ys: number[] = [];
   for (const mark of bag.marks) { xs.push(mark.x); ys.push(mark.y); }
   for (const player of bag.players) { xs.push(player.x); ys.push(player.y); }
+  for (const arrow of bag.arrows) {
+    xs.push(arrow.x1, arrow.x2);
+    ys.push(arrow.y1, arrow.y2);
+    for (const spot of arrow.via || []) {
+      if (typeof spot.x === 'number' && typeof spot.y === 'number') {
+        xs.push(spot.x);
+        ys.push(spot.y);
+      }
+    }
+  }
   for (const line of bag.lines) {
     if (line.length < 4) continue;
     xs.push(line[0], line[2]);
     ys.push(line[1], line[3]);
+  }
+  for (const box of bag.inkBounds) {
+    xs.push(box.minX, box.maxX);
+    ys.push(box.minY, box.maxY);
   }
   if (xs.length < 2) return 0;
   return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
@@ -1224,6 +1565,7 @@ function reachOf(bag: PlaceBag): number {
     reach = Math.max(reach, box.maxX - box.minX, box.maxY - box.minY);
   }
   if (bag.players.length) reach = Math.max(reach, playerTokenRadius * 2);
+  for (const box of bag.inkBounds) reach = Math.max(reach, box.maxX - box.minX, box.maxY - box.minY);
   return reach;
 }
 
@@ -1231,26 +1573,66 @@ function stripXml(svg: string): string {
   return svg.replace(/<\?xml[\s\S]*?\?>\s*/, '');
 }
 
+/** Flèche de démonstration, environ 12 m, avec la géométrie du préréglage. */
+function arrowDemo(doc: SchemaDoc, library: Map<string, LibraryEntry>): Scene {
+  const host: SchemaDoc = { ...doc, sizes: doc.sizes ?? { scale: 0 } };
+  const spec = doc.trajectory;
+  return {
+    width: 16,
+    length: 6,
+    margin: 1,
+    lines: [],
+    drawing: '',
+    ink: '',
+    inkBounds: [],
+    zones: [],
+    players: [],
+    marks: [],
+    arrows: [trackArrow(library, {
+      x1: 2, y1: 3, x2: 14, y2: 3,
+      kind: 'pass',
+      ref: 'trajectory',
+      start: 'player',
+      tip: false,
+      via: viaOf(spec?.via),
+      wave: spec?.wave,
+      amp: spec?.amp,
+      phase: spec?.phase,
+      side: spec?.side,
+      taper: spec?.taper,
+      neck: spec?.neck
+    }, 16, host, doc)],
+    ball: null,
+    phases: []
+  };
+}
+
 /** Aperçu d’un élément, selon son identifiant. Le fichier reste la seule copie sur disque. */
 export function elementScene(doc: SchemaDoc, library: Map<string, LibraryEntry>, phase = 0, progress = 0, picks = false): string {
+  if (doc.id === 'arrow' || (doc.id || '').startsWith('arrow.')) return stripXml(renderSvg(arrowDemo(doc, library), picks));
   if (doc.type === 'pitch' || doc.type === 'zone' || doc.type === 'formation' || (hasPitch(doc) && !isComposition(doc))) {
     return stripXml(renderSvg(buildScene(doc, library, phase, progress), picks));
-  }
-  if (isPlayerId(doc.id || '') || isBallId(doc.id || '')) {
-    const host: SchemaDoc = {
-      version: SCHEMA_VERSION,
-      name: 'apercu',
-      margin: 0.6,
-      pitch: { width: 8, length: 8 },
-      object: isPlayerId(doc.id || '')
-        ? [{ player: { name: 8, team: 'blue', x: 4, y: 4 } }]
-        : [{ ball: { x: 4, y: 4 } }]
-    };
-    return stripXml(renderSvg(buildScene(host, library, 0, 0)));
   }
   if (isComposition(doc)) {
     const scene = hasPitch(doc) ? buildScene(doc, library, phase, progress) : piecesScene(doc, library);
     return stripXml(renderSvg(scene, picks, hasPitch(doc)));
+  }
+  if (doc.type === 'sample') {
+    return stripXml(renderSvg({
+      width: 1,
+      length: 1,
+      margin: 0,
+      lines: [],
+      drawing: '',
+      ink: '',
+      inkBounds: [],
+      zones: [],
+      players: [],
+      marks: [],
+      arrows: [],
+      ball: null,
+      phases: []
+    }, picks, false));
   }
   const asset = assetOf(entryOf(library, doc), doc.style || '');
   const box = asset ? parsedBox(asset.viewBox) : null;
@@ -1263,9 +1645,50 @@ export function elementScene(doc: SchemaDoc, library: Map<string, LibraryEntry>,
   const viewBox = drawn?.viewBox || asset?.viewBox || '-1 -1 2 2';
   const [x, y, w, h] = viewBox.trim().split(/[\s,]+/).map(Number);
   const bg = [x, y, w, h].every(Number.isFinite)
-    ? `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#166534"/>`
+    ? `<rect class="fc-ground" x="${x}" y="${y}" width="${w}" height="${h}"/>`
     : '';
-  return `<svg viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg">${bg}${drawn?.markup || asset?.markup || ''}</svg>`;
+  const values: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(doc.params || {})) {
+    if (value !== undefined) values[key] = String(value);
+  }
+  const markup = applyParams(drawn?.markup || asset?.markup || '', values);
+  return `<svg viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg">${bg}${markup}</svg>`;
+}
+
+function knotSpot(role: string, index: number, x: number, y: number, radius: number, stroke: number, fixed: boolean): string {
+  if (fixed) {
+    return `<circle data-role="${role}" data-index="${index}" cx="${x}" cy="${y}" r="0" visibility="hidden" pointer-events="none"/>`;
+  }
+  return `<circle class="fc-handle" data-knot="1" data-role="${role}" data-index="${index}" cx="${x}" cy="${y}" r="${radius}" stroke-width="${stroke}"/>`;
+}
+
+function arrowKnots(arrow: ArrowMark, u: number): string {
+  if (!arrow.ref || arrow.locked || !arrow.line) return '';
+  const radius = (chrome.handle * u * 0.46).toFixed(4);
+  const stroke = (chrome.handle * u * 0.12).toFixed(4);
+  const parts = [
+    knotSpot('start', 0, arrow.x1, arrow.y1, Number(radius), Number(stroke), arrow.start !== 'free')
+  ];
+  (arrow.via || []).forEach((spot, index) => {
+    if (typeof spot.x === 'number' && typeof spot.y === 'number') {
+      parts.push(knotSpot('via', index, spot.x, spot.y, Number(radius), Number(stroke), false));
+    }
+  });
+  parts.push(knotSpot('end', 0, arrow.x2, arrow.y2, Number(radius), Number(stroke), arrow.tip === false));
+  const rel = arrow.relative ? ' data-rel="1"' : '';
+  return `<g data-knots="${escAttr(arrow.ref)}" data-ox="${arrow.ox ?? 0}" data-oy="${arrow.oy ?? 0}" data-sx="${arrow.sx ?? 0}" data-sy="${arrow.sy ?? 0}"${rel} display="none">${parts.join('')}</g>`;
+}
+
+function arrowBody(arrow: ArrowMark, picks: boolean, u: number): string {
+  const drawn = arrow.svg ? `<g>${arrow.svg}</g>` : '';
+  if (!picks || !arrow.ref || arrow.locked) return drawn;
+  const width = Math.max(chrome.handle * u * 2.4, 0.5).toFixed(4);
+  const hit = arrow.line
+    ? `<path data-line="1" d="${escAttr(arrow.line)}" fill="none" stroke="transparent" stroke-width="${width}" stroke-linecap="round" pointer-events="stroke"/>`
+    : '';
+  const wave = typeof arrow.wave === 'number' ? ` data-wave="${arrow.wave}"` : '';
+  const amp = typeof arrow.amp === 'number' ? ` data-amp="${arrow.amp}"` : '';
+  return `<g data-pick="${escAttr(arrow.ref)}" data-kind="arrow" data-ref="${escAttr(arrow.ref)}" data-motif="${arrow.motif || 'none'}"${wave}${amp}>${drawn}${hit}</g>`;
 }
 
 export function renderSvg(scene: Scene, picks = false, ground = true): string {
@@ -1286,13 +1709,12 @@ export function renderSvg(scene: Scene, picks = false, ground = true): string {
   const zones = scene.zones.map(zone => {
     const pick = picks && zone.ref ? ` data-zone="${escAttr(zone.ref)}"` : '';
     const hit = zone.ref ? ' pointer-events="all"' : ' pointer-events="none"';
-    const fill = escAttr(zone.fill || '#ffffff');
+    const paint = zone.fill ? ` style="fill:${escAttr(zone.fill)}"` : '';
     const alpha = zone.alpha ?? 0.06;
-    return `<rect${pick}${hit} x="${zone.x}" y="${zone.y}" width="${zone.w}" height="${zone.h}" fill="${fill}" fill-opacity="${alpha}" stroke="transparent" stroke-width="0.16"/>`;
+    return `<rect class="fc-zone"${pick}${hit}${paint} x="${zone.x}" y="${zone.y}" width="${zone.w}" height="${zone.h}" fill-opacity="${alpha}" stroke="transparent" stroke-width="0.16"/>`;
   }).join('');
-  const lineInk = ground ? '#ffffff' : '#111827';
   const lines = scene.lines.filter(line => line.length >= 4).map(line =>
-    `<line x1="${line[0]}" y1="${line[1]}" x2="${line[2]}" y2="${line[3]}" stroke="${lineInk}" stroke-width="0.18" fill="none"/>`
+    `<line class="fc-line" x1="${line[0]}" y1="${line[1]}" x2="${line[2]}" y2="${line[3]}" stroke-width="0.18" fill="none"/>`
   ).join('');
   const drawing = scene.drawing
     ? `<g transform="translate(${frame.left} ${frame.top})">${scene.drawing}</g>`
@@ -1307,7 +1729,7 @@ export function renderSvg(scene: Scene, picks = false, ground = true): string {
     const shownH = (mark.h || 1) * factor;
     const below = mark.y - shownH / 2 - chrome.titleGap * u;
     const label = mark.title
-      ? `<g transform="translate(${mark.x} ${below}) scale(1 -1)"><text text-anchor="middle" font-size="${(chrome.title * u).toFixed(4)}" font-family="sans-serif" fill="#ffffff">${esc(mark.title)}</text></g>`
+      ? `<g transform="translate(${mark.x} ${below}) scale(1 -1)"><text class="fc-title" text-anchor="middle" font-size="${(chrome.title * u).toFixed(4)}" font-family="sans-serif">${esc(mark.title)}</text></g>`
       : '';
     const ux = (mark.ux ?? 1) * factor;
     const uy = (mark.uy ?? 1) * factor;
@@ -1315,50 +1737,39 @@ export function renderSvg(scene: Scene, picks = false, ground = true): string {
       <g data-draw="1" transform="scale(${ux} ${-uy})">${mark.svg}</g>${frame}
     </g>${label}`;
   }).join('');
-  const arrows = scene.arrows.map(arrow => {
-    const factor = arrow.glyph || 1;
-    if (arrow.svg) {
-      return `<g transform="translate(${arrow.x1} ${arrow.y1}) rotate(${arrow.angle || 0}) scale(${factor})"><g transform="scale(1 -1)">${arrow.svg}</g></g>`;
-    }
-    const ink = (0.22 * factor).toFixed(4);
-    if (arrow.kind === 'dribble') {
-      return `<path d="${wavy(arrow.x1, arrow.y1, arrow.x2, arrow.y2)}" fill="none" stroke="#111827" stroke-width="${ink}"/>`;
-    }
-    const dash = arrow.kind === 'run' ? ` stroke-dasharray="${(0.7 * factor).toFixed(4)} ${(0.45 * factor).toFixed(4)}"` : '';
-    return `<line x1="${arrow.x1}" y1="${arrow.y1}" x2="${arrow.x2}" y2="${arrow.y2}" stroke="#111827" stroke-width="${ink}"${dash} marker-end="url(#arrow)"/>`;
-  }).join('');
+  const arrows = scene.arrows.map(arrow => arrowBody(arrow, picks, u)).join('');
+  const knots = picks ? scene.arrows.map(arrow => arrowKnots(arrow, u)).join('') : '';
   const ballFactor = scene.ball ? glyphFactor(scene.ball.real ?? 0, scene.ball.min, span) : 1;
   const ballRadiusShown = scene.ball ? (scene.ball.radius ?? ballRadius) * ballFactor : ballRadius;
-  const ball = scene.ball ? ballMarkup(scene.ball.x, scene.ball.y, picks, scene.ball.svg, ballRadiusShown) : '';
+  const ballRadiusYShown = scene.ball ? (scene.ball.radiusY ?? scene.ball.radius ?? ballRadius) * ballFactor : ballRadiusShown;
+  const ball = scene.ball ? ballMarkup(scene.ball.x, scene.ball.y, picks, scene.ball.svg, ballRadiusShown, ballRadiusYShown, scene.ball.fit) : '';
   const ballRing = picks && scene.ball?.ref
-    ? `<circle data-pick="${escAttr(scene.ball.ref)}" data-kind="player" cx="${scene.ball.x}" cy="${scene.ball.y}" r="${Math.max(chrome.ballRing * u, ballRadiusShown + chrome.ballPad * u)}" fill="transparent" stroke="transparent" stroke-width="${(chrome.ringStroke * u).toFixed(4)}"/>`
+    ? ring(scene.ball, 'player', Math.max(chrome.ballRing * u, Math.max(ballRadiusShown, ballRadiusYShown) + chrome.ballPad * u), u)
     : '';
   const rings = picks ? scene.players.map(node => {
     const shown = (node.radius ?? playerTokenRadius) * glyphFactor(node.real ?? 0, node.min, span);
     return ring(node, 'player', Math.max(chrome.ring * u, shown + chrome.ringPad * u), u);
   }).join('') : '';
   const meta = picks ? ` data-left="${frame.left}" data-top="${frame.top}" data-length="${scene.length}"` : '';
+  const bare = ground ? '' : ' class="fc-bare"';
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="100%" height="100%"${meta}>
-  <defs>
-    <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-      <path d="M 0 0 L 6 3 L 0 6 z" fill="#111827"/>
-    </marker>
-  </defs>
-  ${ground ? `<rect width="${width}" height="${height}" fill="#166534"/>` : ''}
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="100%" height="100%"${bare}${meta}>
+  ${ground ? `<rect class="fc-ground" width="${width}" height="${height}"/>` : ''}
   <g transform="translate(${frame.left} ${frame.top + scene.length}) scale(1 -1)">
-    ${ground ? `<rect x="0" y="0" width="${scene.width}" height="${scene.length}" fill="#2b6b39"/>` : ''}
+    ${ground ? `<rect class="fc-pitch" x="0" y="0" width="${scene.width}" height="${scene.length}"/>` : ''}
     ${lines}
   </g>
   ${drawing}
   <g transform="translate(${frame.left} ${frame.top + scene.length}) scale(1 -1)">
     ${zones}
+    ${scene.ink}
     ${marks}
     ${arrows}
     ${players}
     ${ball}
-    ${ballRing}
     ${rings}
+    ${ballRing}
+    ${knots}
   </g>
 </svg>`;
 }

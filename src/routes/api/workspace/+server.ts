@@ -6,7 +6,7 @@ import { canonicalIso, frenchDateOrder, longFrenchDate } from '$lib/workspace/ca
 import { applyExerciseDocument, exerciseFolder, folderSlug, isUuidFolder, markdownTitle, orderByIds, orderSessionIndex, orderThemeIndex, splitExerciseRecord } from '$lib/workspace/exerciseFile';
 import { renameToTitle } from '$lib/workspace/renameFolder';
 import { fillTemplate, TEMPLATE_NAMES, type TemplateName } from '$lib/workspace/templates';
-import { coachName, EVALUATIONS_DIR, PLAYERS_DIR, pruneSlots, renameSeasonPlayer, REPERTOIRE_TYPE, seasonPlayerNames, SEASONS_DIR, THEMES_DIR, themeKey, type SeasonPlayer } from '$lib/workspace/catalog';
+import { coachName, EVALUATIONS_DIR, PLAYERS_DIR, pruneSlots, renameSeasonPlayer, REPERTOIRE_TYPE, seasonPlayerNames, SEASONS_DIR, sharedElementPrefix, THEMES_DIR, themeKey, type SeasonPlayer } from '$lib/workspace/catalog';
 
 const root = path.resolve('data');
 const file = path.join(root, 'index.json');
@@ -1078,17 +1078,23 @@ export const POST: RequestHandler = async ({ request }) => {
   }
   if (body.type === 'library') {
     const kind = String(body.kind || '').trim();
-    const name = String(body.name || '').trim();
+    let name = String(body.name || '').trim();
     const nameIssue = directoryIssue(name, kind === 'folder' ? 'répertoire' : 'fichier');
     if (nameIssue) return json({ error: nameIssue }, { status: 400 });
     if (kind !== 'folder' && kind !== 'yaml' && kind !== 'svg') return json({ error: 'Type invalide.' }, { status: 400 });
-    if (kind !== 'folder' && !name.includes('.')) return json({ error: 'Le nom est un chemin pointé, par exemple object.plot.' }, { status: 400 });
     const dirParts = String(body.dir || '').split('/').filter(Boolean);
     if (dirParts.some(part => directoryIssue(part, 'répertoire'))) return json({ error: 'Dossier invalide.' }, { status: 400 });
     const dir = path.resolve(libraryRoot, ...dirParts);
     const home = path.resolve(libraryRoot);
     if (dir !== home && !dir.startsWith(home + path.sep)) return json({ error: 'Dossier invalide.' }, { status: 400 });
     if (dirParts.length && !(await exists(dir))) return json({ error: 'Ce dossier n’existe pas.' }, { status: 404 });
+    if (kind !== 'folder' && !name.includes('.')) {
+      const entries = await readdir(dir, { withFileTypes: true });
+      const files = entries.filter(entry => entry.isFile() && /\.(ya?ml|svg)$/i.test(entry.name)).map(entry => entry.name);
+      const prefix = sharedElementPrefix(files);
+      if (prefix) name = `${prefix}.${name}`;
+    }
+    if (kind !== 'folder' && !name.includes('.')) return json({ error: 'Le nom est un chemin pointé, par exemple object.plot.' }, { status: 400 });
     const ext = kind === 'yaml' ? 'yaml' : 'svg';
     const target = kind === 'folder' ? path.join(dir, name) : path.join(dir, `${name}.${ext}`);
     if (await exists(target)) return json({ error: kind === 'folder' ? 'Ce dossier existe déjà.' : 'Ce fichier existe déjà.' }, { status: 409 });
@@ -1111,7 +1117,8 @@ export const POST: RequestHandler = async ({ request }) => {
 export const PUT: RequestHandler = async () => {
   const current = await readIndex();
   const coach = coachName(current.coach);
-  const next = coach ? { type: 'fccn-workspace:0', coach } : { type: 'fccn-workspace:0' };
+  const { type: _type, coach: _coach, ...rest } = current;
+  const next = { type: 'fccn-workspace:0', ...(coach ? { coach } : {}), ...rest };
   await mkdir(root, { recursive: true });
   await writeFile(file, JSON.stringify(next, null, 2) + '\n');
   return json({ ...next, folder: path.basename(root), categories: await readCategories() });

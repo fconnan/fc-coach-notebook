@@ -35,6 +35,8 @@ export interface SvgAsset {
   stretch?: StretchSpec;
   /** Taille réelle et minimum lisible. Le YAML de l’élément l’emporte sur les attributs du SVG. */
   size?: SizeSpec;
+  /** Étirement à la pose. `ratio` garde les proportions, `free` déforme. Absent : pas de poignées. */
+  fit?: 'ratio' | 'free';
 }
 
 export interface SchemaDoc {
@@ -71,11 +73,31 @@ export interface SchemaDoc {
   stretch?: StretchSpec;
   /** Taille réelle du dessin. Prioritaire sur les attributs data-real du SVG. */
   size?: { real?: { w?: number; h?: number }; min?: number | string };
+  /** Étirement. Prioritaire sur data-fit du SVG. `ratio` garde les proportions, `free` déforme, `none` retire les poignées. */
+  fit?: string;
   /** Affichage des objets de ce schéma. `scale: 0` laisse tout à la taille réelle. */
   sizes?: SizeRules;
   viewBox?: string;
+  /** Ligne médiane et motif d’une flèche. Le mouvement peut les recouvrir. */
+  trajectory?: TrajectorySpec;
+  /** Style du dessin : encre, épaisseur, pointillés. */
+  params?: Record<string, string | number>;
   /** Rendu calculé à la lecture, pour l’icône. Il n’est pas enregistré. */
   preview?: string;
+}
+
+/** Géométrie d’un préréglage de flèche, en mètres. */
+export interface TrajectorySpec {
+  motif?: 'none' | 'sine' | 'zigzag';
+  /** Points de passage du tracé de démonstration. */
+  via?: MarkPoint[];
+  wave?: number;
+  amp?: number;
+  phase?: number;
+  side?: 1 | -1;
+  taper?: number;
+  neck?: number;
+  trim?: number;
 }
 
 export interface CallArgs {
@@ -106,6 +128,8 @@ export interface CallArgs {
   angle?: number;
   /** Minimum lisible de cet objet, en part du grand côté. 5% ou 0. */
   min?: number | string;
+  /** Étirement de cette pose. `ratio` garde les proportions, `free` déforme, `none` retire les poignées. */
+  fit?: string;
   player?: string | number;
   width?: number;
   length?: number;
@@ -116,6 +140,20 @@ export interface CallArgs {
   mirror?: boolean;
   /** Demi-tour autour du centre. 180 échange les extrémités et les côtés. */
   rotate?: number;
+  /** Arrivée d'une flèche posée. */
+  to?: MarkPoint | number[];
+  /** Points de passage d'une flèche, dans l'ordre. Sans point, le trait est droit. */
+  via?: (MarkPoint | number[])[];
+  /** Préréglage de flèche, ou none pour un déplacement sans dessin. */
+  arrow?: string;
+  wave?: number;
+  amp?: number;
+  phase?: number;
+  side?: 1 | -1;
+  taper?: number;
+  neck?: number;
+  dash?: string;
+  ink?: string;
   object?: ItemSpec[];
   shape?: ItemSpec[];
   formation?: ItemSpec[];
@@ -180,6 +218,25 @@ export interface Spot {
   y: number;
 }
 
+/** Trajet d'une flèche. Sans `via`, le trait est la droite du joueur au point d'arrivée. */
+export interface Travel extends Spot {
+  /** Préréglage, par exemple zigzag. `none` dessine rien : le joueur suit quand même le tracé. */
+  arrow?: string;
+  /** Points de passage, dans le repère du terrain. */
+  via?: MarkPoint[];
+  /** Longueur d'onde, en mètres. */
+  wave?: number;
+  /** Amplitude latérale, en mètres. */
+  amp?: number;
+  phase?: number;
+  side?: 1 | -1;
+  taper?: number;
+  neck?: number;
+  width?: number;
+  dash?: string;
+  ink?: string;
+}
+
 export interface PhaseSpec {
   name?: string;
   duration?: number;
@@ -188,10 +245,10 @@ export interface PhaseSpec {
 
 export interface MoveSpec {
   player?: string | number;
-  dribble?: number[] | Spot;
-  run?: number[] | Spot;
+  dribble?: number[] | Travel;
+  run?: number[] | Travel;
   from?: string | number;
-  pass?: string | number | number[] | Spot;
+  pass?: string | number | number[] | Travel;
 }
 
 export interface LibraryEntry {
@@ -232,6 +289,8 @@ export interface PlacedPlayer {
   real?: number;
   /** Minimum lisible déjà multiplié par le facteur du schéma. */
   min?: number;
+  /** Poignées de la sélection. Absent : aucune. */
+  fit?: 'ratio' | 'free';
 }
 
 export interface PlacedMark {
@@ -260,6 +319,8 @@ export interface PlacedMark {
   real?: number;
   /** Minimum lisible déjà multiplié par le facteur du schéma. */
   min?: number;
+  /** Poignées de la sélection. Absent : aucune. */
+  fit?: 'ratio' | 'free';
 }
 
 export interface PlacedZone {
@@ -285,6 +346,43 @@ export interface ArrowMark {
   angle?: number;
   /** Agrandissement d’affichage, appliqué après l’étirement. */
   glyph?: number;
+  /** Préréglage arrow.*, s'il diffère du type de mouvement. `none` ne dessine pas le trait. */
+  arrow?: string;
+  /** Motif résolu : sine et zigzag portent une onde. */
+  motif?: 'none' | 'sine' | 'zigzag';
+  /** Points de passage, dans le repère de la scène. */
+  via?: MarkPoint[];
+  /** Chemin YAML, par exemple `phases/0/moves/1/dribble` ou `object/2/arrow.run`. */
+  ref?: string;
+  /** `player` : le départ est le joueur. `free` : la flèche est posée dans le schéma. */
+  start?: 'player' | 'free';
+  /** Ligne médiane, sans motif, en coordonnées de scène. */
+  line?: string;
+  /** L'arrivée est un joueur : pas de poignée sur la pointe. */
+  tip?: boolean;
+  locked?: boolean;
+  ox?: number;
+  oy?: number;
+  sx?: number;
+  sy?: number;
+  relative?: boolean;
+  wave?: number;
+  amp?: number;
+  phase?: number;
+  side?: 1 | -1;
+  taper?: number;
+  neck?: number;
+  width?: number;
+  dash?: string;
+  ink?: string;
+  /** Joueur qui suit cette ligne médiane. */
+  actor?: string;
+  /** Longueur de la ligne médiane, en mètres. */
+  length?: number;
+  /** Point de la ligne médiane. 1 est la cible. */
+  pointAt?: (fraction: number) => { x: number; y: number };
+  /** Le dessin est déjà en coordonnées de scène. */
+  world?: boolean;
 }
 
 export interface Scene {
@@ -294,11 +392,30 @@ export interface Scene {
   lines: number[][];
   /** Pitch drawing in SVG coordinates, y downward, origin at the top-left of the playing area. */
   drawing: string;
+  /** Tracés SVG simples, en mètres, dans le repère du schéma (Y vers le haut). */
+  ink: string;
+  inkBounds: { minX: number; minY: number; maxX: number; maxY: number }[];
   zones: PlacedZone[];
   players: PlacedPlayer[];
   marks: PlacedMark[];
   arrows: ArrowMark[];
-  ball: { x: number; y: number; svg: string; ref?: string; radius?: number; real?: number; min?: number } | null;
+  ball: {
+    x: number;
+    y: number;
+    svg: string;
+    ref?: string;
+    radius?: number;
+    radiusY?: number;
+    real?: number;
+    fit?: 'ratio' | 'free';
+    min?: number;
+    locked?: boolean;
+    ox?: number;
+    oy?: number;
+    sx?: number;
+    sy?: number;
+    relative?: boolean;
+  } | null;
   phases: { name: string; duration: number }[];
   error?: string;
 }

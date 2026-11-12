@@ -45,6 +45,7 @@ import {
   THEMES_DIR,
   REPERTOIRE_TYPE,
   elementRel,
+  withElementPrefix,
   themeKey,
   type LibraryFileKind,
   type LibraryItem,
@@ -106,6 +107,7 @@ export const seasonSelection = writable<string[] | null>(null);
 export const seasons = writable<SeasonInfo[]>([]);
 export const themes = writable<ThemeInfo[]>([]);
 export const libraryItems = writable<LibraryItem[]>([]);
+export const libraryDraft = writable<{ path: string; kind: Extract<LibraryFileKind, 'yaml' | 'svg'>; source: string } | null>(null);
 export const portraitUrl = writable('');
 export const navDoor = writable<WorkspaceDoor | ''>('');
 export const navArea = writable<WorkspaceArea | ''>('');
@@ -1394,6 +1396,8 @@ export async function openArea(area: WorkspaceArea | '') {
 
 export async function openNavItem(id: string) {
   if (!(await releaseExercise())) return;
+  const draft = get(libraryDraft);
+  if (draft && elementRel(draft.path) !== id) libraryDraft.set(null);
   navItem.set(id);
   navChild.set('');
   navLeaf.set('');
@@ -2105,6 +2109,11 @@ function libraryFolder(): { rel: string } | string {
   return { rel };
 }
 
+function elementDir(rel: string): string {
+  const slash = rel.lastIndexOf('/');
+  return slash === -1 ? '' : rel.slice(0, slash);
+}
+
 function libraryTaken(rel: string): boolean {
   return get(libraryItems).some(item => elementRel(item.path) === rel);
 }
@@ -2132,23 +2141,29 @@ export async function createLibraryItem(fileName: string, kind: Extract<LibraryF
   if (typeof parent === 'string') return parent;
   const issue = directoryNameIssue(fileName, 'fichier');
   if (issue) return issue;
-  const name = fileName.trim();
+  const siblings = get(libraryItems)
+    .filter(item => item.kind !== 'folder' && elementDir(elementRel(item.path)) === parent.rel)
+    .map(item => item.name);
+  const name = withElementPrefix(fileName, siblings);
   if (!name.includes('.')) return 'Le nom est un chemin pointé, par exemple object.plot.';
   const ext = kind === 'yaml' ? 'yaml' : 'svg';
   const rel = [parent.rel, `${name}.${ext}`].filter(Boolean).join('/');
   if (libraryTaken(rel)) return 'Ce fichier existe déjà.';
-  const yaml = `version: fccn-schema:1\n`;
+  const yaml = 'version: fccn-schema:1\n';
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-1 -1 2 2">\n</svg>\n';
-  const source = kind === 'yaml' ? yaml : svg;
-  if (root && await ensureAccess(true)) {
-    const dir = await under(root, ['elements', ...parent.rel.split('/').filter(Boolean)], true);
-    await writeText(dir, `${name}.${ext}`, source);
-  } else {
-    const error = await postShared({ type: 'library', dir: parent.rel, name, kind });
-    if (error) return error;
-  }
-  await reloadBrowse();
+  libraryDraft.set({ path: ['elements', rel].join('/'), kind, source: kind === 'yaml' ? yaml : svg });
   return null;
+}
+
+/** Le fichier vient d'être enregistré : il rejoint la liste et n'est plus un brouillon. */
+export function rememberLibraryFile(file: string) {
+  const kind: LibraryFileKind = /\.svg$/i.test(file) ? 'svg' : 'yaml';
+  const base = file.split('/').pop() || file;
+  const name = base.replace(/\.(ya?ml|svg)$/i, '');
+  libraryItems.update(list => (
+    list.some(item => item.path === file) ? list : [...list, { path: file, name, kind }].sort((a, b) => a.path.localeCompare(b.path, 'fr'))
+  ));
+  if (get(libraryDraft)?.path === file) libraryDraft.set(null);
 }
 
 export async function createExercise(dirName: string, displayName: string): Promise<string | null> {
@@ -2493,7 +2508,7 @@ function resolveChild(area: WorkspaceArea | '', item: string, token: string): st
 function missingItem(area: WorkspaceArea | '', item: string): string {
   if (area === 'themes' && !get(themes).some(theme => theme.id === item)) return 'Ce thème n’existe plus.';
   if (area === 'seasons' && !get(seasons).some(season => season.id === item)) return 'Cette saison n’existe plus.';
-  if (area === 'elements' && item && !get(libraryItems).some(entry => elementRel(entry.path) === item)) return 'Cet élément n’existe plus.';
+  if (area === 'elements' && item && !get(libraryItems).some(entry => elementRel(entry.path) === item) && elementRel(get(libraryDraft)?.path || '') !== item) return 'Cet élément n’existe plus.';
   return '';
 }
 

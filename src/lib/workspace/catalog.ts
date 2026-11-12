@@ -174,6 +174,31 @@ export function elementRel(path: string): string {
   return path.startsWith('elements/') ? path.slice('elements/'.length) : path;
 }
 
+/** Famille d'un fichier : `sample` pour `sample.zones` ou `sample.zones.yaml`, `arrow` pour `arrow.svg`. */
+export function elementFamily(name: string): string {
+  const stem = name.trim().replace(/\.(ya?ml|svg)$/i, '');
+  const dot = stem.indexOf('.');
+  return (dot === -1 ? stem : stem.slice(0, dot)).trim();
+}
+
+/** Préfixe partagé par les fichiers d'un dossier. Vide si les familles diffèrent ou si le dossier est vide. */
+export function sharedElementPrefix(names: string[]): string {
+  const families = new Set<string>();
+  for (const name of names) {
+    const family = elementFamily(name);
+    if (family) families.add(family);
+  }
+  return families.size === 1 ? [...families][0] : '';
+}
+
+/** Ajoute le préfixe du dossier quand le nom n'est pas déjà un chemin pointé. */
+export function withElementPrefix(fileName: string, siblingNames: string[]): string {
+  const name = fileName.trim();
+  if (!name || name.includes('.')) return name;
+  const prefix = sharedElementPrefix(siblingNames);
+  return prefix ? `${prefix}.${name}` : name;
+}
+
 export function areaLabel(id: WorkspaceArea): string {
   return WORKSPACE_AREAS.find(area => area.id === id)?.label || id;
 }

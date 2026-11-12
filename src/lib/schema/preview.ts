@@ -1,6 +1,20 @@
 import { parse } from 'yaml';
 import { buildScene, elementKind, elementScene, libraryFor, renderSvg } from './scene';
-import type { LibraryEntry, SchemaDoc } from './types';
+import type { LibraryEntry, SchemaDoc, TrajectorySpec } from './types';
+
+export interface TrajectoryOverlay {
+  trajectory?: TrajectorySpec;
+  params?: Record<string, string | number>;
+}
+
+function withOverlay(doc: SchemaDoc, overlay?: TrajectoryOverlay): SchemaDoc {
+  if (!overlay) return doc;
+  return {
+    ...doc,
+    trajectory: { ...doc.trajectory, ...overlay.trajectory },
+    params: { ...doc.params, ...overlay.params }
+  };
+}
 
 const DEFAULT_SOURCE = 'version: fccn-schema:1\nname: exercise\npitch: half-attack\n';
 
@@ -28,7 +42,7 @@ function loadLibrary(): Promise<LibraryEntry[]> {
 
 export interface ExercisePreview {
   phases: { name: string; duration: number }[];
-  render: (phase: number, progress: number, picks?: boolean) => string;
+  render: (phase: number, progress: number, picks?: boolean, overlay?: TrajectoryOverlay) => string;
 }
 
 function svgOf(scene: ReturnType<typeof buildScene>, picks = false): string {
@@ -50,7 +64,7 @@ export async function liveElementPreview(source: string, elementId = ''): Promis
   }));
   return {
     phases,
-    render: (phase, progress, picks) => elementScene(doc, names, phase, progress, Boolean(picks))
+    render: (phase, progress, picks, overlay) => elementScene(withOverlay(doc, overlay), names, phase, progress, Boolean(picks))
   };
 }
 
