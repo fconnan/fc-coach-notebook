@@ -134,7 +134,7 @@
     }
     library = body.library || [];
     markdown = markdownDisk = body.markdown || '';
-    yaml = yamlDisk = body.source || 'version: fccn-schema:1\nname: exercise\npitch: half-attack\n';
+    yaml = yamlDisk = body.source || 'version: fccn-schema:1\nsettings:\n  - name: exercise\nitems:\n  - pitch: half-attack\n';
     markdownTouched = false;
     yamlTouched = false;
     loaded = true;

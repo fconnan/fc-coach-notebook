@@ -1,8 +1,11 @@
 import { paintArrow } from './arrowPaint';
 import { fitMode } from './fit';
+import { genreHits, hitsByGenre, plainItems, GENRES, type Genre } from './items';
+import { instanceSetting } from './layout';
 import { ballBeside, ballMarkup, ballRadius, playerTokenRadius } from './ball';
 import { applyParams } from './params';
 import { glyphFactor, realExtent, resolveMin } from './size';
+import { callDefaults, leafOf, paramValues, pickAsset, resolveParams, testOf, type ParamSession } from './parameters';
 import { drawSvg, isSvgTag, type InkBox } from './svgShape';
 import { generateTrajectory, TrajectoryError, type MotifKind } from '$lib/trajectory';
 import type {
@@ -24,6 +27,7 @@ import type {
 } from './types';
 import { SCHEMA_VERSION } from './types';
 import { frameOfSize, hasStretch, stretchSvg, viewBoxOf as parsedBox } from './stretch';
+import { wrapUpright } from './upright';
 
 /** `object.ball.svg` ou `pitch.half-attack.yaml` donne `object.ball`. Un fichier sans point, comme `player.svg` ou `arrow.svg`, est la base d’une famille. Un troisième point, comme `pitch.rect.cross.svg`, reste une variante. */
 export function dottedId(filename: string): string {
@@ -32,9 +36,6 @@ export function dottedId(filename: string): string {
   if (!base || parts.some(part => !part) || parts.length > 2) return '';
   return base;
 }
-
-const GENRES = ['zone', 'formation', 'shape', 'object'] as const;
-type Genre = typeof GENRES[number];
 
 /** Premier segment : object, pitch, shape, formation, zone, player, arrow. */
 export function elementKind(id: string): string {
@@ -160,7 +161,7 @@ function travelOf(value: unknown): Travel | null {
 function placedAt(item: { x?: number; y?: number; at?: unknown; pos?: unknown }): [number, number] | null {
   const pos = pointOf(item.pos);
   if (pos) return pos;
-  if (typeof item.x === 'number' && typeof item.y === 'number') return [item.x, item.y];
+  if (typeof item.x === 'number' || typeof item.y === 'number') return [num(item.x), num(item.y)];
   return pointOf(item.at);
 }
 
@@ -174,13 +175,20 @@ type Unit = SchemaUnit;
 interface Xform {
   mirror: boolean;
   rotate: boolean;
+  /** Origine du document dont on pose les items : en mètres (`x`, `y`) et en part du cadre (`u`, `v`). Le miroir et le demi-tour s’appliquent ensuite. */
+  lift?: { x: number; y: number; u: number; v: number };
 }
 
 const IDENTITY: Xform = { mirror: false, rotate: false };
 
 interface PlaceBag {
   library: Map<string, LibraryEntry>;
-  style: string;
+  /** Arguments des appels englobants, le plus proche d’abord. */
+  parents: Array<Record<string, string>>;
+  /** `defaults` des documents, le plus extérieur d’abord. */
+  docs: Array<Record<string, Record<string, string>>>;
+  /** Paramètres d’affichage, les plus faibles. */
+  session: ParamSession;
   frameLength: number;
   /** Document en cours et son cadre, en mètres. */
   host?: SchemaDoc;
@@ -202,6 +210,7 @@ interface PlaceBag {
     real: number;
     fit?: 'ratio' | 'free';
     min?: number;
+    fixed?: boolean;
     locked?: boolean;
     ox?: number;
     oy?: number;
@@ -211,9 +220,12 @@ interface PlaceBag {
   };
 }
 
-function pitchArgs(doc: SchemaDoc): CallArgs {
-  if (typeof doc.pitch === 'string' || typeof doc.pitch === 'number') return { name: String(doc.pitch) };
-  if (doc.pitch && typeof doc.pitch === 'object') return doc.pitch;
+/** Terrain posé : le premier item `pitch`. */
+function pitchArgs(doc: { items?: ItemSpec[] }): CallArgs {
+  for (const item of plainItems(doc.items)) {
+    const call = callOf(item);
+    if (call?.type === 'pitch') return call.args;
+  }
   return {};
 }
 
@@ -222,10 +234,18 @@ function qualify(kind: string, key: string): string {
   return key.includes('.') ? key : `${kind}.${key}`;
 }
 
-/** Identifiant d’un appel. `object.ball` s’il est dans la bibliothèque, sinon le nom écrit (`player`, `player.red`). */
+/** Identifiant d’un appel. `ball` retrouve `object.ball` s’il est seul à porter ce dernier segment. */
 function callId(genre: string, type: string, library: Map<string, LibraryEntry>): string {
+  if (!type) return '';
+  if (library.has(type)) return type;
   const qualified = qualify(genre, type);
-  return library.has(qualified) ? qualified : type;
+  if (library.has(qualified)) return qualified;
+  const dot = type.lastIndexOf('.');
+  const leaf = dot > 0 ? type.slice(dot + 1) : type;
+  const matches = [...library.keys()].filter(id => id === leaf || id.endsWith(`.${leaf}`));
+  if (matches.length === 1) return matches[0];
+  const same = matches.filter(id => elementKind(id) === genre);
+  return same.length === 1 ? same[0] : type;
 }
 
 function pitchId(args: CallArgs): string {
@@ -237,15 +257,28 @@ function entryOf(library: Map<string, LibraryEntry>, doc: SchemaDoc): LibraryEnt
   return doc.id ? library.get(elementKey(doc.id)) : undefined;
 }
 
-function assetOf(entry: LibraryEntry | undefined, style: string): SvgAsset | undefined {
-  const variants = entry?.svgs || [];
-  if (!variants.length) return undefined;
-  const wanted = style ? variants.find(item => item.style === style) : undefined;
-  return wanted || variants.find(item => !item.style) || variants[0];
+function stringArgs(args: CallArgs): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === 'string' || typeof value === 'number') out[key] = String(value);
+  }
+  return out;
 }
 
-function markupOf(entry: LibraryEntry | undefined, style: string): string {
-  return assetOf(entry, style)?.markup || '';
+function paramsOf(bag: PlaceBag, entry: LibraryEntry | undefined, callType: string, args: CallArgs): Record<string, string> {
+  return resolveParams({
+    entry,
+    library: bag.library,
+    callType,
+    args,
+    parents: bag.parents,
+    docs: bag.docs,
+    session: bag.session
+  });
+}
+
+function faceOf(entry: LibraryEntry | undefined, params: Record<string, string>) {
+  return pickAsset(entry?.svgs, params);
 }
 
 function halfTurn(value: unknown): boolean {
@@ -274,33 +307,41 @@ function callPitchId(args: CallArgs, doc: SchemaDoc | undefined): string {
   return doc ? pitchId(pitchArgs(doc)) : '';
 }
 
+function sameBox(a: Box, b: Box): boolean {
+  return a.every((value, index) => Math.abs(value - b[index]) < 1e-9);
+}
+
 /**
- * Rectangle d’un demi-terrain nommé sur le terrain du document.
+ * Rectangle d’un demi-terrain nommé sur le terrain du document, posé depuis le cadre du document.
+ * La zone du terrain hôte donne la place de l’origine du demi-terrain, dans le repère du terrain hôte.
  * Le demi-tour n’est ajouté que si le sens du fichier et celui de la zone diffèrent.
  */
-function pitchSlot(bag: PlaceBag, doc: SchemaDoc | undefined, args: CallArgs): { x: number; y: number; w: number; h: number; turn: boolean } | null {
+function pitchSlot(bag: PlaceBag, doc: SchemaDoc | undefined, args: CallArgs, parent: Box): { x: number; y: number; w: number; h: number; turn: boolean } | null {
   if (typeof args.w === 'number' && typeof args.h === 'number') return null;
-  if (!bag.host || bag.frame[2] <= 0 || bag.frame[3] <= 0) return null;
+  if (!bag.host || bag.frame[2] <= 0 || bag.frame[3] <= 0 || !sameBox(parent, bag.frame)) return null;
   const targetId = callPitchId(args, doc);
   if (!targetId) return null;
   const hostId = pitchId(pitchArgs(bag.host));
   if (!hostId || hostId === targetId) return null;
-  const zones = resolveElement(bag.library, hostId)?.doc.zone;
-  if (!zones) return null;
+  const hostPitch = resolveElement(bag.library, hostId)?.doc;
+  const zones = zoneCalls(hostPitch);
+  if (!hostPitch || !zones.length) return null;
   for (const item of zones) {
     const call = callOf(item);
     if (!call) continue;
     if (qualify('pitch', call.type) !== targetId) continue;
     const target = resolveElement(bag.library, targetId)?.doc;
     const size = target ? sizeOf(target, bag.library, 0) : null;
-    if (!size) return null;
+    if (!target || !size) return null;
     const written = args.rotate !== undefined || args.mirror !== undefined;
     const from = facingOf(doc, bag.library);
     const to = facingOf(target, bag.library);
     const rel = (call.args.unit || 'meters') === 'relative';
+    const host = pitchOrigin(hostPitch, bag.library);
+    const own = turnSpot(pitchOrigin(target, bag.library), turnOf(call.args), size.width, size.length);
     return {
-      x: num(call.args.x) * (rel ? bag.frame[2] : 1),
-      y: num(call.args.y) * (rel ? bag.frame[3] : 1),
+      x: num(call.args.x) * (rel ? bag.frame[2] : 1) + host.x - own.x,
+      y: num(call.args.y) * (rel ? bag.frame[3] : 1) + host.y - own.y,
       w: size.width,
       h: size.length,
       turn: !written && (from.mirror !== to.mirror || from.rotate !== to.rotate)
@@ -309,12 +350,12 @@ function pitchSlot(bag: PlaceBag, doc: SchemaDoc | undefined, args: CallArgs): {
   return null;
 }
 
-/** Le miroir échange les extrémités. Le demi-tour échange aussi les côtés. Le demi-tour est appliqué d’abord. */
-function turnDrawing(drawing: string, xform: Xform, width: number, length: number): string {
+/** Le miroir échange les extrémités. Le demi-tour échange aussi les côtés. Le demi-tour est appliqué d’abord. Les deux tournent autour du centre du viewBox. */
+function turnDrawing(drawing: string, xform: Xform, width: number, length: number, left = 0, top = 0): string {
   if (!drawing) return '';
   const parts: string[] = [];
-  if (xform.mirror) parts.push(`translate(0 ${length}) scale(1 -1)`);
-  if (xform.rotate) parts.push(`translate(${width} ${length}) scale(-1 -1)`);
+  if (xform.mirror) parts.push(`translate(0 ${2 * top + length}) scale(1 -1)`);
+  if (xform.rotate) parts.push(`translate(${2 * left + width} ${2 * top + length}) scale(-1 -1)`);
   if (!parts.length) return drawing;
   return `<g transform="${parts.join(' ')}">${drawing}</g>`;
 }
@@ -355,8 +396,16 @@ function mapPoint(at: [number, number], box: Box, relative: boolean): [number, n
   return [box[0] + at[0] * box[2], box[1] + at[1] * box[3]];
 }
 
+/** Décalage de l’origine du document, en mètres du cadre. */
+function liftAt(xform: Xform, box: Box, relative: boolean): [number, number] {
+  const lift = xform.lift;
+  if (!lift) return [0, 0];
+  return relative ? [lift.u * box[2], lift.v * box[3]] : [lift.x, lift.y];
+}
+
 function mapLocal(at: [number, number], box: Box, relative: boolean, xform: Xform): [number, number] {
-  const [x, y] = mapPoint(at, box, relative);
+  const [dx, dy] = liftAt(xform, box, relative);
+  const [x, y] = mapPoint(at, [box[0] + dx, box[1] + dy, box[2], box[3]], relative);
   if ((!xform.mirror && !xform.rotate) || box[2] === 0 || box[3] === 0) return [x, y];
   const [u, v] = applyXform((x - box[0]) / box[2], (y - box[1]) / box[3], xform);
   return [box[0] + u * box[2], box[1] + v * box[3]];
@@ -396,9 +445,61 @@ function insetBox(box: Box, edges: Insets): Box | null {
   return [box[0] + edges.left, box[1] + edges.bottom, w, h];
 }
 
+type Spot = { x: number; y: number };
+
+function turnSpot(spot: Spot, xform: Xform, width: number, length: number): Spot {
+  let { x, y } = spot;
+  if (xform.rotate) {
+    x = width - x;
+    y = length - y;
+  }
+  if (xform.mirror) y = length - y;
+  return { x, y };
+}
+
+/** Un terrain, une formation ou un exemple reprend l’origine de son terrain. Un exercice garde le coin bas gauche : ses coordonnées sont déjà écrites ainsi. */
+function inheritsOrigin(doc: SchemaDoc): boolean {
+  return doc.type === 'pitch' || doc.type === 'formation' || doc.type === 'sample';
+}
+
+/** Origine écrite par le document, sinon celle du terrain qu’il reprend, tournée avec lui. En mètres depuis le coin bas gauche. */
+function declaredOrigin(doc: SchemaDoc, library: Map<string, LibraryEntry>, depth = 0): Spot | null {
+  if (depth > 6) return null;
+  const own = doc.origin;
+  if (own && (typeof own.x === 'number' || typeof own.y === 'number')) return { x: num(own.x), y: num(own.y) };
+  if (depth === 0 && !inheritsOrigin(doc)) return null;
+  const args = pitchArgs(doc);
+  const id = pitchId(args);
+  const base = id ? resolveElement(library, id) : undefined;
+  if (!base || base.doc === doc) return null;
+  const inner = declaredOrigin(base.doc, library, depth + 1);
+  if (!inner) return null;
+  const size = sizeOf(base.doc, library, 0);
+  return size ? turnSpot(inner, turnOf(args), size.width, size.length) : inner;
+}
+
+/** Point du terrain qui doit coïncider avec l’origine du document. */
+function pitchOrigin(doc: SchemaDoc, library: Map<string, LibraryEntry>): Spot {
+  return declaredOrigin(doc, library) ?? { x: 0, y: 0 };
+}
+
+/** Les items d’un document partent de son origine. */
+function liftOf(doc: SchemaDoc, library: Map<string, LibraryEntry>): Xform['lift'] {
+  const origin = declaredOrigin(doc, library);
+  if (!origin || (!origin.x && !origin.y)) return undefined;
+  const size = sizeOf(doc, library, 0);
+  return {
+    x: origin.x,
+    y: origin.y,
+    u: size ? origin.x / size.width : 0,
+    v: size ? origin.y / size.length : 0
+  };
+}
+
 function hasPitch(doc: SchemaDoc): boolean {
-  if (typeof doc.pitch === 'string' || typeof doc.pitch === 'number') return String(doc.pitch).length > 0;
-  return Boolean(doc.pitch && typeof doc.pitch === 'object' && (doc.pitch.name || doc.pitch.width || doc.pitch.length));
+  const args = pitchArgs(doc);
+  if (args.name !== undefined && String(args.name).length > 0) return true;
+  return Boolean(args.width || args.length);
 }
 
 function sizeOf(doc: SchemaDoc, library: Map<string, LibraryEntry>, depth: number): { width: number; length: number } | null {
@@ -454,18 +555,41 @@ function markField(source: object, key: string): number {
   return typeof value === 'number' ? value : 0;
 }
 
-/** Origine de l’élément dans le terrain du document. Le repère de l’élément lui-même reste à zéro. */
-function markOrigin(bag: PlaceBag, elementId: string): { x: number; y: number } {
+/** Origine de l’élément dans le repère du document. La zone du terrain hôte donne cette origine dans le repère du terrain hôte. */
+function markOrigin(bag: PlaceBag, elementId: string): Spot {
   const host = bag.host;
   if (!host) return { x: 0, y: 0 };
   const hostId = pitchId(pitchArgs(host));
-  if (!hostId || hostId === elementId) return { x: 0, y: 0 };
-  for (const item of resolveElement(bag.library, hostId)?.doc.zone || []) {
+  const hostPitch = hostId ? resolveElement(bag.library, hostId)?.doc : host;
+  if (!hostPitch) return { x: 0, y: 0 };
+  const there = pitchOrigin(hostPitch, bag.library);
+  const here = pitchOrigin(host, bag.library);
+  const base = { x: there.x - here.x, y: there.y - here.y };
+  if ((hostId || host.id) === elementId) return base;
+  for (const item of zoneCalls(hostPitch)) {
     const call = callOf(item);
     if (!call || qualify('pitch', call.type) !== elementId) continue;
-    return { x: num(call.args.x), y: num(call.args.y) };
+    return { x: base.x + num(call.args.x), y: base.y + num(call.args.y) };
   }
   return { x: 0, y: 0 };
+}
+
+/** Partie nommée d’un élément, dans son repère. Absente, elle vient du terrain repris, retournée avec lui. */
+function namedPart(library: Map<string, LibraryEntry>, id: string, key: string, depth = 0): Record<string, unknown> | undefined {
+  const doc = depth > 6 ? undefined : resolveElement(library, id)?.doc;
+  if (!doc) return undefined;
+  const own = doc.define?.[key] as Record<string, unknown> | undefined;
+  if (own) return own;
+  const args = pitchArgs(doc);
+  const baseId = pitchId(args);
+  if (!baseId || baseId === id) return undefined;
+  const inner = namedPart(library, baseId, key, depth + 1);
+  if (!inner) return undefined;
+  const xform = turnOf(args);
+  const next = { ...inner };
+  if (xform.rotate) next.x = -(markField(inner, 'x') + markField(inner, 'w'));
+  if (xform.rotate !== xform.mirror) next.y = -(markField(inner, 'y') + markField(inner, 'h'));
+  return next;
 }
 
 /** `p`, `s` et `r` remplissent la géométrie. Un nombre absent dans un groupe vaut 0. Un chemin est en mètres. */
@@ -479,7 +603,7 @@ function applyGeometry(args: CallArgs, bag: PlaceBag): CallArgs {
     next.h = markField(args.r, 'h');
   } else if (typeof args.r === 'string') {
     const parts = partPath(args.r);
-    const rect = parts ? resolveElement(bag.library, parts.id)?.doc.r?.[parts.key] : undefined;
+    const rect = parts ? namedPart(bag.library, parts.id, parts.key) : undefined;
     if (parts && rect) {
       const origin = markOrigin(bag, parts.id);
       next.x = origin.x + markField(rect, 'x');
@@ -494,7 +618,7 @@ function applyGeometry(args: CallArgs, bag: PlaceBag): CallArgs {
     next.y = markField(args.c, 'y');
   } else if (!args.r && !args.p && typeof args.c === 'string') {
     const parts = partPath(args.c);
-    const circle = parts ? resolveElement(bag.library, parts.id)?.doc.c?.[parts.key] : undefined;
+    const circle = parts ? namedPart(bag.library, parts.id, parts.key) : undefined;
     if (parts && circle) {
       const origin = markOrigin(bag, parts.id);
       next.x = origin.x + markField(circle, 'x');
@@ -507,7 +631,7 @@ function applyGeometry(args: CallArgs, bag: PlaceBag): CallArgs {
     next.y = markField(args.p, 'y');
   } else if (typeof args.p === 'string') {
     const parts = partPath(args.p);
-    const point = parts ? resolveElement(bag.library, parts.id)?.doc.p?.[parts.key] : undefined;
+    const point = parts ? namedPart(bag.library, parts.id, parts.key) : undefined;
     if (parts && point) {
       const origin = markOrigin(bag, parts.id);
       next.x = origin.x + markField(point, 'x');
@@ -556,22 +680,84 @@ function resolvePercents(markup: string, w: number, h: number): string {
   });
 }
 
-function emitDrawing(entry: LibraryEntry | undefined, style: string, box: Box, xform: Xform, bag: PlaceBag, title = '') {
-  const asset = assetOf(entry, style);
+function emitDrawing(entry: LibraryEntry | undefined, params: Record<string, string>, box: Box, xform: Xform, bag: PlaceBag, title = '') {
+  const asset = faceOf(entry, params);
   if (!asset?.markup || box[2] <= 0 || box[3] <= 0) return;
   const percent = /="[^"]*%"/.test(asset.markup);
-  const markup = applyParams(percent ? resolvePercents(asset.markup, box[2], box[3]) : asset.markup, { title });
+  const values = paintFor(entry, asset, {}, params, bag.library);
+  if (title) values.title = title;
+  const markup = applyParams(percent ? resolvePercents(asset.markup, box[2], box[3]) : asset.markup, values);
   const width = percent ? box[2] : num(entry?.doc.width, 0) || box[2];
   const length = percent ? box[3] : num(entry?.doc.length, 0) || box[3];
   const screenY = bag.frameLength - (box[1] + box[3]);
-  const turned = turnDrawing(markup, xform, width, length);
+  const origin = !percent && entry ? declaredOrigin(entry.doc, bag.library) : null;
+  const left = origin ? -origin.x : 0;
+  const top = origin ? origin.y - length : 0;
+  const turned = turnDrawing(markup, xform, width, length, left, top);
+  const fixed = asset.fixed ? ' data-fixed="1"' : '';
   bag.drawings.push(
-    `<svg x="${box[0]}" y="${screenY}" width="${box[2]}" height="${box[3]}" viewBox="0 0 ${width} ${length}" overflow="visible">${turned}</svg>`
+    `<svg x="${box[0]}" y="${screenY}" width="${box[2]}" height="${box[3]}" viewBox="${left} ${top} ${width} ${length}" overflow="visible"${fixed}>${turned}</svg>`
   );
 }
 
-function listsOf(doc: { object?: ItemSpec[]; shape?: ItemSpec[]; formation?: ItemSpec[]; zone?: ItemSpec[] }): Record<Genre, ItemSpec[] | undefined> {
-  return { zone: doc.zone, formation: doc.formation, shape: doc.shape, object: doc.object };
+function zoneCalls(doc: { items?: ItemSpec[]; zone?: ItemSpec[] } | undefined): ItemSpec[] {
+  return genreHits(doc).filter(hit => hit.genre === 'zone').map(hit => hit.item);
+}
+
+function settingNames(id: string, callType: string): string[] {
+  const names: string[] = [];
+  const add = (key: string) => {
+    if (key && !names.includes(key)) names.push(key);
+  };
+  add(callType);
+  add(id);
+  const cut = (key: string) => {
+    const dot = key.lastIndexOf('.');
+    if (dot > 0) add(key.slice(dot + 1));
+    add(key.split('.')[0] || '');
+  };
+  cut(id);
+  cut(callType);
+  return names;
+}
+
+function readSetting(key: string, args: CallArgs, bag: PlaceBag, id: string, callType: string): unknown {
+  return instanceSetting(key, args as unknown as Record<string, unknown>, bag.docs, settingNames(id, callType));
+}
+
+function posedAsset(asset: SvgAsset | undefined, args: CallArgs, bag: PlaceBag, id: string, callType: string): SvgAsset | undefined {
+  if (!asset) return asset;
+  const read = (key: string) => readSetting(key, args, bag, id, callType);
+  let size = asset.size ? { ...asset.size } : undefined;
+  let stretch = asset.stretch ? { ...asset.stretch } : undefined;
+  let upright = asset.upright;
+  let fixed = asset.fixed;
+  const realW = read('real-w');
+  const realH = read('real-h');
+  if (realW !== undefined || realH !== undefined) {
+    const w = realW !== undefined ? Number(realW) : size?.realW;
+    const h = realH !== undefined ? Number(realH) : size?.realH;
+    size = {
+      ...size,
+      realW: typeof w === 'number' && Number.isFinite(w) ? w : size?.realW,
+      realH: typeof h === 'number' && Number.isFinite(h) ? h : size?.realH
+    };
+  }
+  const sx = read('stretch-x');
+  const sy = read('stretch-y');
+  if (sx !== undefined || sy !== undefined) {
+    stretch = {
+      x: typeof sx === 'string' && sx.trim() ? sx : stretch?.x,
+      y: typeof sy === 'string' && sy.trim() ? sy : stretch?.y
+    };
+  }
+  const up = read('upright');
+  if (Array.isArray(up)) upright = up.filter((item): item is string => typeof item === 'string');
+  else if (typeof up === 'string' && up.trim()) upright = up.trim().split(/\s+/);
+  const held = read('fixed');
+  if (held === true || held === 'true') fixed = true;
+  else if (held === false || held === 'false') fixed = undefined;
+  return { ...asset, size, stretch, upright, fixed };
 }
 
 function areaMode(id: string): 'full' | 'content' {
@@ -584,20 +770,41 @@ function fillsParent(id: string): boolean {
   return kind === 'formation' || kind === 'zone' || kind === 'shape';
 }
 
-function isComposition(doc: SchemaDoc): boolean {
-  if (doc.type === 'pitch' || doc.type === 'zone' || isPlayerId(doc.id || '') || isBallId(doc.id || '')) return false;
-  return Boolean(doc.object?.length || doc.shape?.length || doc.formation?.length || doc.zone?.length || doc.outline);
+function linkedCall(doc: { items?: ItemSpec[] }): { type: string; args: CallArgs } | null {
+  const items = plainItems(doc.items).filter(item => callOf(item)?.type !== 'svg');
+  if (items.length !== 1) return null;
+  const call = callOf(items[0]);
+  if (!call || isSvgTag(call.type)) return null;
+  const args = call.args;
+  if (args.x !== undefined || args.y !== undefined || args.p !== undefined || args.w !== undefined || args.h !== undefined) return null;
+  return call;
 }
 
-/** Flag de la pose : l’argument l’emporte, puis le YAML de l’élément, puis le SVG. Un dessin à bandes est déformable. */
-function placedFit(args: CallArgs, doc: SchemaDoc | undefined, asset: SvgAsset | undefined): 'ratio' | 'free' | undefined {
+function isInheritance(doc: { items?: ItemSpec[] }, call: { type: string; args: CallArgs }): boolean {
+  const link = linkedCall(doc);
+  if (!link || link.type !== call.type) return false;
+  const args = call.args;
+  return args.x === undefined && args.y === undefined && args.p === undefined && args.w === undefined && args.h === undefined;
+}
+
+function isComposition(doc: SchemaDoc): boolean {
+  if (doc.type === 'pitch' || doc.type === 'zone' || isPlayerId(doc.id || '') || isBallId(doc.id || '')) return false;
+  const content = genreHits(doc).filter(hit => {
+    const call = callOf(hit.item);
+    return Boolean(call && call.type !== 'svg' && !isInheritance(doc, call));
+  });
+  return Boolean(content.length || doc.outline);
+}
+
+/** Flag de la pose : l’argument, puis `defaults`, puis le YAML de l’élément, puis le SVG. Un dessin à bandes est déformable. */
+function placedFit(args: CallArgs, doc: SchemaDoc | undefined, asset: SvgAsset | undefined, chosen?: unknown): 'ratio' | 'free' | undefined {
   const written = (value: unknown) => value !== undefined && String(value).trim() !== '';
-  const raw = written(args.fit) ? args.fit : written(doc?.fit) ? doc?.fit : asset?.fit;
+  const raw = written(chosen) ? chosen : written(doc?.fit) ? doc?.fit : asset?.fit;
   if (written(raw)) {
     const mode = fitMode(raw);
     return mode === 'none' ? undefined : mode;
   }
-  if (hasStretch(doc?.stretch) || hasStretch(asset?.stretch)) return 'free';
+  if (hasStretch(asset?.stretch)) return 'free';
   return undefined;
 }
 
@@ -608,9 +815,11 @@ function meterOf(value: number | undefined, relative: boolean, span: number): nu
 
 function placeBall(args: CallArgs, box: Box, local: Unit, xform: Xform, bag: PlaceBag, ref: string | undefined, own: boolean) {
   const def = resolveElement(bag.library, 'object.ball');
-  const svg = markupOf(def, String(args.style || bag.style || ''));
+  const params = paramsOf(bag, def, 'ball', args);
+  const id = def?.id || 'object.ball';
+  const asset = posedAsset(faceOf(def, params), args, bag, id, 'ball');
+  const svg = asset?.markup || '';
   if (svg) bag.ballHolder.svg = svg;
-  const asset = assetOf(def, String(args.style || bag.style || ''));
   const extent = realExtent(asset?.size, parsedBox(asset?.viewBox || ''));
   const declared = Boolean(asset?.size?.realW || asset?.size?.realH);
   const diameter = declared ? extent.w : ballRadius * 2;
@@ -620,9 +829,10 @@ function placeBall(args: CallArgs, box: Box, local: Unit, xform: Xform, bag: Pla
   const ry = Math.max(0.025, height !== undefined ? height / 2 : diameter / 2);
   bag.ballHolder.radius = rx;
   bag.ballHolder.radiusY = ry;
-  bag.ballHolder.fit = placedFit(args, def?.doc, asset);
+  bag.ballHolder.fit = placedFit(args, def?.doc, asset, readSetting('fit', args, bag, id, 'ball'));
   bag.ballHolder.real = Math.max(rx, ry) * 2;
-  bag.ballHolder.min = resolveMin(bag.host?.sizes, def?.id || 'object.ball', asset?.size?.min, args.min);
+  bag.ballHolder.min = resolveMin(bag.host?.sizes, id, asset?.size?.min, readSetting('min-size', args, bag, id, 'ball'));
+  bag.ballHolder.fixed = asset?.fixed;
   const at = placedAt(args);
   const meta = spotMeta(ref, own && Boolean(at), box, local === 'relative', xform);
   if (meta.ref) {
@@ -657,6 +867,7 @@ function heldBall(holder: PlaceBag['ballHolder'], x: number, y: number): NonNull
     fit: holder.fit,
     real: holder.real,
     min: holder.min,
+    fixed: holder.fixed,
     locked: holder.locked,
     ox: holder.ox,
     oy: holder.oy,
@@ -676,11 +887,12 @@ function spotMeta(ref: string | undefined, own: boolean, box: Box, relative: boo
   relative?: boolean;
 } {
   if (!ref) return {};
+  const [dx, dy] = liftAt(xform, box, relative);
   return {
     ref,
     locked: !own || xform.mirror || xform.rotate,
-    ox: box[0],
-    oy: box[1],
+    ox: box[0] + dx,
+    oy: box[1] + dy,
     sx: box[2],
     sy: box[3],
     relative
@@ -738,53 +950,66 @@ function placeArrow(id: string, args: CallArgs, box: Box, unit: Unit, xform: Xfo
   });
 }
 
-function placePoint(id: string, args: CallArgs, box: Box, unit: Unit, xform: Xform, bag: PlaceBag, ref: string | undefined, own: boolean, team: string, corners: [number, number][]) {
+const PAINT_KEYS = ['fill', 'ink', 'line', 'dash', 'width', 'stroke'];
+
+function paintFor(entry: LibraryEntry | undefined, asset: SvgAsset | undefined, args: CallArgs, params: Record<string, string>, library: Map<string, LibraryEntry>): Record<string, string | undefined> {
+  const values: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(asset?.params || {})) values[key] = String(value);
+  for (const [key, value] of Object.entries(paramValues(entry, params, library))) values[key] = value;
+  const bag = args as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(values), ...PAINT_KEYS, 'name', 'title'])) {
+    const value = bag[key];
+    if (typeof value === 'string' || typeof value === 'number') values[key] = String(value);
+  }
+  return values;
+}
+
+function placePoint(id: string, callType: string, args: CallArgs, box: Box, unit: Unit, xform: Xform, bag: PlaceBag, ref: string | undefined, own: boolean, corners: [number, number][]) {
   const local = args.unit || unit;
   const def = resolveElement(bag.library, id);
   if (isBallId(id) || isBallId(def?.id || '')) {
     placeBall(args, box, local, xform, bag, ref, own);
     return;
   }
-  const at = placedAt(args);
-  if (!at) return;
+  const at = placedAt(args) ?? [0, 0];
   const spot = mapLocal(at, box, local === 'relative', xform);
   const meta = spotMeta(ref, own, box, local === 'relative', xform);
-  const asset = assetOf(def, String(args.style || bag.style || ''));
+  const params = paramsOf(bag, def, callType, args);
+  const asset = posedAsset(faceOf(def, params), args, bag, id, callType);
   const sourceBox = parsedBox(asset?.viewBox || '');
   const extent = realExtent(asset?.size, sourceBox);
   const givenW = meterOf(args.w, local === 'relative', box[2]);
   const givenH = meterOf(args.h, local === 'relative', box[3]);
   if (isPlayerId(id) || isPlayerId(def?.id || '')) {
-    const leaf = id.startsWith('player.') ? id.slice('player.'.length) : '';
-    const side = String(args.team || leaf || team || 'blue');
-    const painted = resolveElement(bag.library, `player.${side}`) || resolveElement(bag.library, 'player') || def;
-    const style = String(args.style || bag.style || '');
-    const face = assetOf(painted, style);
+    const face = asset;
     const faceExtent = realExtent(face?.size, parsedBox(face?.viewBox || ''));
     const sx = givenW !== undefined ? Math.max(givenW / faceExtent.w, 0.05) : 1;
     const sy = givenH !== undefined ? Math.max(givenH / faceExtent.h, 0.05) : 1;
-    const values: Record<string, string | undefined> = {};
-    for (const [key, value] of Object.entries(painted?.doc.params || {})) {
-      if (value !== undefined) values[key] = String(value);
-    }
+    const values = paintFor(def, face, args, params, bag.library);
     values.name = idOf(args.name);
+    const side = params.team || '';
     bag.players.push({
       id: `${side}:${idOf(args.name)}`,
       team: side,
       x: spot[0],
       y: spot[1],
-      svg: applyParams(markupOf(painted, style), values),
+      angle: num(args.angle) + (xform.mirror ? 180 : 0) + (xform.rotate ? 180 : 0),
+      element: def?.id || id,
+      params,
+      svg: applyParams(face?.markup || '', values),
       ux: faceExtent.ux * sx,
       uy: faceExtent.uy * sy,
       radius: playerTokenRadius * faceExtent.ux * Math.max(sx, sy),
       real: Math.max(faceExtent.w * sx, faceExtent.h * sy),
-      min: resolveMin(bag.host?.sizes, 'player', face?.size?.min, args.min),
-      fit: placedFit(args, painted?.doc, face),
+      min: resolveMin(bag.host?.sizes, 'player', face?.size?.min, readSetting('min-size', args, bag, id, callType)),
+      fit: placedFit(args, def?.doc, face, readSetting('fit', args, bag, id, callType)),
+      upright: face?.upright,
+      fixed: face?.fixed,
       ...meta
     });
     return;
   }
-  const markup = markupOf(def, String(args.style || bag.style || ''));
+  const markup = applyParams(asset?.markup || '', paintFor(def, asset, args, params, bag.library));
   if (!markup) return;
   const presetW = num(def?.doc.width, 0);
   const presetH = num(def?.doc.length, 0);
@@ -793,7 +1018,7 @@ function placePoint(id: string, args: CallArgs, box: Box, unit: Unit, xform: Xfo
   const rules = hasStretch(asset?.stretch);
   let svg = markup;
   if (asset && sourceBox && widthM && heightM && (rules || givenW !== undefined || givenH !== undefined)) {
-    const drawn = stretchSvg(asset, widthM / extent.ux, heightM / extent.uy);
+    const drawn = stretchSvg({ ...asset, markup }, widthM / extent.ux, heightM / extent.uy);
     svg = rules
       ? `<g data-mold="1" display="none">${markup}</g><g data-ink="1">${drawn.markup}</g>`
       : drawn.markup;
@@ -802,6 +1027,8 @@ function placePoint(id: string, args: CallArgs, box: Box, unit: Unit, xform: Xfo
     svg,
     x: spot[0],
     y: spot[1],
+    element: def?.id || id,
+    params,
     angle: num(args.angle) + (xform.mirror ? 180 : 0) + (xform.rotate ? 180 : 0),
     title: args.title === undefined ? undefined : String(args.title),
     w: widthM,
@@ -811,8 +1038,10 @@ function placePoint(id: string, args: CallArgs, box: Box, unit: Unit, xform: Xfo
     ux: extent.ux,
     uy: extent.uy,
     real: widthM && heightM ? Math.max(widthM, heightM) : undefined,
-    min: resolveMin(bag.host?.sizes, def?.id || id, asset?.size?.min, args.min),
-    fit: placedFit(args, def?.doc, asset),
+    min: resolveMin(bag.host?.sizes, def?.id || id, asset?.size?.min, readSetting('min-size', args, bag, id, callType)),
+    fit: placedFit(args, def?.doc, asset, readSetting('fit', args, bag, id, callType)),
+    upright: asset?.upright,
+    fixed: asset?.fixed,
     ...meta
   });
   corners.push(spot);
@@ -842,8 +1071,48 @@ function zoneWash(args: CallArgs, group: boolean): { fill: string; alpha: number
   return { fill, alpha };
 }
 
+/**
+ * `x` et `y` d’un élément posé partent de l’origine du document hôte et visent l’origine de l’élément.
+ * Le cadre se calcule ensuite depuis son coin bas gauche.
+ */
+function seatArgs(args: CallArgs, xform: Xform, unit: Unit, parent: Box, child: SchemaDoc | undefined, intrinsic: { width: number; length: number } | null, library: Map<string, LibraryEntry>): CallArgs {
+  const sized = typeof args.w === 'number' && typeof args.h === 'number';
+  const lift = xform.lift;
+  let dx = 0;
+  let dy = 0;
+  if (lift) {
+    const relative = unit === 'relative';
+    if (sized) {
+      dx = relative ? lift.u : lift.x;
+      dy = relative ? lift.v : lift.y;
+    } else {
+      [dx, dy] = liftAt(xform, parent, relative);
+    }
+  }
+  const origin = child ? declaredOrigin(child, library) : null;
+  const size = child && origin ? sizeOf(child, library, 0) : null;
+  if (origin && size) {
+    const own = turnSpot(origin, turnOf(args), size.width, size.length);
+    const u = own.x / size.width;
+    const v = own.y / size.length;
+    if (sized) {
+      dx -= u * (args.w as number);
+      dy -= v * (args.h as number);
+    } else if (typeof args.width === 'number' && typeof args.length === 'number') {
+      dx -= u * args.width;
+      dy -= v * args.length;
+    } else if (intrinsic) {
+      dx -= u * intrinsic.width;
+      dy -= v * intrinsic.length;
+    }
+  }
+  if (!dx && !dy) return args;
+  return { ...args, x: num(args.x) + dx, y: num(args.y) + dy };
+}
+
 function placeCall(
   id: string,
+  callType: string,
   args: CallArgs,
   parent: Box,
   unit: Unit,
@@ -853,7 +1122,7 @@ function placeCall(
   depth: number,
   ref: string | undefined,
   own: boolean,
-  team: string
+  seat = true
 ) {
   if (depth > 8 || !id) return;
   const kind = elementKind(id);
@@ -861,12 +1130,12 @@ function placeCall(
   if (kind === 'object' || isPlayerId(id) || isBallId(id) || isArrowId(id)) {
     const scene = transformBox(parent, parent, parentXform);
     if (isArrowId(id)) placeArrow(id, args, scene, local, parentXform, bag, ref, own);
-    else placePoint(id, args, scene, local, parentXform, bag, ref, own, args.team || team, []);
+    else placePoint(id, callType, args, scene, local, parentXform, bag, ref, own, []);
     return;
   }
   const def = resolveElement(bag.library, id);
   const inset = fillsParent(id);
-  const slot = inset ? pitchSlot(bag, def?.doc, args) : null;
+  const slot = inset ? pitchSlot(bag, def?.doc, args, parent) : null;
   const intrinsic = !inset && def ? sizeOf(def.doc, bag.library, 0) : null;
   const along = slot ? bag.frame : parent;
   const placed = slot
@@ -877,14 +1146,14 @@ function placeCall(
         w: slot.w,
         h: slot.h
       }
-    : args;
+    : seat ? seatArgs(args, parentXform, local, parent, inset ? undefined : def?.doc, intrinsic, bag.library) : args;
   const boxes = boxOf(placed, along, slot ? 'meters' : local, intrinsic, inset);
   if (!boxes) return;
   const border = transformBox(boxes.border, along, parentXform);
   const content = transformBox(boxes.content, along, parentXform);
   let xform = compose(parentXform, turnOf(args));
   if (slot?.turn) xform = compose(xform, { mirror: false, rotate: true });
-  const group = kind === 'zone' && Boolean(def?.doc.zone?.length);
+  const group = kind === 'zone' && zoneCalls(def?.doc).length > 0;
   if (kind === 'zone' && ((own && ref) || !group)) {
     const wash = zoneWash(args, group);
     bag.zones.push({
@@ -898,35 +1167,43 @@ function placeCall(
       ref: own ? ref : undefined
     });
   }
-  if (mode === 'full' && def) {
-    emitDrawing(def, String(args.style || def.doc.style || bag.style || ''), border, xform, bag, args.title === undefined ? '' : String(args.title));
-    const nested = pitchArgs(def.doc);
-    const nestedId = pitchId(nested);
-    if (nestedId && nestedId !== id) {
-      const folded = compose(xform, turnOf(nested));
-      placeCall(nestedId, {
-        ...nested,
-        x: 0,
-        y: 0,
-        w: border[2],
-        h: border[3],
-        unit: 'meters',
-        mirror: folded.mirror,
-        rotate: folded.rotate ? 180 : 0
-      }, border, 'meters', IDENTITY, 'full', bag, depth + 1, undefined, false, team);
+  bag.docs.push(callDefaults(def?.doc));
+  bag.parents.unshift(stringArgs(args));
+  try {
+    const params = paramsOf(bag, def, callType, args);
+    if (mode === 'full' && def) {
+      emitDrawing(def, params, border, xform, bag, args.title === undefined ? '' : String(args.title));
+      const nested = pitchArgs(def.doc);
+      const nestedId = pitchId(nested);
+      if (nestedId && nestedId !== id) {
+        const folded = compose(xform, turnOf(nested));
+        placeCall(nestedId, 'pitch', {
+          ...nested,
+          x: 0,
+          y: 0,
+          w: border[2],
+          h: border[3],
+          unit: 'meters',
+          mirror: folded.mirror,
+          rotate: folded.rotate ? 180 : 0
+        }, border, 'meters', IDENTITY, 'full', bag, depth + 1, undefined, false, false);
+      }
     }
-  }
-  const ink = inkOf(args);
-  if (def) {
-    placeLists(def.doc, content, inheritedUnit(def.doc), xform, bag, depth + 1, undefined, ref, args.team || team, ink);
-  }
-  if (own && ref) {
-    placeLists(args, content, local, xform, bag, depth + 1, `${ref}/`, undefined, args.team || team, ink);
+    const ink = inkOf(args);
+    if (def) {
+      placeLists(def.doc, content, inheritedUnit(def.doc), { ...xform, lift: liftOf(def.doc, bag.library) }, bag, depth + 1, undefined, ref, params, ink);
+    }
+    if (own && ref) {
+      placeLists(args, content, local, xform, bag, depth + 1, `${ref}/`, undefined, params, ink);
+    }
+  } finally {
+    bag.parents.shift();
+    bag.docs.pop();
   }
 }
 
 function placeLists(
-  doc: { object?: ItemSpec[]; shape?: ItemSpec[]; formation?: ItemSpec[]; zone?: ItemSpec[]; outline?: boolean },
+  doc: { items?: ItemSpec[]; object?: ItemSpec[]; shape?: ItemSpec[]; formation?: ItemSpec[]; zone?: ItemSpec[]; outline?: boolean },
   box: Box,
   unit: Unit,
   xform: Xform,
@@ -934,37 +1211,46 @@ function placeLists(
   depth: number,
   basePath: string | undefined,
   anchor: string | undefined,
-  team: string,
+  params: Record<string, string>,
   ink?: ZoneInk
 ) {
   const corners: [number, number][] = [];
-  const lists = listsOf(doc);
+  const grouped = hitsByGenre(doc, basePath ?? '');
+  const placeItem = (genre: Genre, item: ItemSpec, ref: string | undefined, editable: boolean) => {
+    const test = testOf(item);
+    if (test) {
+      const body = item[test.raw];
+      if (params[test.key] !== test.value || !Array.isArray(body)) return;
+      for (const child of body as ItemSpec[]) placeItem(genre, child, ref, false);
+      return;
+    }
+    const call = callOf(item);
+    if (!call || call.type === 'pitch' || call.type === 'svg') return;
+    const painted = applyGeometry(withInk(call.args, ink), bag);
+    const id = callId(genre, call.type, bag.library);
+    const ownRef = editable && basePath !== undefined ? ref : anchor;
+    const own = editable && basePath !== undefined;
+    if (isSvgTag(call.type) && (genre === 'object' || !bag.library.has(id))) {
+      const drawn = drawSvg(call.type, item[call.type], (x, y) => mapLocal([x, y], box, unit === 'relative', xform), own && ownRef ? ownRef : '');
+      if (drawn) {
+        bag.ink.push(drawn.markup);
+        bag.inkBounds.push(drawn.box);
+      }
+      return;
+    }
+    if (isInheritance(doc, call)) return;
+    const kind = elementKind(id);
+    if (kind === 'zone' && painted.title === undefined && ink?.title) painted.title = ink.title;
+    if (kind === 'object' || isPlayerId(id) || isBallId(id) || isArrowId(id)) {
+      const scene = transformBox(box, box, xform);
+      if (isArrowId(id)) placeArrow(id, painted, scene, painted.unit || unit, xform, bag, ownRef, own);
+      else placePoint(id, call.type, painted, scene, painted.unit || unit, xform, bag, ownRef, own, corners);
+      return;
+    }
+    placeCall(id, call.type, painted, box, unit, xform, areaMode(id), bag, depth + 1, ownRef, own);
+  };
   for (const genre of GENRES) {
-    (lists[genre] || []).forEach((item, index) => {
-      const call = callOf(item);
-      if (!call) return;
-      const painted = applyGeometry(withInk(call.args, ink), bag);
-      const id = callId(genre, call.type, bag.library);
-      const ref = basePath !== undefined ? `${basePath}${genre}/${index}/${call.type}` : anchor;
-      const own = basePath !== undefined;
-      if (isSvgTag(call.type)) {
-        const drawn = drawSvg(call.type, item[call.type], (x, y) => mapLocal([x, y], box, unit === 'relative', xform), own && ref ? ref : '');
-        if (drawn) {
-          bag.ink.push(drawn.markup);
-          bag.inkBounds.push(drawn.box);
-        }
-        return;
-      }
-      const kind = elementKind(id);
-      if (kind === 'zone' && painted.title === undefined && ink?.title) painted.title = ink.title;
-      if (kind === 'object' || isPlayerId(id) || isBallId(id) || isArrowId(id)) {
-        const scene = transformBox(box, box, xform);
-        if (isArrowId(id)) placeArrow(id, painted, scene, painted.unit || unit, xform, bag, ref, own);
-        else placePoint(id, painted, scene, painted.unit || unit, xform, bag, ref, own, painted.team || team, corners);
-        return;
-      }
-      placeCall(id, painted, box, unit, xform, areaMode(id), bag, depth + 1, ref, own, painted.team || team);
-    });
+    for (const hit of grouped[genre]) placeItem(genre, hit.item, hit.ref, true);
   }
   if (doc.outline && corners.length >= 2) {
     const last = corners.length === 2 ? 1 : corners.length;
@@ -978,24 +1264,32 @@ function placeLists(
 
 function placeDocument(doc: SchemaDoc, box: Box, xform: Xform, mode: 'full' | 'content', bag: PlaceBag, depth: number, own: boolean) {
   if (depth > 8) return;
-  if (mode === 'full') {
-    emitDrawing(entryOf(bag.library, doc), doc.style || bag.style, box, xform, bag);
-    const args = pitchArgs(doc);
-    const id = pitchId(args);
-    if (id) {
-      const { margin: _margin, width: _width, length: _length, w: _w, h: _h, x: _x, y: _y, ...rest } = args;
-      placeCall(id, { ...rest, x: 0, y: 0, w: box[2], h: box[3], unit: 'meters' }, box, 'meters', xform, 'full', bag, depth + 1, undefined, false, 'blue');
+  const self = entryOf(bag.library, doc);
+  bag.docs.push(callDefaults(doc));
+  try {
+    const params = paramsOf(bag, self, leafOf(doc.id), {});
+    if (mode === 'full') {
+      emitDrawing(self, params, box, xform, bag);
+      const args = pitchArgs(doc);
+      const id = pitchId(args);
+      if (id) {
+        const { margin: _margin, width: _width, length: _length, w: _w, h: _h, x: _x, y: _y, ...rest } = args;
+        placeCall(id, 'pitch', { ...rest, x: 0, y: 0, w: box[2], h: box[3], unit: 'meters' }, box, 'meters', xform, 'full', bag, depth + 1, undefined, false, false);
+      }
     }
+    placeLists(doc, box, inheritedUnit(doc), { ...xform, lift: liftOf(doc, bag.library) }, bag, depth, own ? '' : undefined, undefined, params);
+  } finally {
+    bag.docs.pop();
   }
-  placeLists(doc, box, inheritedUnit(doc), xform, bag, depth, own ? '' : undefined, undefined, 'blue');
 }
 
 /** Une passe sans ballon posé reprend le dessin du ballon. S'il n'a pas de taille propre, il reste lisible à côté du jeton : environ la moitié de son rayon. */
 function primeBall(bag: PlaceBag) {
   if (bag.ballHolder.id) return;
   const def = resolveElement(bag.library, 'object.ball');
-  const asset = assetOf(def, bag.style || '');
-  const svg = markupOf(def, bag.style || '');
+  const params = paramsOf(bag, def, 'ball', {});
+  const asset = faceOf(def, params);
+  const svg = asset?.markup || '';
   if (svg) bag.ballHolder.svg = svg;
   const extent = realExtent(asset?.size, parsedBox(asset?.viewBox || ''));
   const declared = Boolean(asset?.size?.realW || asset?.size?.realH);
@@ -1013,10 +1307,12 @@ function primeBall(bag: PlaceBag) {
   if (share > (bag.ballHolder.min ?? 0)) bag.ballHolder.min = share;
 }
 
-function emptyBag(library: Map<string, LibraryEntry>, style: string, frameLength: number): PlaceBag {
+function emptyBag(library: Map<string, LibraryEntry>, frameLength: number, session: ParamSession = {}): PlaceBag {
   return {
     library,
-    style,
+    parents: [],
+    docs: [],
+    session,
     frameLength,
     frame: [0, 0, 0, 0],
     players: [],
@@ -1031,7 +1327,7 @@ function emptyBag(library: Map<string, LibraryEntry>, style: string, frameLength
   };
 }
 
-function cornerMarks(width: number, length: number, boundary: string, library: Map<string, LibraryEntry>, style: string): PlacedMark[] {
+function cornerMarks([left, bottom, width, length]: Box, boundary: string, library: Map<string, LibraryEntry>): PlacedMark[] {
   if (!boundary) return [];
   let entry: LibraryEntry | undefined;
   for (const item of library.values()) {
@@ -1040,9 +1336,11 @@ function cornerMarks(width: number, length: number, boundary: string, library: M
       break;
     }
   }
-  const svg = markupOf(entry, style);
+  const svg = faceOf(entry, {})?.markup || '';
   if (!svg) return [];
-  const spots: [number, number][] = [[0, 0], [width, 0], [0, length], [width, length]];
+  const right = left + width;
+  const top = bottom + length;
+  const spots: [number, number][] = [[left, bottom], [right, bottom], [left, top], [right, top]];
   return spots.map(([x, y]) => ({ svg, x, y }));
 }
 function matches(player: PlacedPlayer, token: string | number | undefined): boolean {
@@ -1110,8 +1408,8 @@ function trackArrow(library: Map<string, LibraryEntry>, arrow: ArrowMark, span: 
   const hidden = arrow.arrow === 'none';
   const presetId = presetIdOf(arrow);
   const preset = presetDoc ?? resolveElement(library, presetId)?.doc;
-  const asset = assetOf(resolveElement(library, preset?.id || presetId), '')
-    || assetOf(resolveElement(library, 'arrow'), '');
+  const asset = faceOf(resolveElement(library, preset?.id || presetId), {})
+    || faceOf(resolveElement(library, 'arrow'), {});
   if (routeOf(arrow) < 0.05 || (!hidden && !asset)) return arrow;
   const box = parsedBox(asset?.viewBox || '');
   const extent = realExtent(asset?.size, box);
@@ -1119,7 +1417,7 @@ function trackArrow(library: Map<string, LibraryEntry>, arrow: ArrowMark, span: 
     ? glyphFactor(extent.h, resolveMin(host.sizes, preset?.id || presetId, asset.size?.min, undefined), span)
     : 1;
   const spec = hidden ? undefined : preset?.trajectory;
-  const params = preset?.params;
+  const params = { ...(asset?.params || {}), ...(preset?.params || {}) };
   const motif = (spec?.motif || 'none') as MotifKind;
   const via = (arrow.via || []).filter((spot): spot is { x: number; y: number } => typeof spot.x === 'number' && typeof spot.y === 'number');
   const neck = arrow.neck ?? spec?.neck ?? (motif === 'none' ? 0 : 0.4);
@@ -1213,15 +1511,17 @@ export function buildScene(
   doc: SchemaDoc,
   library: Map<string, LibraryEntry>,
   phaseIndex: number,
-  progress: number
+  progress: number,
+  session: ParamSession = {}
 ): Scene {
-  const style = doc.style || '';
   const frame = frameSize(doc, library);
-  const bag = emptyBag(library, style, frame.length);
+  const bag = emptyBag(library, frame.length, session);
   bag.host = doc;
-  bag.frame = [0, 0, frame.width, frame.length];
-  bag.marks.push(...cornerMarks(frame.width, frame.length, frame.boundary, library, style));
-  placeDocument(doc, [0, 0, frame.width, frame.length], IDENTITY, 'full', bag, 0, true);
+  const origin = pitchOrigin(doc, library);
+  const field: Box = [-origin.x, -origin.y, frame.width, frame.length];
+  bag.frame = field;
+  bag.marks.push(...cornerMarks(field, frame.boundary, library));
+  placeDocument(doc, field, IDENTITY, 'full', bag, 0, true);
   primeBall(bag);
   const { players, marks, zones } = bag;
   const ballHolder = bag.ballHolder;
@@ -1290,6 +1590,8 @@ export function buildScene(
     width: frame.width,
     length: frame.length,
     margin: frame.margin,
+    pitchX: origin.x,
+    pitchY: origin.y,
     lines: bag.lines,
     drawing: bag.drawings.join(''),
     ink: bag.ink.join(''),
@@ -1370,16 +1672,8 @@ function markFrame(mark: PlacedMark, u: number, glyph: number): string {
     w = maxX - minX + pad * 2;
     h = maxY - minY + pad * 2;
   }
-  const knobR = chrome.knob * u;
-  const knobY = (y + h + knobR + chrome.knobGap * u).toFixed(4);
-  const knob = mark.locked === false
-    ? `<g data-rotate="1" fill-opacity="0" stroke-opacity="0" pointer-events="none">
-        <circle cx="0" cy="${knobY}" r="${(chrome.knobHit * u).toFixed(4)}" fill="transparent"/>
-        <circle class="fc-knob" cx="0" cy="${knobY}" r="${knobR.toFixed(4)}" stroke-width="${(chrome.knobStroke * u).toFixed(4)}"/>
-      </g>`
-    : '';
   const handles = mark.box && mark.locked === false ? resizeHandles(x, y, w, h, chrome.handle * u) : '';
-  return `<rect data-frame="1" data-pick="${escAttr(mark.ref)}" x="${x}" y="${y}" width="${w}" height="${h}" fill="transparent" stroke="transparent" stroke-width="${(chrome.frame * u).toFixed(4)}"/>${handles}${knob}`;
+  return `<rect data-frame="1" data-pick="${escAttr(mark.ref)}" x="${x}" y="${y}" width="${w}" height="${h}" fill="transparent" stroke="transparent" stroke-width="${(chrome.frame * u).toFixed(4)}"/>${handles}`;
 }
 
 function ring(node: { ref?: string; locked?: boolean; x: number; y: number; ox?: number; oy?: number; sx?: number; sy?: number; relative?: boolean }, kind: 'player' | 'mark', radius: number, u: number): string {
@@ -1483,6 +1777,12 @@ function frameOf(scene: Scene): { left: number; right: number; top: number; bott
     }
   }
   if (scene.ball) cover(scene.ball.x, scene.ball.y, scene.ball.radius || 0);
+  const pitchX = scene.pitchX || 0;
+  const pitchY = scene.pitchY || 0;
+  if (pitchX || pitchY) {
+    cover(-pitchX, -pitchY);
+    cover(-pitchX + scene.width, -pitchY + scene.length);
+  }
   for (const box of scene.inkBounds) {
     cover(box.minX, box.minY);
     cover(box.maxX, box.maxY);
@@ -1491,12 +1791,12 @@ function frameOf(scene: Scene): { left: number; right: number; top: number; bott
 }
 
 /** Forme sans terrain : objets et contour dans le repère du fichier, sans rectangle. */
-function piecesScene(doc: SchemaDoc, library: Map<string, LibraryEntry>): Scene {
-  const sample = composePieces(doc, library, 1);
+function piecesScene(doc: SchemaDoc, library: Map<string, LibraryEntry>, session: ParamSession = {}): Scene {
+  const sample = composePieces(doc, library, 1, session);
   const span = spanOf(sample);
   const reach = reachOf(sample);
   const side = span > 0.001 ? Math.max(1, reach * 3 / span) : Math.max(1, reach * 2);
-  const bag = side === 1 ? sample : composePieces(doc, library, side);
+  const bag = side === 1 ? sample : composePieces(doc, library, side, session);
   let ball: Scene['ball'] = null;
   if (bag.ballHolder.id.startsWith('@')) {
     const [x, y] = bag.ballHolder.id.slice(1).split(',').map(Number);
@@ -1522,10 +1822,14 @@ function piecesScene(doc: SchemaDoc, library: Map<string, LibraryEntry>): Scene 
   };
 }
 
-function composePieces(doc: SchemaDoc, library: Map<string, LibraryEntry>, side: number): PlaceBag {
-  const bag = emptyBag(library, doc.style || '', side);
+function composePieces(doc: SchemaDoc, library: Map<string, LibraryEntry>, side: number, session: ParamSession = {}): PlaceBag {
+  const self = entryOf(library, doc);
+  const bag = emptyBag(library, side, session);
   bag.host = doc;
-  placeLists(doc, [0, 0, side, side], inheritedUnit(doc), IDENTITY, bag, 0, '', undefined, 'blue');
+  bag.docs.push(callDefaults(doc));
+  const params = paramsOf(bag, self, leafOf(doc.id), {});
+  placeLists(doc, [0, 0, side, side], inheritedUnit(doc), IDENTITY, bag, 0, '', undefined, params);
+  bag.docs.pop();
   return bag;
 }
 
@@ -1608,13 +1912,13 @@ function arrowDemo(doc: SchemaDoc, library: Map<string, LibraryEntry>): Scene {
 }
 
 /** Aperçu d’un élément, selon son identifiant. Le fichier reste la seule copie sur disque. */
-export function elementScene(doc: SchemaDoc, library: Map<string, LibraryEntry>, phase = 0, progress = 0, picks = false): string {
+export function elementScene(doc: SchemaDoc, library: Map<string, LibraryEntry>, phase = 0, progress = 0, picks = false, session: ParamSession = {}): string {
   if (doc.id === 'arrow' || (doc.id || '').startsWith('arrow.')) return stripXml(renderSvg(arrowDemo(doc, library), picks));
   if (doc.type === 'pitch' || doc.type === 'zone' || doc.type === 'formation' || (hasPitch(doc) && !isComposition(doc))) {
-    return stripXml(renderSvg(buildScene(doc, library, phase, progress), picks));
+    return stripXml(renderSvg(buildScene(doc, library, phase, progress, session), picks));
   }
   if (isComposition(doc)) {
-    const scene = hasPitch(doc) ? buildScene(doc, library, phase, progress) : piecesScene(doc, library);
+    const scene = hasPitch(doc) ? buildScene(doc, library, phase, progress, session) : piecesScene(doc, library, session);
     return stripXml(renderSvg(scene, picks, hasPitch(doc)));
   }
   if (doc.type === 'sample') {
@@ -1634,7 +1938,15 @@ export function elementScene(doc: SchemaDoc, library: Map<string, LibraryEntry>,
       phases: []
     }, picks, false));
   }
-  const asset = assetOf(entryOf(library, doc), doc.style || '');
+  const self = entryOf(library, doc);
+  const params = resolveParams({
+    entry: self,
+    library,
+    callType: leafOf(doc.id),
+    docs: [callDefaults(doc)],
+    session
+  });
+  const asset = faceOf(self, params);
   const box = asset ? parsedBox(asset.viewBox) : null;
   const extent = realExtent(asset?.size, box);
   const presetW = num(doc.width, 0);
@@ -1647,7 +1959,7 @@ export function elementScene(doc: SchemaDoc, library: Map<string, LibraryEntry>,
   const bg = [x, y, w, h].every(Number.isFinite)
     ? `<rect class="fc-ground" x="${x}" y="${y}" width="${w}" height="${h}"/>`
     : '';
-  const values: Record<string, string | undefined> = {};
+  const values = paintFor(self, asset, {}, params, library);
   for (const [key, value] of Object.entries(doc.params || {})) {
     if (value !== undefined) values[key] = String(value);
   }
@@ -1691,6 +2003,13 @@ function arrowBody(arrow: ArrowMark, picks: boolean, u: number): string {
   return `<g data-pick="${escAttr(arrow.ref)}" data-kind="arrow" data-ref="${escAttr(arrow.ref)}" data-motif="${arrow.motif || 'none'}"${wave}${amp}>${drawn}${hit}</g>`;
 }
 
+function paramAttrs(node: { element?: string; params?: Record<string, string> }): string {
+  if (!node.element && !node.params) return '';
+  const element = node.element ? ` data-element="${escAttr(node.element)}"` : '';
+  const params = node.params ? ` data-params="${escAttr(JSON.stringify(node.params))}"` : '';
+  return `${element}${params}`;
+}
+
 export function renderSvg(scene: Scene, picks = false, ground = true): string {
   const frame = frameOf(scene);
   const width = scene.width + frame.left + frame.right;
@@ -1702,8 +2021,12 @@ export function renderSvg(scene: Scene, picks = false, ground = true): string {
     const ux = (player.ux ?? 1) * factor;
     const uy = (player.uy ?? 1) * factor;
     const shown = (player.radius ?? playerTokenRadius) * factor;
-    return `<g transform="translate(${player.x} ${player.y})" data-radius="${shown}"${picks ? pickAttrs(player, 'player') : ''}>
-      <g transform="scale(${ux} ${-uy})">${player.svg}</g>
+    const angle = player.angle || 0;
+    const face = picks ? paramAttrs(player) : '';
+    const held = player.fixed ? ' data-fixed="1"' : '';
+    const drawn = wrapUpright(player.svg, player.upright, angle, ux, -uy);
+    return `<g transform="translate(${player.x} ${player.y}) rotate(${angle})" data-x="${player.x}" data-y="${player.y}" data-angle="${angle}" data-radius="${shown}"${face}${held}${picks && !player.fixed ? pickAttrs(player, 'player') : ''}>
+      <g transform="scale(${ux} ${-uy})">${drawn}</g>
     </g>`;
   }).join('');
   const zones = scene.zones.map(zone => {
@@ -1733,8 +2056,10 @@ export function renderSvg(scene: Scene, picks = false, ground = true): string {
       : '';
     const ux = (mark.ux ?? 1) * factor;
     const uy = (mark.uy ?? 1) * factor;
-    return `<g transform="translate(${mark.x} ${mark.y}) rotate(${angle})" data-x="${mark.x}" data-y="${mark.y}" data-angle="${angle}" data-glyph="${factor}" data-ux="${mark.ux ?? 1}" data-uy="${mark.uy ?? 1}" data-min="${mark.min ?? 0}" data-span="${span}" data-u="${u}"${rules}${picks ? pickAttrs(mark, 'mark') : ''}>
-      <g data-draw="1" transform="scale(${ux} ${-uy})">${mark.svg}</g>${frame}
+    const drawn = wrapUpright(mark.svg, mark.upright, angle, ux, -uy);
+    const held = mark.fixed ? ' data-fixed="1"' : '';
+    return `<g transform="translate(${mark.x} ${mark.y}) rotate(${angle})" data-x="${mark.x}" data-y="${mark.y}" data-angle="${angle}" data-glyph="${factor}" data-ux="${mark.ux ?? 1}" data-uy="${mark.uy ?? 1}" data-min="${mark.min ?? 0}" data-span="${span}" data-u="${u}"${rules}${held}${picks && !mark.fixed ? paramAttrs(mark) + pickAttrs(mark, 'mark') : ''}>
+      <g data-draw="1" transform="scale(${ux} ${-uy})">${drawn}</g>${frame}
     </g>${label}`;
   }).join('');
   const arrows = scene.arrows.map(arrow => arrowBody(arrow, picks, u)).join('');
@@ -1742,11 +2067,14 @@ export function renderSvg(scene: Scene, picks = false, ground = true): string {
   const ballFactor = scene.ball ? glyphFactor(scene.ball.real ?? 0, scene.ball.min, span) : 1;
   const ballRadiusShown = scene.ball ? (scene.ball.radius ?? ballRadius) * ballFactor : ballRadius;
   const ballRadiusYShown = scene.ball ? (scene.ball.radiusY ?? scene.ball.radius ?? ballRadius) * ballFactor : ballRadiusShown;
-  const ball = scene.ball ? ballMarkup(scene.ball.x, scene.ball.y, picks, scene.ball.svg, ballRadiusShown, ballRadiusYShown, scene.ball.fit) : '';
-  const ballRing = picks && scene.ball?.ref
+  const ball = scene.ball
+    ? ballMarkup(scene.ball.x, scene.ball.y, picks && !scene.ball.fixed, scene.ball.svg, ballRadiusShown, ballRadiusYShown, scene.ball.fit)
+      .replace('<g', scene.ball.fixed ? '<g data-fixed="1"' : '<g')
+    : '';
+  const ballRing = picks && scene.ball?.ref && !scene.ball.fixed
     ? ring(scene.ball, 'player', Math.max(chrome.ballRing * u, Math.max(ballRadiusShown, ballRadiusYShown) + chrome.ballPad * u), u)
     : '';
-  const rings = picks ? scene.players.map(node => {
+  const rings = picks ? scene.players.filter(node => !node.fixed).map(node => {
     const shown = (node.radius ?? playerTokenRadius) * glyphFactor(node.real ?? 0, node.min, span);
     return ring(node, 'player', Math.max(chrome.ring * u, shown + chrome.ringPad * u), u);
   }).join('') : '';
@@ -1756,7 +2084,7 @@ export function renderSvg(scene: Scene, picks = false, ground = true): string {
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="100%" height="100%"${bare}${meta}>
   ${ground ? `<rect class="fc-ground" width="${width}" height="${height}"/>` : ''}
   <g transform="translate(${frame.left} ${frame.top + scene.length}) scale(1 -1)">
-    ${ground ? `<rect class="fc-pitch" x="0" y="0" width="${scene.width}" height="${scene.length}"/>` : ''}
+    ${ground ? `<rect class="fc-pitch" data-fixed="1" x="${-(scene.pitchX || 0)}" y="${-(scene.pitchY || 0)}" width="${scene.width}" height="${scene.length}"/>` : ''}
     ${lines}
   </g>
   ${drawing}

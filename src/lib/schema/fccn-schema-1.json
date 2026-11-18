@@ -2,112 +2,132 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Schéma d'exercice",
   "type": "object",
+  "additionalProperties": false,
   "required": ["version"],
   "properties": {
     "version": {
       "const": "fccn-schema:1",
       "description": "Version du document."
     },
-    "type": {
-      "type": "string",
-      "description": "Genre de l'élément. Absent sur un exercice. Posé à la lecture."
-    },
-    "name": {
-      "type": "string",
-      "description": "Titre de l'exercice, ou nom d'une zone. Un élément est identifié par le nom de son fichier."
-    },
-    "style": {
-      "type": "string",
-      "description": "Style global, pour choisir une variante de dessin."
-    },
-    "units": {
-      "enum": ["meters", "relative"],
-      "description": "Unité des positions quand l'appel n'en donne pas. meters par défaut, relative pour une formation ou une forme."
-    },
-    "outline": {
-      "type": "boolean",
-      "description": "Relie les objets de la forme par un trait d'épaisseur constante."
-    },
-    "svg": {
+    "settings": {
       "type": "array",
-      "description": "Variantes de dessin. Le chemin est relatif au fichier.",
-      "items": { "$ref": "#/definitions/svgVariant" }
+      "description": "Réglages traités par l'application. Une entrée, une clé.",
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "description": "Titre de l'exercice, ou nom d'une zone." },
+          "units": { "enum": ["meters", "relative"], "description": "Unité des positions quand l'appel n'en donne pas." },
+          "outline": { "type": "boolean", "description": "Relie les objets de la forme par un trait." },
+          "width": { "type": "number", "description": "Largeur, en mètres." },
+          "length": { "type": "number", "description": "Longueur, en mètres." },
+          "margin": { "type": "number", "description": "Marge autour du terrain, en mètres." },
+          "origin": {
+            "type": "object",
+            "description": "Point du terrain, en mètres, posé sur l'origine du document.",
+            "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+          },
+          "boundary": { "type": "string", "description": "Élément posé aux quatre coins." },
+          "fixed": { "type": "boolean", "description": "Le dessin se voit. Il ne se sélectionne pas et ne se déplace pas." },
+          "fit": { "type": "string", "enum": ["none", "ratio", "free"], "description": "Étirement." },
+          "listed": { "type": "boolean", "description": "Proposé dans le sélecteur d'ajout. Absent, il l'est." },
+          "real-w": { "type": "number", "description": "Largeur réelle du viewBox, en mètres." },
+          "real-h": { "type": "number", "description": "Hauteur réelle du viewBox, en mètres." },
+          "min-size": { "description": "Minimum lisible, en part du grand côté. 1.6% ou 0." },
+          "stretch-x": { "type": "string", "description": "Bandes horizontales." },
+          "stretch-y": { "type": "string", "description": "Bandes verticales." },
+          "upright": { "type": "array", "items": { "type": "string" }, "description": "Parties qui gardent l'horizontale." },
+          "sizes": {
+            "type": "object",
+            "description": "Affichage des objets. scale multiplie les minimums.",
+            "properties": { "scale": { "type": "number" } },
+            "additionalProperties": { "description": "Minimum de cet élément." }
+          },
+          "viewBox": { "type": "string", "description": "ViewBox du dessin." },
+          "trajectory": { "$ref": "#/definitions/trajectory" }
+        }
+      }
     },
-    "pitch": {
-      "description": "Terrain du document : un nom court, ou des arguments dont name.",
-      "oneOf": [
-        { "type": "string" },
-        { "$ref": "#/definitions/call" }
-      ]
-    },
-    "width": { "type": "number", "description": "Largeur, en mètres." },
-    "length": { "type": "number", "description": "Longueur, en mètres." },
-    "margin": { "type": "number", "description": "Marge autour du terrain, en mètres." },
-    "p": { "type": "object", "description": "Points nommés, en mètres. Un nombre absent vaut 0.", "additionalProperties": { "$ref": "#/definitions/markPoint" } },
-    "r": { "type": "object", "description": "Rectangles nommés, en mètres. Un nombre absent vaut 0.", "additionalProperties": { "$ref": "#/definitions/markRect" } },
-    "c": { "type": "object", "description": "Cercles nommés, en mètres. Un nombre absent vaut 0.", "additionalProperties": { "$ref": "#/definitions/markCircle" } },
-    "boundary": { "type": "string", "description": "Élément posé aux quatre coins." },
-    "object": {
+    "define": {
       "type": "array",
-      "description": "Joueurs, ballon et matériel.",
+      "description": "Parties nommées, en mètres. Le nom est libre. r, p ou c de l'appel choisit les champs lus.",
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "additionalProperties": { "$ref": "#/definitions/markPart" }
+      }
+    },
+    "parameters": {
+      "type": "array",
+      "description": "Paramètres de l'élément et leur valeur par défaut. Une entrée, une clé.",
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "additionalProperties": { "type": ["string", "number"], "description": "Valeur par défaut." }
+      }
+    },
+    "defaults": {
+      "type": "array",
+      "description": "Valeurs. Une clé param=valeur donne des valeurs quand le paramètre vaut cela. Une clé de type donne des arguments par défaut aux appels.",
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": {
+            "description": "Valeur. Un réglage peut être un booléen ou une liste de noms.",
+            "oneOf": [
+              { "type": ["string", "number", "boolean"] },
+              { "type": "array", "items": { "type": "string" } }
+            ]
+          }
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "description": "Joueurs, ballon, matériel, tracés et terrain. Une zone, une formation ou une forme s'écrit zone, formation ou shape, avec un seul appel.",
       "items": { "$ref": "#/definitions/objectItem" }
-    },
-    "shape": {
-      "type": "array",
-      "description": "Arrangements de matériel.",
-      "items": { "$ref": "#/definitions/shapeItem" }
-    },
-    "formation": {
-      "type": "array",
-      "description": "Compositions de joueurs. Seuls les joueurs sont posés.",
-      "items": { "$ref": "#/definitions/formationItem" }
-    },
-    "zone": {
-      "type": "array",
-      "description": "Sous-aires. Une zone donne le placement de départ ; les phases restent dans le repère du document.",
-      "items": { "$ref": "#/definitions/zoneItem" }
     },
     "phases": {
       "type": "array",
       "description": "Phases de l'animation, dans le repère du document.",
       "items": { "$ref": "#/definitions/phase" }
-    },
-    "stretch": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Étirement du dessin, prioritaire sur les attributs du SVG. Chaque axe est une suite de bandes fixed, stretch ou repeat(pas).",
-      "properties": {
-        "x": { "type": "string", "description": "Bandes horizontales, par exemple fixed -1.75 repeat(0.5) 1.75 fixed." },
-        "y": { "type": "string", "description": "Bandes verticales." }
-      }
-    },
-    "size": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Taille réelle du dessin, prioritaire sur les attributs data-real et data-min-size du SVG.",
-      "properties": {
-        "real": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Taille réelle du viewBox, en mètres. Une seule dimension garde les proportions.",
-          "properties": {
-            "w": { "type": "number", "description": "Largeur réelle, en mètres." },
-            "h": { "type": "number", "description": "Hauteur réelle, en mètres." }
-          }
-        },
-        "min": { "description": "Minimum lisible, en part du grand côté de la figure. 3.5% ou 0 pour la taille réelle." }
-      }
-    },
-    "sizes": {
-      "type": "object",
-      "description": "Affichage des objets. scale multiplie tous les minimums ; 0 laisse la taille réelle. Une clé d'élément surcharge son minimum.",
-      "properties": {
-        "scale": { "type": "number", "description": "Facteur des minimums. 0 affiche tout à la taille réelle." }
-      },
-      "additionalProperties": { "description": "Minimum de cet élément, en part du grand côté. 4% ou 0." }
     }
   },
   "definitions": {
+    "markPart": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Partie nommée. Un nombre absent vaut 0. r lit x, y, w et h. p et c lisent x et y.",
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "w": { "type": "number" },
+        "h": { "type": "number" },
+        "radius": { "type": "number" }
+      }
+    },
+    "trajectory": {
+      "type": "object",
+      "description": "Ligne médiane et motif d'une flèche.",
+      "properties": {
+        "motif": { "enum": ["none", "sine", "zigzag"] },
+        "via": { "type": "array", "items": { "$ref": "#/definitions/markPoint" } },
+        "wave": { "type": "number" },
+        "amp": { "type": "number" },
+        "phase": { "type": "number" },
+        "side": { "enum": [1, -1] },
+        "taper": { "type": "number" },
+        "neck": { "type": "number" },
+        "trim": { "type": "number" }
+      }
+    },
     "markPoint": {
       "type": "object",
       "description": "Position. Un nombre absent vaut 0.",
@@ -198,15 +218,6 @@
         }
       ]
     },
-    "svgVariant": {
-      "type": "object",
-      "description": "Fichier SVG.",
-      "required": ["path"],
-      "properties": {
-        "path": { "type": "string", "description": "Chemin relatif au fichier YAML." },
-        "style": { "type": "string", "description": "Nom du style. Absent pour la variante par défaut." }
-      }
-    },
     "inset": {
       "description": "Quatre côtés, vertical puis horizontal, ou chaque côté.",
       "oneOf": [
@@ -235,9 +246,7 @@
           "properties": {
             "name": { "type": ["string", "number"], "description": "Nom, ou numéro du joueur." },
             "title": { "type": "string", "description": "Texte écrit dans le dessin, à la place de {{title}}." },
-            "team": { "type": "string", "enum": ["blue", "red", "white", "yellow"], "description": "Équipe." },
             "pitch": { "type": "string", "description": "Demi-terrain du document. Le rectangle vient de la zone de ce nom." },
-            "style": { "type": "string", "description": "Variante de dessin." },
             "fill": { "type": "string", "description": "Couleur du lavis." },
             "alpha": { "type": "number", "description": "Transparence du lavis, de 0 à 1." },
             "p": { "description": "Position. Un nombre absent vaut 0. Un texte nomme un point du terrain.", "oneOf": [{ "type": "string" }, { "$ref": "#/definitions/markPoint" }] },
@@ -252,14 +261,21 @@
             "margin": { "description": "Marge extérieure au trait.", "allOf": [{ "$ref": "#/definitions/inset" }] },
             "padding": { "description": "Marge intérieure au trait.", "allOf": [{ "$ref": "#/definitions/inset" }] },
             "angle": { "type": "number", "description": "Angle, en degrés." },
-            "min": { "description": "Minimum lisible de cet objet, en part du grand côté. 5% ou 0 pour la taille réelle." },
+            "min-size": { "description": "Minimum lisible de cet objet, en part du grand côté. 5% ou 0 pour la taille réelle." },
+            "real-w": { "type": "number", "description": "Largeur réelle de cette pose, en mètres." },
+            "real-h": { "type": "number", "description": "Hauteur réelle de cette pose, en mètres." },
+            "fit": { "type": "string", "enum": ["none", "ratio", "free"] },
+            "fixed": { "type": "boolean" },
+            "upright": { "type": "array", "items": { "type": "string" } },
+            "stretch-x": { "type": "string" },
+            "stretch-y": { "type": "string" },
             "player": { "type": ["string", "number"], "description": "Joueur qui porte le ballon." },
             "width": { "type": "number", "description": "Largeur du terrain, en mètres." },
             "length": { "type": "number", "description": "Longueur du terrain, en mètres." },
             "boundary": { "type": "string", "description": "Élément posé aux quatre coins." },
             "mirror": { "type": "boolean", "description": "Miroir : les deux extrémités s'échangent." },
             "rotate": { "type": "number", "enum": [180], "description": "Demi-tour autour du centre." },
-            "object": { "type": "array", "items": { "$ref": "#/definitions/objectItem" } },
+            "items": { "type": "array", "items": { "$ref": "#/definitions/objectItem" } },
             "shape": { "type": "array", "items": { "$ref": "#/definitions/shapeItem" } },
             "formation": { "type": "array", "items": { "$ref": "#/definitions/formationItem" } },
             "zone": { "type": "array", "items": { "$ref": "#/definitions/zoneItem" } }
@@ -276,6 +292,13 @@
       "minProperties": 1,
       "maxProperties": 1,
       "description": "La clé est le nom court dans le genre de la liste. Une clé pointée est un identifiant complet.",
+      "patternProperties": {
+        "^[\\w-]+=[\\w.-]+$": {
+          "type": "array",
+          "description": "Corps du test. Ces items sont posés quand le paramètre a cette valeur.",
+          "items": { "$ref": "#/definitions/item" }
+        }
+      },
       "additionalProperties": { "$ref": "#/definitions/call" }
     },
     "phase": {

@@ -1,4 +1,4 @@
-import type { TrajectorySpec } from './types';
+import type { SchemaDoc, TrajectorySpec } from './types';
 
 export interface TrajectoryDraft {
   ink: string;

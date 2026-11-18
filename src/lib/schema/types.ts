@@ -2,11 +2,6 @@ export const SCHEMA_VERSION = 'fccn-schema:1';
 
 export type SchemaUnit = 'meters' | 'relative';
 
-export interface SvgVariant {
-  path: string;
-  style?: string;
-}
-
 /** Dessin déjà lu : le markup est le contenu du fichier, sans la balise svg. */
 export interface StretchSpec {
   x?: string;
@@ -28,15 +23,22 @@ export interface SizeRules {
 }
 
 export interface SvgAsset {
-  style: string;
+  /** Conditions `param=valeur` sous lesquelles ce dessin est choisi. Vide : toujours. */
+  when: Record<string, string>;
+  /** Valeurs de `{{param}}`. Les arguments de l’appel posé les recouvrent. */
+  params?: Record<string, string | number>;
   markup: string;
   viewBox: string;
-  /** Bandes d’étirement. Le YAML de l’élément l’emporte sur les attributs du SVG. */
+  /** Bandes d’étirement, lues sur le YAML de l’élément. */
   stretch?: StretchSpec;
-  /** Taille réelle et minimum lisible. Le YAML de l’élément l’emporte sur les attributs du SVG. */
+  /** Taille réelle et minimum lisible, lus sur le YAML de l’élément. */
   size?: SizeSpec;
   /** Étirement à la pose. `ratio` garde les proportions, `free` déforme. Absent : pas de poignées. */
   fit?: 'ratio' | 'free';
+  /** Le dessin se voit. Il ne se sélectionne pas et ne se déplace pas. */
+  fixed?: boolean;
+  /** id des parties du dessin qui gardent l'horizontale quand l'objet tourne. */
+  upright?: string[];
 }
 
 export interface SchemaDoc {
@@ -45,42 +47,49 @@ export interface SchemaDoc {
   type?: string;
   /** Identifiant pointé, posé à la lecture : object.ball. Il n’est pas enregistré. */
   id?: string;
-  /** Sur un exercice, le titre. */
+  /** Sur un exercice, le titre. Vient de `settings`. */
   name?: string;
-  /** Style global, pour choisir une variante SVG. */
-  style?: string;
   units?: SchemaUnit;
   outline?: boolean;
-  /** Terrain du document : un nom court, ou des arguments dont name. */
-  pitch?: string | CallArgs;
   width?: number;
   length?: number;
   margin?: number;
+  /** Point du terrain, en mètres, qui se pose sur l’origine du document. */
+  origin?: { x?: number; y?: number };
   boundary?: string;
-  /** Points nommés du terrain, en mètres. */
-  p?: Record<string, MarkPoint>;
-  /** Rectangles nommés du terrain, en mètres. */
-  r?: Record<string, MarkRect>;
-  /** Cercles nommés du terrain, en mètres. */
-  c?: Record<string, MarkCircle>;
-  object?: ItemSpec[];
-  shape?: ItemSpec[];
-  formation?: ItemSpec[];
-  zone?: ItemSpec[];
+  /** Parties nommées, en mètres. Vient de `define`. */
+  define?: Record<string, MarkPart>;
+  /** Objets posés. Une zone, une formation ou une forme est enveloppée : `{ zone: { rect: … } }`. */
+  items?: ItemSpec[];
   phases?: PhaseSpec[];
-  svg?: SvgVariant[];
-  /** Étirement du dessin. Prioritaire sur les attributs data-stretch du SVG. */
-  stretch?: StretchSpec;
-  /** Taille réelle du dessin. Prioritaire sur les attributs data-real du SVG. */
-  size?: { real?: { w?: number; h?: number }; min?: number | string };
-  /** Étirement. Prioritaire sur data-fit du SVG. `ratio` garde les proportions, `free` déforme, `none` retire les poignées. */
+  /** Paramètres déclarés et leur valeur. Une entrée, une clé. */
+  parameters?: Array<Record<string, string | number>>;
+  /** Valeurs conditionnelles `p=v` et arguments par défaut `type: { … }`. */
+  defaults?: Array<Record<string, Record<string, string | number>>>;
+  /** Largeur réelle du viewBox, en mètres. */
+  'real-w'?: number;
+  /** Hauteur réelle du viewBox, en mètres. */
+  'real-h'?: number;
+  /** Minimum lisible, en part du grand côté. `1.6%` ou `0`. */
+  'min-size'?: number | string;
+  /** Bandes horizontales : fixed, stretch ou repeat(pas). */
+  'stretch-x'?: string;
+  /** Bandes verticales. */
+  'stretch-y'?: string;
+  /** Étirement. `ratio` garde les proportions, `free` déforme, `none` retire les poignées. */
   fit?: string;
+  /** Le dessin se voit. Il ne se sélectionne pas et ne se déplace pas. */
+  fixed?: boolean;
+  /** Proposé dans le sélecteur d’ajout. Absent, il l’est. */
+  listed?: boolean;
+  /** id des parties du dessin qui gardent l'horizontale quand l'objet tourne. */
+  upright?: string[];
   /** Affichage des objets de ce schéma. `scale: 0` laisse tout à la taille réelle. */
   sizes?: SizeRules;
   viewBox?: string;
   /** Ligne médiane et motif d’une flèche. Le mouvement peut les recouvrir. */
   trajectory?: TrajectorySpec;
-  /** Style du dessin : encre, épaisseur, pointillés. */
+  /** Surcharge d’aperçu. Dans un fichier, ces valeurs sont les arguments de l’item `svg`. */
   params?: Record<string, string | number>;
   /** Rendu calculé à la lecture, pour l’icône. Il n’est pas enregistré. */
   preview?: string;
@@ -107,7 +116,8 @@ export interface CallArgs {
   team?: string;
   /** Demi-terrain du document. Le rectangle vient de la zone de ce nom. */
   pitch?: string;
-  style?: string;
+  /** Chemin d’un dessin, relatif au fichier de l’élément. */
+  path?: string;
   /** Couleur du lavis. Sans alpha, un lavis coloré est à 0,2. */
   fill?: string;
   /** Transparence du lavis, de 0 à 1. */
@@ -127,7 +137,13 @@ export interface CallArgs {
   h?: number;
   angle?: number;
   /** Minimum lisible de cet objet, en part du grand côté. 5% ou 0. */
-  min?: number | string;
+  'min-size'?: number | string;
+  'real-w'?: number;
+  'real-h'?: number;
+  'stretch-x'?: string;
+  'stretch-y'?: string;
+  upright?: string[];
+  fixed?: boolean;
   /** Étirement de cette pose. `ratio` garde les proportions, `free` déforme, `none` retire les poignées. */
   fit?: string;
   player?: string | number;
@@ -154,14 +170,17 @@ export interface CallArgs {
   neck?: number;
   dash?: string;
   ink?: string;
-  object?: ItemSpec[];
+  /** Objets posés dans cet appel. */
+  items?: ItemSpec[];
   shape?: ItemSpec[];
   formation?: ItemSpec[];
   zone?: ItemSpec[];
 }
 
-/** Une seule clé : le type. La valeur est un nom ou des arguments. */
-export type ItemSpec = Record<string, string | number | CallArgs>;
+/** Une seule clé : le type, ou une enveloppe `zone`, `formation`, `shape`. */
+export interface ItemSpec {
+  [key: string]: string | number | boolean | CallArgs | ItemSpec | ItemSpec[];
+}
 
 export interface BoxEdges {
   x?: number;
@@ -210,6 +229,15 @@ export interface MarkRect {
 export interface MarkCircle {
   x?: number;
   y?: number;
+  radius?: number;
+}
+
+/** Partie nommée de `define`. L’appel choisit les champs qu’il lit. */
+export interface MarkPart {
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
   radius?: number;
 }
 
@@ -269,9 +297,15 @@ export interface PlacedPlayer {
   team: string;
   x: number;
   y: number;
+  /** Degrés, autour du point de pose. 0 pointe vers le haut du terrain. */
+  angle?: number;
+  /** Élément de bibliothèque qui a dessiné ce joueur. */
+  element?: string;
+  /** Paramètres résolus, pour le menu et le dessin. */
+  params?: Record<string, string>;
   /** Dessin du jeton, avec le numéro déjà inscrit. */
   svg: string;
-  /** Chemin YAML dans le schéma, par exemple `object/2/player`. */
+  /** Chemin YAML dans le schéma, par exemple `items/2/player`. */
   ref?: string;
   /** Vient d’une forme : sélectionnable, mais ses coordonnées ne sont pas dans ce fichier. */
   locked?: boolean;
@@ -291,12 +325,20 @@ export interface PlacedPlayer {
   min?: number;
   /** Poignées de la sélection. Absent : aucune. */
   fit?: 'ratio' | 'free';
+  /** id des parties du dessin qui gardent l'horizontale. */
+  upright?: string[];
+  /** Visible, sans sélection ni déplacement. */
+  fixed?: boolean;
 }
 
 export interface PlacedMark {
   svg: string;
   x: number;
   y: number;
+  /** Élément de bibliothèque qui a dessiné ce repère. */
+  element?: string;
+  /** Paramètres résolus. */
+  params?: Record<string, string>;
   /** Degrés, autour du point d’ancrage, sens antihoraire sur le schéma. */
   angle?: number;
   ref?: string;
@@ -321,6 +363,10 @@ export interface PlacedMark {
   min?: number;
   /** Poignées de la sélection. Absent : aucune. */
   fit?: 'ratio' | 'free';
+  /** id des parties du dessin qui gardent l'horizontale. */
+  upright?: string[];
+  /** Visible, sans sélection ni déplacement. */
+  fixed?: boolean;
 }
 
 export interface PlacedZone {
@@ -352,7 +398,7 @@ export interface ArrowMark {
   motif?: 'none' | 'sine' | 'zigzag';
   /** Points de passage, dans le repère de la scène. */
   via?: MarkPoint[];
-  /** Chemin YAML, par exemple `phases/0/moves/1/dribble` ou `object/2/arrow.run`. */
+  /** Chemin YAML, par exemple `phases/0/moves/1/dribble` ou `items/2/run`. */
   ref?: string;
   /** `player` : le départ est le joueur. `free` : la flèche est posée dans le schéma. */
   start?: 'player' | 'free';
@@ -389,6 +435,9 @@ export interface Scene {
   width: number;
   length: number;
   margin: number;
+  /** Décalage du terrain : ce point du dessin est à l’origine du document. */
+  pitchX?: number;
+  pitchY?: number;
   lines: number[][];
   /** Pitch drawing in SVG coordinates, y downward, origin at the top-left of the playing area. */
   drawing: string;
@@ -409,6 +458,7 @@ export interface Scene {
     real?: number;
     fit?: 'ratio' | 'free';
     min?: number;
+    fixed?: boolean;
     locked?: boolean;
     ox?: number;
     oy?: number;

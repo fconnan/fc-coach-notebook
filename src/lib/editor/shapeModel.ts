@@ -220,10 +220,41 @@ export function translateShape(tag: string, attrs: ShapeAttrs, dx: number, dy: n
 
 export type FittedShape = { tag: string; attrs: ShapeAttrs };
 
-function scaleRotate(transform: string, xOf: (value: number) => number, yOf: (value: number) => number): string {
-  return transform.replace(/rotate\(\s*([-\d.eE+]+)(?:[\s,]+([-\d.eE+]+)[\s,]+([-\d.eE+]+))?\s*\)/g, (_all, angle: string, cx?: string, cy?: string) => {
-    return `rotate(${angle} ${num(xOf(Number(cx ?? 0)))} ${num(yOf(Number(cy ?? 0)))})`;
-  });
+function rotationOf(transform: string): { angle: string; cx: number; cy: number } | null {
+  const match = /rotate\(\s*([-\d.eE+]+)(?:[\s,]+([-\d.eE+]+)[\s,]+([-\d.eE+]+))?\s*\)/.exec(transform);
+  if (!match) return null;
+  return { angle: match[1], cx: Number(match[2] ?? 0), cy: Number(match[3] ?? 0) };
+}
+
+/** Tourne `p` autour de `c` avec la formule SVG, en degrés. */
+function spinPoint(angle: number, c: { x: number; y: number }, p: { x: number; y: number }) {
+  const rad = angle * Math.PI / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const dx = p.x - c.x;
+  const dy = p.y - c.y;
+  return { x: c.x + cos * dx - sin * dy, y: c.y + sin * dx + cos * dy };
+}
+
+/**
+ * Le pivot suit le centre géométrique le long de l’axe déjà tourné.
+ * Le dessin à l’écran ne bouge pas : seul le repère des attributs est réécrit.
+ */
+function rebaseRotation(tag: string, attrs: ShapeAttrs): ShapeAttrs {
+  const turn = rotationOf(attrs.transform || '');
+  if (!turn || !attrs.transform) return attrs;
+  const center = shapeCenter(tag, attrs);
+  if (!center) return attrs;
+  const pivot = { x: turn.cx, y: turn.cy };
+  const visual = spinPoint(Number(turn.angle), pivot, center);
+  const dx = visual.x - center.x;
+  const dy = visual.y - center.y;
+  const shifted = dx || dy ? translateShape(tag, attrs, dx, dy) : attrs;
+  const transform = (shifted.transform || attrs.transform).replace(
+    /rotate\(\s*[-\d.eE+]+(?:[\s,]+[-\d.eE+]+[\s,]+[-\d.eE+]+)?\s*\)/g,
+    `rotate(${turn.angle} ${num(visual.x)} ${num(visual.y)})`
+  );
+  return { ...shifted, transform };
 }
 
 /** Étire la forme autour d’un point fixe. Un cercle devient une ellipse si les deux axes diffèrent. */
@@ -267,7 +298,7 @@ export function fitShape(tag: string, attrs: ShapeAttrs, anchorX: number, anchor
   } else if (name === 'text') {
     next = put(put(next, 'x', xOf(read(attrs, 'x'))), 'y', yOf(read(attrs, 'y')));
   }
-  if (next.transform) next = { ...next, transform: scaleRotate(next.transform, xOf, yOf) };
+  if (next.transform) next = rebaseRotation(out, next);
   return { tag: out, attrs: next };
 }
 

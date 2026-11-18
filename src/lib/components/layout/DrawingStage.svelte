@@ -49,8 +49,13 @@
   .top {
     display: flex;
     flex-shrink: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.12rem 0.28rem;
+    min-width: 0;
     border-bottom: 1px solid var(--color-default-medium);
     background: var(--color-neutral-primary);
+    padding: 0.12rem 0.3rem;
   }
   .canvas {
     display: flex;

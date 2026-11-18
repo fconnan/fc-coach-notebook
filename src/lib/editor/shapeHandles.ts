@@ -1,5 +1,11 @@
 import { moveShapeKnot, rotateShape, shapeCenter, shapeKnots, translateShape, type ShapeAttrs } from './shapeModel';
 
+/** Garde la flèche de rotation sous le pointeur jusqu’à la fin du geste. */
+export function holdRotateCursor(): () => void {
+  document.documentElement.classList.add('fc-spinning');
+  return () => document.documentElement.classList.remove('fc-spinning');
+}
+
 const NS = 'http://www.w3.org/2000/svg';
 
 export type ShapeBinding = {
@@ -9,6 +15,10 @@ export type ShapeBinding = {
   group: SVGGElement;
   tag: string;
   attrs: ShapeAttrs;
+  /** Faux quand le cadre de sélection porte déjà la poignée de rotation. */
+  spin?: boolean;
+  /** Faux quand le cadre de sélection porte déjà les poignées d’étirement. */
+  knots?: boolean;
   onSelect?: () => void;
   /** `commit` est faux pendant le geste, vrai au relâchement. */
   onEdit: (attrs: ShapeAttrs, commit: boolean) => void;
@@ -55,18 +65,35 @@ function applyAttrs(node: SVGElement, attrs: ShapeAttrs) {
 export type ShapeControls = {
   /** Démarre une translation à partir d’un pointerdown déjà reçu. */
   grab: (event: PointerEvent) => void;
+  /** Repose les sommets après un changement d’attributs. */
+  refresh: (attrs: ShapeAttrs) => void;
   dispose: () => void;
 };
+
+/** Angle du pointeur autour d’un centre, dans le repère du parent. */
+export function pointerAngle(node: SVGGraphicsElement, x: number, y: number, event: PointerEvent): number | null {
+  const plane = parentPlane(node);
+  if (!plane) return null;
+  return screenAngle(plane, x, y, event);
+}
+
+/** Angle déjà écrit dans `transform`, en degrés. */
+export function shapeAngle(attrs: ShapeAttrs): number {
+  const match = /rotate\(\s*([-\d.eE+]+)/.exec(attrs.transform || '');
+  return match ? Number(match[1]) : 0;
+}
 
 /** Poignées de déplacement, d’étirement et de rotation. Le même geste pour le SVG et le YAML. */
 export function bindShapeControls(binding: ShapeBinding): ShapeControls {
   const { root, node, group, tag, onSelect, onEdit } = binding;
+  const spin = binding.spin !== false;
+  const knotsOn = binding.knots !== false;
   let attrs = { ...binding.attrs };
   let body: ((event: PointerEvent) => void) | null = null;
 
   const paint = () => {
     group.querySelectorAll('[data-shape-ui]').forEach(item => item.remove());
-    const knots = shapeKnots(tag, attrs);
+    const knots = knotsOn ? shapeKnots(tag, attrs) : [];
     const unit = unitOf(root, 1);
     let anchorAt = 0;
     knots.forEach((knot, index) => {
@@ -107,31 +134,36 @@ export function bindShapeControls(binding: ShapeBinding): ShapeControls {
     });
     const center = shapeCenter(tag, attrs);
     const at = center ? toRoot(node, root, center.x, center.y) : null;
-    if (center && at && tag.toLowerCase() !== 'circle') {
-      const matrix = root.getScreenCTM();
-      const screen = matrix ? new DOMPoint(at.x, at.y).matrixTransform(matrix) : null;
-      const lifted = screen && matrix ? new DOMPoint(screen.x, screen.y - 28).matrixTransform(matrix.inverse()) : null;
-      if (lifted) {
+    if (spin && center && at && tag.toLowerCase() !== 'circle') {
+      let box: DOMRect | null = null;
+      try { box = node.getBBox(); } catch { box = null; }
+      const pad = unitOf(root, 8);
+      const reach = box && box.width > 0 && box.height > 0
+        ? Math.hypot(box.width / 2 + pad, box.height / 2 + pad)
+        : pad * 3;
+      const end = toRoot(node, root, center.x, center.y + reach);
+      if (end) {
         const stem = document.createElementNS(NS, 'line');
         stem.setAttribute('data-shape-ui', '1');
         stem.setAttribute('x1', String(at.x));
         stem.setAttribute('y1', String(at.y));
-        stem.setAttribute('x2', String(lifted.x));
-        stem.setAttribute('y2', String(lifted.y));
-        stem.setAttribute('stroke', '#111827');
-        stem.setAttribute('stroke-width', String(unit));
+        stem.setAttribute('x2', String(end.x));
+        stem.setAttribute('y2', String(end.y));
+        stem.setAttribute('stroke', '#ccff00');
+        stem.setAttribute('stroke-width', '1.5');
+        stem.setAttribute('vector-effect', 'non-scaling-stroke');
         stem.setAttribute('pointer-events', 'none');
         group.appendChild(stem);
         const knob = document.createElementNS(NS, 'circle');
         knob.setAttribute('data-shape-ui', '1');
         knob.setAttribute('data-shape-rotate', '1');
-        knob.setAttribute('cx', String(lifted.x));
-        knob.setAttribute('cy', String(lifted.y));
-        knob.setAttribute('r', String(unitOf(root, 6)));
-        knob.setAttribute('fill', '#fde047');
+        knob.setAttribute('cx', String(end.x));
+        knob.setAttribute('cy', String(end.y));
+        knob.setAttribute('r', String(unitOf(root, 4)));
+        knob.setAttribute('fill', '#ccff00');
         knob.setAttribute('stroke', '#111827');
-        knob.setAttribute('stroke-width', String(unit));
-        knob.setAttribute('cursor', 'grab');
+        knob.setAttribute('stroke-width', '1.25');
+        knob.setAttribute('vector-effect', 'non-scaling-stroke');
         knob.addEventListener('pointerdown', beginRotate);
         knob.addEventListener('click', (event) => event.stopPropagation());
         group.appendChild(knob);
@@ -207,13 +239,25 @@ export function bindShapeControls(binding: ShapeBinding): ShapeControls {
   }
 
   function beginRotate(event: PointerEvent) {
-    if (tag.toLowerCase() === 'circle') return;
-    const plane = parentPlane(node);
-    if (!plane) return;
+    if (event.button !== 0 || tag.toLowerCase() === 'circle') return;
+    const center = shapeCenter(tag, attrs);
+    if (!center) return;
+    const origin = pointerAngle(node, center.x, center.y, event);
+    if (origin == null) return;
+    const base = { ...attrs };
+    const angle = shapeAngle(base);
+    const release = holdRotateCursor();
+    const end = () => {
+      release();
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+    };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
     gesture(event, (pointer) => {
-      const center = shapeCenter(tag, attrs);
-      if (!center) return null;
-      return rotateShape(tag, attrs, screenAngle(plane, center.x, center.y, pointer));
+      const now = pointerAngle(node, center.x, center.y, pointer);
+      if (now == null) return null;
+      return rotateShape(tag, base, angle + now - origin);
     });
   }
 
@@ -223,12 +267,19 @@ export function bindShapeControls(binding: ShapeBinding): ShapeControls {
     if (target instanceof Element && target.closest('[data-shape-ui]')) return;
     translateBy(event);
   }
+
+  function refresh(next: ShapeAttrs) {
+    attrs = { ...next };
+    paint();
+  }
+
   body = grab;
   node.addEventListener('pointerdown', body);
   paint();
 
   return {
     grab,
+    refresh,
     dispose() {
       if (body) node.removeEventListener('pointerdown', body);
       group.querySelectorAll('[data-shape-ui]').forEach(item => item.remove());

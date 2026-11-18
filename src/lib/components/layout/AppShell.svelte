@@ -3,7 +3,10 @@
   import logo from '$lib/assets/logo.png';
   import { Button, ButtonGroup, Navbar, NavBrand } from 'flowbite-svelte';
   import { RefreshOutline } from 'flowbite-svelte-icons';
+  import { onMount } from 'svelte';
+  import { readSettings, replaceSettings, settings, settingsOpen, paramCatalog, offerCatalog, type AppSettings } from '$lib/schema/viewStyles';
   import { folderLabel, needsPermission, pickWorkspace, refreshWorkspace, resumeWorkspace, showHome, workspaceOpen } from '$lib/workspace/state';
+  import SettingsDialog from './SettingsDialog.svelte';
 
   let { children, fill = false, bar }: { children?: Snippet; fill?: boolean; bar?: Snippet } = $props();
 
@@ -11,6 +14,7 @@
   const DARK = 'fctactics_ui_dark';
   let wide = $state(false);
   let choosing = $state(false);
+  let viewOpen = $state(false);
 
   function savedWide(): boolean {
     try { return sessionStorage.getItem(WIDE) === '1'; } catch { return false; }
@@ -36,10 +40,39 @@
     }
   }
 
+  async function saveSettings(next: AppSettings): Promise<boolean> {
+    try {
+      const response = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(next)
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  onMount(() => {
+    let stop = false;
+    void (async () => {
+      try {
+        const response = await fetch('/api/settings');
+        if (!response.ok || stop) return;
+        const body = await response.json() as { settings?: unknown };
+        const next = readSettings(body.settings);
+        if (!next || stop) return;
+        replaceSettings(next);
+      } catch { /* la session reste */ }
+    })();
+    return () => { stop = true; };
+  });
+
   $effect(() => {
     if (!$workspaceOpen) return;
     wide = savedWide();
   });
+
 </script>
 
 <div class="flex h-screen flex-col overflow-hidden bg-gray-100 text-gray-900 dark:bg-gray-950 dark:text-white">
@@ -79,6 +112,14 @@
           {/if}
         </Button>
       {/if}
+      {#if $settingsOpen}
+        <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-base p-2 text-sm text-body hover:bg-neutral-secondary-soft hover:text-heading focus:ring-2 focus:ring-neutral-tertiary focus:outline-none" aria-label="Réglages" title="Réglages" onclick={() => viewOpen = true}>
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.3 4.3a1.7 1.7 0 0 1 3.4 0 1.7 1.7 0 0 0 2.5 1 1.7 1.7 0 0 1 2.3 2.3 1.7 1.7 0 0 0 1 2.5 1.7 1.7 0 0 1 0 3.4 1.7 1.7 0 0 0-1 2.5 1.7 1.7 0 0 1-2.3 2.3 1.7 1.7 0 0 0-2.5 1 1.7 1.7 0 0 1-3.4 0 1.7 1.7 0 0 0-2.5-1 1.7 1.7 0 0 1-2.3-2.3 1.7 1.7 0 0 0-1-2.5 1.7 1.7 0 0 1 0-3.4 1.7 1.7 0 0 0 1-2.5 1.7 1.7 0 0 1 2.3-2.3 1.7 1.7 0 0 0 2.5-1Z"/>
+            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+          </svg>
+        </button>
+      {/if}
       <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-base p-2 text-sm text-body hover:bg-neutral-secondary-soft hover:text-heading focus:ring-2 focus:ring-neutral-tertiary focus:outline-none" aria-label="Dark mode" onclick={toggleDark}>
         <svg class="hidden h-4 w-4 dark:block" fill="none" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5V3m0 18v-2M7.05 7.05 5.636 5.636m12.728 12.728L16.95 16.95M5 12H3m18 0h-2M7.05 16.95l-1.414 1.414M18.364 5.636 16.95 7.05M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z"></path>
@@ -89,6 +130,15 @@
       </button>
     </div>
   </Navbar>
+  <SettingsDialog
+    bind:open={viewOpen}
+    choices={$paramCatalog}
+    selected={$settings.params}
+    offers={$offerCatalog}
+    hidden={$settings.hidden}
+    onapply={replaceSettings}
+    onsave={saveSettings}
+  />
   {#if bar}
     <div class="flex shrink-0 items-center px-2 py-1.5 sm:px-4" data-scope="app-path">
       {@render bar()}

@@ -400,9 +400,9 @@ async function readLibrary() {
         out.push({ path: itemPath, name: entry.name, kind: 'folder' });
         await walk(path.join(dir, entry.name), next);
       } else if (/\.ya?ml$/i.test(entry.name)) {
-        out.push({ path: itemPath, name: entry.name.replace(/\.ya?ml$/i, ''), kind: 'yaml' });
+        out.push({ path: itemPath, name: entry.name, kind: 'yaml' });
       } else if (/\.svg$/i.test(entry.name)) {
-        out.push({ path: itemPath, name: entry.name.replace(/\.svg$/i, ''), kind: 'svg' });
+        out.push({ path: itemPath, name: entry.name, kind: 'svg' });
       }
     }
   }

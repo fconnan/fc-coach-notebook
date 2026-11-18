@@ -1,11 +1,15 @@
 <script lang="ts">
-  import { untrack, type Snippet } from 'svelte';
+  import { onDestroy, untrack, type Snippet } from 'svelte';
   import { parse } from 'yaml';
+  import { readSchema } from '$lib/schema/layout';
   import { childFolders, folderEntries, insertElement, insertShape, libraryIcon, pitchOfSource } from '$lib/schema/assist';
-  import { addVia, itemAt, itemOffset, moveKnot, movePoint, paintShape, relocate, removeItems, removeVia, retagShape, setAngle, setSize, setTravel, writeShape, type KnotRole } from '$lib/schema/edit';
+  import { addVia, clearArg, itemAt, itemOffset, moveKnot, movePoint, paintShape, relocate, removeItems, removeVia, retagShape, setAngle, setArg, setSize, setTravel, writeShape, type KnotRole } from '$lib/schema/edit';
   import { DRAW_SHAPES } from '$lib/editor/drawShapes';
-  import type { LibraryEntry } from '$lib/schema/types';
+  import { callDefaults, documentChoices, paramChoices, writeDefaults } from '$lib/schema/parameters';
+  import type { LibraryEntry, SchemaDoc } from '$lib/schema/types';
+  import { clearSettings, keptEntries, publishSettings, settings } from '$lib/schema/viewStyles';
   import DrawTools from './DrawTools.svelte';
+  import StyleDialog from './StyleDialog.svelte';
   import DrawingStage from './DrawingStage.svelte';
   import LoadingIcon from './LoadingIcon.svelte';
   import RawWait from './RawWait.svelte';
@@ -39,10 +43,11 @@
   let picker = $state<string | null>(null);
   let pickerDir = $state('');
   let pickerHost = $state<HTMLDivElement | null>(null);
-  let look = $state<{ x: number; y: number } | null>(null);
+  let look = $state<{ x: number; y: number; span?: number } | null>(null);
   let fitHome = $state(true);
   let fitZoom = $state<(() => void) | undefined>(undefined);
   let animation = $state<Snippet | undefined>();
+  let fileStylesOpen = $state(false);
 
   type YamlEditor = {
     setValue(value: string): void;
@@ -80,8 +85,48 @@
   });
   const currentPitch = $derived(pitchOfSource(source));
   const pickerFolders = $derived(pickerDir ? childFolders(library, pickerDir) : []);
-  const pickerItems = $derived(pickerDir ? folderEntries(library, pickerDir) : []);
+  const pickerItems = $derived(pickerDir ? keptEntries(folderEntries(library, pickerDir), $settings.hidden) : []);
   const pickerRoot = $derived(picker ? `elements/${picker}` : '');
+  const parsedDoc = $derived.by(() => {
+    try {
+      const doc = readSchema(source);
+      return doc && typeof doc === 'object' ? doc : null;
+    } catch {
+      return null;
+    }
+  });
+  const fileChoices = $derived(parsedDoc ? documentChoices(parsedDoc, library, elementId) : []);
+  const fileSelected = $derived(callDefaults(parsedDoc));
+
+  const defaultChoices = $derived(library.flatMap(entry => {
+    const own = (entry.doc.parameters || []).some(item => item && typeof item === 'object' && !Array.isArray(item) && Object.keys(item).length > 0);
+    if (!own) return [];
+    return paramChoices(entry, library).map(choice => ({ element: entry.id, key: choice.key, names: choice.names }));
+  }));
+  const offerGroups = $derived(roots.map(folder => ({
+    folder,
+    entries: folderEntries(library, `elements/${folder}`).map(entry => ({
+      id: entry.id,
+      name: entry.name || entry.type,
+      icon: libraryIcon(entry)
+    }))
+  })));
+
+  $effect(() => {
+    publishSettings(defaultChoices, offerGroups);
+  });
+
+  onDestroy(() => clearSettings());
+
+  function pickFileStyle(element: string, key: string, value: string) {
+    if ((fileSelected[element]?.[key] || '') === value) return;
+    writeYaml(writeDefaults(source, element, key, value));
+  }
+
+  function choicesOf(element: string) {
+    const entry = library.find(item => item.id === element);
+    return entry ? paramChoices(entry, library) : [];
+  }
 
   function takeAnimation(bar: Snippet | undefined) {
     animation = bar;
@@ -129,6 +174,13 @@
     if (!editor || !model || !position) return;
     const ref = itemAt(editor.getValue(), model.getOffsetAt(position));
     if (ref !== picked) picked = ref;
+  }
+
+  function paramItem(ref: string, key: string, value: string) {
+    const editor = yamlEditor;
+    if (!editor) return;
+    const current = editor.getValue();
+    writeItem(ref, value ? setArg(current, ref, key, value) : clearArg(current, ref, key), false);
   }
 
   function turnItem(ref: string, angle: number) {
@@ -227,9 +279,9 @@
   function drawShape(kind: string) {
     try {
       const next = insertShape(source, kind, library, look);
-      const doc = parse(next) as { object?: unknown[] };
-      const index = Math.max(0, (doc.object?.length || 1) - 1);
-      const ref = `object/${index}/${kind}`;
+      const doc = parse(next) as { items?: unknown[] };
+      const index = Math.max(0, (doc.items?.length || 1) - 1);
+      const ref = `items/${index}/${kind}`;
       fault = '';
       writeYaml(next);
       picked = ref;
@@ -337,13 +389,13 @@
       {/if}
     {/snippet}
     {#snippet tools()}
-      <DrawTools shapes={DRAW_SHAPES} oninsert={drawShape} {fitHome} onzoom={fitZoom} />
+      <DrawTools shapes={DRAW_SHAPES} oninsert={drawShape} {fitHome} onzoom={fitZoom} onstyles={() => fileStylesOpen = true} />
     {/snippet}
     {#snippet bottom()}
       {#if animation}{@render animation()}{/if}
     {/snippet}
     {#if loaded}
-      <SchemaPreview {at} {exerciseId} {element} {elementId} {source} editable selected={picked} bind:fitHome bind:fitZoom onpick={pickItem} onmove={moveItemAt} onmoves={moveMany} onknot={knotItem} onvia={viaItem} ontune={tuneItem} onrotate={turnItem} onresize={resizeItem} onlook={(point) => look = point} onfooter={takeAnimation} onshape={reshape} onpaint={paintDrawn} onforget={forgetDrawn} />
+      <SchemaPreview {at} {exerciseId} {element} {elementId} {source} editable selected={picked} bind:fitHome bind:fitZoom {choicesOf} onpick={pickItem} onmove={moveItemAt} onmoves={moveMany} onknot={knotItem} onvia={viaItem} ontune={tuneItem} onrotate={turnItem} onresize={resizeItem} onlook={(point) => look = point} onfooter={takeAnimation} onshape={reshape} onpaint={paintDrawn} onforget={forgetDrawn} onparam={paramItem} />
     {:else}
       <div class="flex h-full items-center justify-center text-body"><LoadingIcon /></div>
     {/if}
@@ -379,6 +431,14 @@
   </div>
 {/if}
 
+<StyleDialog
+  bind:open={fileStylesOpen}
+  title="Styles"
+  choices={fileChoices}
+  selected={fileSelected}
+  onpick={pickFileStyle}
+/>
+
 <style>
   .editor { overflow: hidden; }
   .editor {
@@ -399,15 +459,16 @@
     background: var(--color-neutral-primary);
   }
   .tool {
-    border: 0;
-    border-right: 1px solid var(--color-default-medium);
-    border-radius: 0;
-    background: transparent;
-    padding: 0.2rem 0.55rem;
+    border: 1px solid var(--color-default-medium);
+    border-radius: 0.3rem;
+    background: var(--bg-subtle);
+    padding: 0 0.45rem;
+    min-height: 1.35rem;
     font-size: 0.75rem;
+    line-height: 1.2;
     color: var(--color-heading);
   }
-  .tool:hover { background: var(--color-neutral-secondary-medium); }
+  .tool:hover { border-color: var(--color-default-strong); background: var(--hover-bg); }
   :global(.schema-stage .schema) {
     display: flex;
     flex-direction: column;

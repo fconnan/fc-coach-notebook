@@ -63,7 +63,7 @@
             <ElementThumb file={item.path} kind={item.kind} />
           {/if}
         </span>
-        <span class="name">{item.name}</span>
+        <span class="name">{item.name}{#if item.kind === 'svg'} <span class="tag">SVG</span>{/if}</span>
       </button>
     {/each}
   </div>

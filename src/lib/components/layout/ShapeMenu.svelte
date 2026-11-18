@@ -12,11 +12,13 @@
     canRemove = false,
     addLabel = 'Ajouter un point',
     removeLabel = 'Enlever ce point',
+    sections = [],
     onpaint,
     ondelete,
     onadd,
     onremove,
-    onkind
+    onkind,
+    onparam
   }: {
     x: number;
     y: number;
@@ -30,11 +32,13 @@
     canRemove?: boolean;
     addLabel?: string;
     removeLabel?: string;
+    sections?: { key: string; names: string[]; current: string }[];
     onpaint: (name: 'fill' | 'stroke', value: string) => void;
     ondelete: () => void;
     onadd?: () => void;
     onremove?: () => void;
     onkind?: (kind: PathKind) => void;
+    onparam?: (key: string, value: string) => void;
   } = $props();
 
   let node = $state<HTMLDivElement | null>(null);
@@ -90,6 +94,17 @@
   </label>
   <button type="button" role="menuitem" onclick={ondelete}>Supprimer</button>
   {/if}
+  {#each sections as section (section.key)}
+    <p class="title">{section.key}</p>
+    <button type="button" role="menuitemradio" aria-checked={!section.current} class:on={!section.current} onclick={() => onparam?.(section.key, '')}>
+      <span class="tick">{!section.current ? '✓' : ''}</span>Défaut
+    </button>
+    {#each section.names as name (name)}
+      <button type="button" role="menuitemradio" aria-checked={name === section.current} class:on={name === section.current} onclick={() => onparam?.(section.key, name)}>
+        <span class="tick">{name === section.current ? '✓' : ''}</span>{name}
+      </button>
+    {/each}
+  {/each}
 </div>
 
 <style>
@@ -97,6 +112,8 @@
     position: fixed;
     z-index: 80;
     min-width: 14rem;
+    max-height: 70vh;
+    overflow: auto;
     padding: 0.25rem;
     border: 1px solid var(--color-default-medium);
     border-radius: 0.5rem;
@@ -118,7 +135,8 @@
     text-align: left;
   }
   .menu button { cursor: pointer; }
-  .menu button:hover:not(:disabled), .swatch:hover { background: var(--color-neutral-secondary-medium); }
+  .menu button:hover:not(:disabled), .menu button.on, .swatch:hover { background: var(--color-neutral-secondary-medium); }
+  .tick { width: 1rem; flex: none; }
   .menu button:disabled { opacity: 0.4; cursor: default; }
   .title {
     margin: 0;

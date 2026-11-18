@@ -1060,9 +1060,9 @@ async function listLibrary(dir: Dir): Promise<LibraryItem[]> {
         out.push({ path: itemPath, name, kind: 'folder' });
         await walk(child as Dir, next);
       } else if (/\.ya?ml$/i.test(name)) {
-        out.push({ path: itemPath, name: name.replace(/\.ya?ml$/i, ''), kind: 'yaml' });
+        out.push({ path: itemPath, name, kind: 'yaml' });
       } else if (/\.svg$/i.test(name)) {
-        out.push({ path: itemPath, name: name.replace(/\.svg$/i, ''), kind: 'svg' });
+        out.push({ path: itemPath, name, kind: 'svg' });
       }
     }
   }

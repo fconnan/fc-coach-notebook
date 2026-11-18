@@ -239,7 +239,7 @@
     const draft = $libraryDraft;
     if (!draft || elementRel(draft.path) !== $navItem) return null;
     const base = draft.path.split('/').pop() || '';
-    return { path: draft.path, name: base.replace(/\.(ya?ml|svg)$/i, ''), kind: draft.kind };
+    return { path: draft.path, name: base, kind: draft.kind };
   });
   const elementRows = $derived($libraryItems.filter(item => {
     const rel = elementRel(item.path);

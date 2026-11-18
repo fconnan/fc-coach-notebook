@@ -1,8 +1,34 @@
-import { isMap, isScalar, isSeq, parseDocument, type YAMLMap, type YAMLSeq } from 'yaml';
-import { isSvgTag } from './svgShape';
+import { isMap, isScalar, isSeq, parseDocument, type Document, type YAMLMap, type YAMLSeq } from 'yaml';
+import { isWrapperKey } from './items';
+import { isSvgTag, svgAttrsFromYaml, yamlAttrsFromSvg } from './svgShape';
 
 function pathOf(ref: string): (string | number)[] {
   return ref.split('/').map(part => (/^\d+$/.test(part) ? Number(part) : part));
+}
+
+/** `trajectory` reste le chemin d’édition. Dans le fichier, il est une entrée de `settings`. */
+function storedPath(doc: Document, ref: string): (string | number)[] {
+  const parts = pathOf(ref);
+  if (parts[0] !== 'trajectory' || !isMap(doc.contents)) return parts;
+  const settings = doc.contents.get('settings', true);
+  if (!isSeq(settings)) return parts;
+  const index = settings.items.findIndex(item => isMap(item) && item.has('trajectory'));
+  if (index < 0) return parts;
+  return ['settings', index, ...parts];
+}
+
+function nodeAt(doc: Document, ref: string) {
+  return doc.getIn(storedPath(doc, ref), true);
+}
+
+function listAddress(path: (string | number)[]): { seq: (string | number)[]; index: number } | null {
+  if (path.length >= 4 && typeof path.at(-3) === 'number' && isWrapperKey(String(path.at(-2)))) {
+    return { seq: path.slice(0, -3), index: path.at(-3) as number };
+  }
+  if (path.length >= 2 && typeof path.at(-2) === 'number') {
+    return { seq: path.slice(0, -2), index: path.at(-2) as number };
+  }
+  return null;
 }
 
 /** Descend dans la valeur quand l’item n’a qu’une clé, le type. */
@@ -125,15 +151,23 @@ export function relocate(
   const doc = parseDocument(source);
   if (doc.errors.length) return source;
   const edits: Edit[] = [];
+  const missing: { ref: string; x: number; y: number }[] = [];
   for (const move of moves) {
-    const found = pointEdits(argsOf(doc.getIn(pathOf(move.ref), true)), move.x, move.y, false);
+    const node = argsOf(nodeAt(doc, move.ref));
+    const found = pointEdits(node, move.x, move.y, false);
     if (found) edits.push(...found);
+    else if (isMap(node) && !node.has('p') && !node.has('pos') && !node.has('at') && !node.has('to')) missing.push(move);
   }
   for (const slide of slides) {
-    const found = pointEdits(argsOf(doc.getIn(pathOf(slide.ref), true)), slide.dx, slide.dy, true);
+    const found = pointEdits(argsOf(nodeAt(doc, slide.ref)), slide.dx, slide.dy, true);
     if (found) edits.push(...found);
   }
-  return edits.length ? splice(source, edits) : source;
+  let next = edits.length ? splice(source, edits) : source;
+  for (const move of missing) {
+    next = writeToken(next, move.ref, 'x', round(move.x));
+    next = writeToken(next, move.ref, 'y', round(move.y));
+  }
+  return next;
 }
 
 export type KnotRole = 'start' | 'via' | 'end';
@@ -156,7 +190,7 @@ function writePointNode(source: string, node: unknown, x: number, y: number): st
 export function moveKnot(source: string, ref: string, role: KnotRole, index: number, x: number, y: number): string {
   const doc = parseDocument(source);
   if (doc.errors.length) return source;
-  const node = argsOf(doc.getIn(pathOf(ref), true));
+  const node = argsOf(nodeAt(doc, ref));
   if (isSeq(node)) return role === 'end' ? writePointNode(source, node, x, y) ?? source : source;
   if (!isMap(node)) return source;
   if (role === 'start') {
@@ -219,7 +253,7 @@ function insertInSeq(source: string, seq: YAMLSeq, index: number, text: string):
 export function addVia(source: string, ref: string, index: number, x: number, y: number): string {
   const doc = parseDocument(source);
   if (doc.errors.length) return source;
-  const node = argsOf(doc.getIn(pathOf(ref), true));
+  const node = argsOf(nodeAt(doc, ref));
   const spot = spotText(x, y);
   if (isSeq(node)) {
     const span = nodeSpan(node);
@@ -297,7 +331,7 @@ function removeSeqItem(source: string, seq: YAMLSeq, index: number): string | nu
 export function removeVia(source: string, ref: string, index: number): string {
   const doc = parseDocument(source);
   if (doc.errors.length) return source;
-  const node = argsOf(doc.getIn(pathOf(ref), true));
+  const node = argsOf(nodeAt(doc, ref));
   if (!isMap(node)) return source;
   const via = node.get('via', true);
   if (!isSeq(via) || index < 0 || index >= via.items.length) return source;
@@ -314,7 +348,7 @@ function startOf(node: unknown): number | null {
 function writeToken(source: string, ref: string, key: string, token: string): string {
   const doc = parseDocument(source);
   if (doc.errors.length) return source;
-  const node = argsOf(doc.getIn(pathOf(ref), true));
+  const node = argsOf(nodeAt(doc, ref));
   if (!isMap(node) || !node.range) return source;
   const existing = scalarRange(node.get(key, true));
   if (existing) return splice(source, [{ start: existing[0], end: existing[1], text: token }]);
@@ -338,7 +372,7 @@ function writeScalar(source: string, ref: string, key: string, value: number): s
 export function shapeColor(source: string, ref: string, name: 'fill' | 'stroke'): string {
   const doc = parseDocument(source);
   if (doc.errors.length) return '';
-  const node = argsOf(doc.getIn(pathOf(ref), true));
+  const node = argsOf(nodeAt(doc, ref));
   if (!isMap(node)) return '';
   const value = node.get(name);
   return typeof value === 'string' ? value : '';
@@ -350,13 +384,12 @@ function shapeToken(key: string, value: string): string {
   return JSON.stringify(value);
 }
 
-/** Attributs d’un tracé SVG. */
-export function readShape(source: string, ref: string): { tag: string; attrs: Record<string, string> } | null {
+function readShapeMap(source: string, ref: string): { tag: string; attrs: Record<string, string> } | null {
   const tag = ref.split('/').filter(Boolean).pop() || '';
   if (!isSvgTag(tag)) return null;
   const doc = parseDocument(source);
   if (doc.errors.length) return null;
-  const node = argsOf(doc.getIn(pathOf(ref), true));
+  const node = argsOf(nodeAt(doc, ref));
   if (!isMap(node)) return null;
   const attrs: Record<string, string> = {};
   for (const item of node.items) {
@@ -368,10 +401,25 @@ export function readShape(source: string, ref: string): { tag: string; attrs: Re
   return { tag, attrs };
 }
 
+function dropShapeKey(source: string, ref: string, key: string): string {
+  const doc = parseDocument(source);
+  if (doc.errors.length) return source;
+  const node = argsOf(nodeAt(doc, ref));
+  if (!isMap(node) || !node.has(key)) return source;
+  return removeKey(source, node, key) ?? source;
+}
+
+/** Attributs SVG d’un tracé. Le YAML nomme le centre `x`/`y`. */
+export function readShape(source: string, ref: string): { tag: string; attrs: Record<string, string> } | null {
+  const found = readShapeMap(source, ref);
+  if (!found) return null;
+  return { tag: found.tag, attrs: svgAttrsFromYaml(found.tag, found.attrs) };
+}
+
 function renameShapeKey(source: string, ref: string, tag: string): string | null {
   const doc = parseDocument(source);
   if (doc.errors.length) return null;
-  const parent = doc.getIn(pathOf(ref).slice(0, -1), true);
+  const parent = doc.getIn(storedPath(doc, ref).slice(0, -1), true);
   if (!isMap(parent) || parent.items.length !== 1) return null;
   const key = parent.items[0]?.key;
   const start = startOf(key);
@@ -385,7 +433,7 @@ function dropMissingKeys(source: string, ref: string, attrs: Record<string, stri
   for (;;) {
     const doc = parseDocument(text);
     if (doc.errors.length) return text;
-    const node = argsOf(doc.getIn(pathOf(ref), true));
+    const node = argsOf(nodeAt(doc, ref));
     if (!isMap(node)) return text;
     const extra = node.items.find(item => isScalar(item.key) && !Object.prototype.hasOwnProperty.call(attrs, String(item.key.value ?? '')));
     if (!extra || !isScalar(extra.key)) return text;
@@ -406,18 +454,25 @@ export function retagShape(source: string, ref: string, tag: string, attrs: Reco
     text = renamed;
     nextRef = ref.slice(0, ref.length - current.length) + tag;
   }
-  return { source: dropMissingKeys(writeShape(text, nextRef, attrs), nextRef, attrs), ref: nextRef };
+  const stored = yamlAttrsFromSvg(tag, attrs);
+  return { source: dropMissingKeys(writeShape(text, nextRef, attrs), nextRef, stored), ref: nextRef };
 }
 
 /** Écrit les attributs d’un tracé, sans reformater le reste du document. */
 export function writeShape(source: string, ref: string, attrs: Record<string, string>): string {
-  const current = readShape(source, ref);
+  const tag = ref.split('/').filter(Boolean).pop() || '';
+  const stored = yamlAttrsFromSvg(tag, attrs);
+  const current = readShapeMap(source, ref);
   if (!current) return source;
   let next = source;
-  for (const [key, value] of Object.entries(attrs)) {
+  for (const [key, value] of Object.entries(stored)) {
     if ((current.attrs[key] ?? '') === value) continue;
     next = writeToken(next, ref, key, shapeToken(key, value));
     current.attrs[key] = value;
+  }
+  for (const key of ['cx', 'cy']) {
+    if (key in stored || !(key in current.attrs)) continue;
+    next = dropShapeKey(next, ref, key);
   }
   return next;
 }
@@ -430,8 +485,7 @@ export function paintShape(source: string, ref: string, name: 'fill' | 'stroke',
 }
 
 function refIndex(ref: string): number {
-  const index = pathOf(ref).at(-2);
-  return typeof index === 'number' ? index : -1;
+  return listAddress(pathOf(ref))?.index ?? -1;
 }
 
 /** Retire plusieurs items. Les plus loin dans la liste partent d’abord, pour ne pas décaler les suivants. */
@@ -445,15 +499,16 @@ export function removeItem(source: string, ref: string): string {
   const doc = parseDocument(source);
   if (doc.errors.length) return source;
   const path = pathOf(ref);
-  if (path.length < 2) return source;
-  const index = path[path.length - 2];
-  if (typeof index !== 'number') return source;
-  const seq = doc.getIn(path.slice(0, -2), true);
+  const address = listAddress(path);
+  if (!address) return source;
+  const { index } = address;
+  const seq = doc.getIn(address.seq, true);
   if (!isSeq(seq) || index < 0 || index >= seq.items.length) return source;
-  if (seq.items.length === 1 && path.at(-3) === 'object') {
-    const parentPath = path.slice(0, -3);
+  const listKey = String(address.seq.at(-1) ?? '');
+  if (seq.items.length === 1 && (listKey === 'items' || listKey === 'object')) {
+    const parentPath = address.seq.slice(0, -1);
     const parent = parentPath.length ? doc.getIn(parentPath, true) : doc.contents;
-    if (isMap(parent)) return dropListKey(source, parent, 'object') ?? source;
+    if (isMap(parent)) return dropListKey(source, parent, listKey) ?? source;
   }
   const span = nodeSpan(seq.items[index]);
   if (!span) return source;
@@ -472,7 +527,7 @@ export function removeItem(source: string, ref: string): string {
 export function setTravel(source: string, ref: string, key: 'wave' | 'amp', value: number): string {
   const doc = parseDocument(source);
   if (doc.errors.length) return source;
-  const node = argsOf(doc.getIn(pathOf(ref), true));
+  const node = argsOf(nodeAt(doc, ref));
   if (isMap(node)) return writeScalar(source, ref, key, value);
   if (!isSeq(node) || node.items.length < 2) return source;
   const span = nodeSpan(node);
@@ -489,6 +544,22 @@ export function setAngle(source: string, ref: string, angle: number): string {
   return writeScalar(source, ref, 'angle', angle);
 }
 
+/** Écrit un argument de l’item. Il l’emporte sur les defaults, la session et la déclaration. */
+export function setArg(source: string, ref: string, key: string, value: string): string {
+  if (!/^[\w-]+$/.test(key) || !/^[\w.-]+$/.test(value)) return source;
+  return writeToken(source, ref, key, value);
+}
+
+/** Retire un argument de l’item. La valeur revient aux defaults, puis à la session, puis à la déclaration. */
+export function clearArg(source: string, ref: string, key: string): string {
+  if (!/^[\w-]+$/.test(key)) return source;
+  const doc = parseDocument(source);
+  if (doc.errors.length) return source;
+  const node = argsOf(nodeAt(doc, ref));
+  if (!isMap(node)) return source;
+  return removeKey(source, node, key) ?? source;
+}
+
 /** Écrit la taille de l’item. Une valeur nulle laisse l’axe inchangé. x et y suivent le centre si le bord opposé reste fixe. */
 export function setSize(source: string, ref: string, w: number | null, h: number | null, x?: number | null, y?: number | null): string {
   let next = source;
@@ -503,7 +574,7 @@ export function setSize(source: string, ref: string, w: number | null, h: number
 export function itemOffset(source: string, ref: string): number | null {
   const doc = parseDocument(source);
   if (doc.errors.length) return null;
-  const node = argsOf(doc.getIn(pathOf(ref), true));
+  const node = argsOf(nodeAt(doc, ref));
   if (!isMap(node)) return startOf(node);
   const point = node.get('p', true) || node.get('pos', true);
   const x = isMap(point) ? point.get('x', true) : node.has('x') ? node.get('x', true) : null;
@@ -525,7 +596,7 @@ function withDash(source: string, start: number): number {
   return at;
 }
 
-const GENRES = ['object', 'shape', 'formation', 'zone'];
+const NESTED = ['items', 'shape', 'formation', 'zone'];
 
 /** Référence de l’élément sous le curseur. */
 export function itemAt(source: string, offset: number): string {
@@ -536,7 +607,7 @@ export function itemAt(source: string, offset: number): string {
     const span = nodeSpan(node);
     if (span) spans.push({ ref, start: withDash(source, span[0]), end: span[1] });
   };
-  const walkList = (items: unknown, path: string, genre: string) => {
+  const walkPlain = (items: unknown, path: string, genre: string) => {
     if (!isSeq(items)) return;
     items.items.forEach((item, index) => {
       if (!isMap(item) || item.items.length !== 1 || !isScalar(item.items[0]?.key)) return;
@@ -544,13 +615,35 @@ export function itemAt(source: string, offset: number): string {
       if (!type) return;
       const ref = `${path}${genre}/${index}/${type}`;
       add(item, ref);
-      const value = item.items[0]?.value;
-      if (!isMap(value)) return;
-      for (const nested of GENRES) walkList(value.get(nested, true), `${ref}/`, nested);
+      walkCall(item.items[0]?.value, ref);
     });
   };
-  for (const genre of GENRES) walkList(doc.contents.get(genre, true), '', genre);
-  const trajectory = doc.contents.get('trajectory', true);
+  const walkCall = (value: unknown, ref: string) => {
+    if (!isMap(value)) return;
+    for (const nested of NESTED) walkPlain(value.get(nested, true), `${ref}/`, nested);
+  };
+  const walkItems = (items: unknown, path: string) => {
+    if (!isSeq(items)) return;
+    items.items.forEach((item, index) => {
+      if (!isMap(item) || item.items.length !== 1 || !isScalar(item.items[0]?.key)) return;
+      const type = String(item.items[0].key.value ?? '');
+      if (!type) return;
+      const value = item.items[0]?.value;
+      if (isWrapperKey(type) && isMap(value) && value.items.length === 1 && isScalar(value.items[0]?.key)) {
+        const inner = String(value.items[0].key.value ?? '');
+        if (!inner) return;
+        const ref = `${path}items/${index}/${type}/${inner}`;
+        add(item, ref);
+        walkCall(value.items[0]?.value, ref);
+        return;
+      }
+      const ref = `${path}items/${index}/${type}`;
+      add(item, ref);
+      walkCall(value, ref);
+    });
+  };
+  walkItems(doc.contents.get('items', true), '');
+  const trajectory = nodeAt(doc, 'trajectory');
   if (trajectory) add(trajectory, 'trajectory');
   const phases = doc.contents.get('phases', true);
   if (isSeq(phases)) {

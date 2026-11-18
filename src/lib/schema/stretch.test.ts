@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { readSchema } from './layout';
 import { layoutAxis, parseStretch, stretchSvg } from './stretch';
 import { readSvg } from './svg';
 
-const ladder = readSvg(readFileSync(new URL('../../../data/elements/objects/object.ladder.svg', import.meta.url), 'utf8'));
-const asset = { markup: ladder.markup, viewBox: ladder.viewBox, stretch: ladder.stretch };
+const ladder = readSvg(readFileSync(new URL('../../../data/elements/objects/ladder.svg', import.meta.url), 'utf8'));
+const doc = readSchema(readFileSync(new URL('../../../data/elements/objects/object.ladder.yaml', import.meta.url), 'utf8'));
+const asset = { markup: ladder.markup, viewBox: ladder.viewBox, stretch: { x: doc['stretch-x'], y: doc['stretch-y'] } };
 
 function lines(markup: string): number[] {
   return [...markup.matchAll(/<line\b[^>]*\bx1="([^"]+)"/g)].map(match => Number(match[1]));

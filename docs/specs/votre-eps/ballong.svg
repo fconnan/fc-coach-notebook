@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Base blanche avec contour -->
+  <circle cx="50" cy="50" r="46" fill="#ffffff" stroke="#222222" stroke-width="3"/>
+  
+  <!-- Pentagone central -->
+  <polygon points="50,28 63,38 58,54 42,54 37,38" fill="#222222"/>
+  
+  <!-- Pentagones extérieurs -->
+  <polygon points="25,18 38,12 46,25 38,38 23,33" fill="#222222"/>
+  <polygon points="75,18 62,12 54,25 62,38 77,33" fill="#222222"/>
+  <polygon points="15,60 28,55 35,70 25,85 12,75" fill="#222222"/>
+  <polygon points="85,60 72,55 65,70 75,85 88,75" fill="#222222"/>
+  <polygon points="50,85 38,75 42,60 58,60 62,75" fill="#222222"/>
+
+  <!-- Lignes de liaison -->
+  <line x1="50" y1="28" x2="50" y2="12" stroke="#222222" stroke-width="2.5"/>
+  <line x1="63" y1="38" x2="75" y2="28" stroke="#222222" stroke-width="2.5"/>
+  <line x1="58" y1="54" x2="70" y2="65" stroke="#222222" stroke-width="2.5"/>
+  <line x1="42" y1="54" x2="30" y2="65" stroke="#222222" stroke-width="2.5"/>
+  <line x1="37" y1="38" x2="25" y2="28" stroke="#222222" stroke-width="2.5"/>
+  
+  <!-- Lignes vers le bas -->
+  <line x1="50" y1="85" x2="50" y2="96" stroke="#222222" stroke-width="2.5"/>
+  <line x1="38" y1="75" x2="25" y2="85" stroke="#222222" stroke-width="2.5"/>
+  <line x1="62" y1="75" x2="75" y2="85" stroke="#222222" stroke-width="2.5"/>
+  
+  <!-- Ombre / Relief 3D (effet légèrement plus foncé en bas à droite) -->
+  <path d="M 50,96 A 46,46 0 0,0 96,50 A 46,46 0 0,0 50,4 A 46,46 0 0,1 50,96 Z" fill="#000000" opacity="0.05"/>
+</svg>

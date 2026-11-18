@@ -7,7 +7,8 @@
     fitHome = true,
     oninsert,
     onfit,
-    onzoom
+    onzoom,
+    onstyles
   }: {
     shapes: DrawShape[];
     /** Ajuster le viewBox. Réservé à l’éditeur de fichier SVG. */
@@ -17,6 +18,8 @@
     oninsert: (kind: string) => void;
     onfit?: () => void;
     onzoom?: () => void;
+    /** Ouvre le choix des styles écrits dans le schéma. */
+    onstyles?: () => void;
   } = $props();
 </script>
 
@@ -32,6 +35,9 @@
       {@render icon('M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5M9 9h6v6H9z')}
     </button>
   {/if}
+  {#if onstyles}
+    <button type="button" class="styles" title="Styles" onclick={() => onstyles?.()}>Styles</button>
+  {/if}
   {#if onzoom && !fitHome}
     <button type="button" class="zoom" title="Zoom pour voir tous les objets" onclick={() => onzoom?.()}>Fit Zoom</button>
   {/if}
@@ -46,11 +52,11 @@
     display: flex;
     flex-shrink: 0;
     align-items: center;
-    gap: 0.2rem;
+    gap: 0.12rem 0.28rem;
     overflow: auto;
     border-bottom: 1px solid var(--color-default-medium);
     background: var(--color-neutral-primary);
-    padding: 0.3rem;
+    padding: 0.12rem 0.3rem;
   }
   .tools button {
     position: relative;
@@ -58,26 +64,30 @@
     flex-shrink: 0;
     align-items: center;
     justify-content: center;
-    width: 1.9rem;
-    height: 1.9rem;
-    border: 1px solid transparent;
+    width: 1.35rem;
+    height: 1.35rem;
+    border: 1px solid var(--color-default-medium);
     border-radius: 0.3rem;
-    background: transparent;
+    background: var(--bg-subtle);
+    padding: 0;
     color: var(--color-heading);
   }
   .tools button:hover:not(:disabled) {
-    border-color: var(--color-default-medium);
-    background: var(--color-neutral-secondary-medium);
+    border-color: var(--color-default-strong);
+    background: var(--hover-bg);
   }
+  .tools button.styles,
   .tools button.zoom {
     width: auto;
+    height: auto;
+    min-height: 1.35rem;
     margin-left: auto;
-    border-color: var(--color-default-medium);
-    padding: 0 0.55rem;
+    padding: 0 0.45rem;
     font-size: 0.75rem;
+    line-height: 1.2;
     white-space: nowrap;
   }
-  .zoom:hover { background: var(--color-neutral-secondary-medium); }
+  .tools button.styles + button.zoom { margin-left: 0.28rem; }
   .sep {
     flex-shrink: 0;
     width: 1px;

@@ -47,6 +47,88 @@ function num(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Un rectangle déjà enregistré a son coin en `x`/`y`.
+ * Sa rotation, elle, tourne autour du centre : le pivot le distingue d’un rectangle centré.
+ */
+export function rectStoredAsCorner(source: Record<string, unknown>): boolean {
+  const transform = typeof source.transform === 'string' ? source.transform : '';
+  const match = /rotate\(\s*[-\d.eE+]+(?:[\s,]+([-\d.eE+]+)[\s,]+([-\d.eE+]+))?\s*\)/.exec(transform);
+  if (!match?.[1] || match[2] === undefined) return false;
+  const px = Number(match[1]);
+  const py = Number(match[2]);
+  const x = num(source.x);
+  const y = num(source.y);
+  const w = num(source.width);
+  const h = num(source.height);
+  if (x == null || y == null || w == null || h == null || !Number.isFinite(px) || !Number.isFinite(py)) return false;
+  const toCenter = Math.hypot(px - x, py - y);
+  const toCorner = Math.hypot(px - (x + w / 2), py - (y + h / 2));
+  return toCorner + 1e-3 < toCenter;
+}
+
+/** YAML → attributs SVG. `x`/`y` d’un cercle ou d’un rectangle est le centre. */
+export function svgAttrsFromYaml(tag: string, attrs: Record<string, string>): Record<string, string> {
+  const next = { ...attrs };
+  if (tag === 'circle' || tag === 'ellipse') {
+    if (next.x !== undefined) next.cx = next.x;
+    if (next.y !== undefined) next.cy = next.y;
+    delete next.x;
+    delete next.y;
+    return next;
+  }
+  if (tag === 'rect' && !rectStoredAsCorner(next)) {
+    const x = num(next.x);
+    const y = num(next.y);
+    const w = num(next.width);
+    const h = num(next.height);
+    if (x != null && w != null) next.x = fmt(x - w / 2);
+    if (y != null && h != null) next.y = fmt(y - h / 2);
+  }
+  return next;
+}
+
+/** Attributs SVG → YAML. Le centre redevient `x`/`y`. */
+export function yamlAttrsFromSvg(tag: string, attrs: Record<string, string>): Record<string, string> {
+  const next = { ...attrs };
+  if (tag === 'circle' || tag === 'ellipse') {
+    if (next.cx !== undefined) next.x = next.cx;
+    if (next.cy !== undefined) next.y = next.cy;
+    delete next.cx;
+    delete next.cy;
+    return next;
+  }
+  if (tag === 'rect') {
+    const x = num(next.x);
+    const y = num(next.y);
+    const w = num(next.width);
+    const h = num(next.height);
+    if (x != null && w != null) next.x = fmt(x + w / 2);
+    if (y != null && h != null) next.y = fmt(y + h / 2);
+  }
+  return next;
+}
+
+function centeredSource(tag: string, source: Record<string, unknown>): Record<string, unknown> {
+  const strings: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value == null) continue;
+    strings[key] = typeof value === 'string' ? value : String(value);
+  }
+  const svg = svgAttrsFromYaml(tag, strings);
+  const next: Record<string, unknown> = { ...source };
+  if (tag === 'circle' || tag === 'ellipse') {
+    if (svg.cx !== undefined) next.cx = num(svg.cx);
+    if (svg.cy !== undefined) next.cy = num(svg.cy);
+    delete next.x;
+    delete next.y;
+  } else if (tag === 'rect') {
+    if (svg.x !== undefined) next.x = num(svg.x);
+    if (svg.y !== undefined) next.y = num(svg.y);
+  }
+  return next;
+}
+
 function esc(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
@@ -226,7 +308,7 @@ export function drawSvg(
   pick = ''
 ): { markup: string; box: InkBox } | null {
   if (!isSvgTag(tag) || !raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const source = raw as Record<string, unknown>;
+  const source = centeredSource(tag, raw as Record<string, unknown>);
   if (!GEOM[tag].some(name => source[name] !== undefined)) return null;
   const attrs: Record<string, string> = {};
   for (const name of GEOM[tag]) {

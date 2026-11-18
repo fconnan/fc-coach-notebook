@@ -3,7 +3,6 @@
   import { applyParams } from '$lib/schema/params';
   import { liveElementPreview } from '$lib/schema/preview';
   import { dottedId } from '$lib/schema/scene';
-  import { hasStretch, stretchSvg, viewBoxOf } from '$lib/schema/stretch';
   import { readSvg } from '$lib/schema/svg';
   import { generateTrajectory } from '$lib/trajectory';
 
@@ -35,12 +34,7 @@
 
   function drawnSvg(source: string): string {
     if (/\bdata-track="1"/.test(source)) return trackThumb(source);
-    const filled = applyParams(source.replace(/<script\b[\s\S]*?<\/script>/gi, ''), {});
-    const asset = readSvg(filled);
-    const box = viewBoxOf(asset.viewBox);
-    if (!box || !hasStretch(asset.stretch)) return filled;
-    const out = stretchSvg(asset, box.w, box.h);
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${out.viewBox}">${out.markup}</svg>`;
+    return applyParams(source.replace(/<script\b[\s\S]*?<\/script>/gi, ''), {});
   }
 
   async function paint(target: string, shape: 'yaml' | 'svg'): Promise<string> {

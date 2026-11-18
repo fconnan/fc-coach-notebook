@@ -5,6 +5,7 @@ import { configureMonacoYaml } from 'monaco-yaml';
 import '../../../node_modules/monaco-editor/min/vs/editor/editor.main.css';
 import { formatSchema } from './format';
 import { schemaDocument } from './language';
+import type { SchemaDoc } from './types';
 
 self.MonacoEnvironment = {
   getWorker(_workerId: string, label: string) {
@@ -31,7 +32,7 @@ function installFormatter() {
 export function mountYaml(
   host: HTMLElement,
   value: string,
-  entries: { id: string; type: string; name: string }[],
+  entries: { id: string; type: string; name: string; doc?: SchemaDoc }[],
   onChange: (text: string) => void
 ) {
   const options = {

@@ -26,7 +26,7 @@
     resetKey = '',
     frameOf,
     preset = undefined as ((root: SVGSVGElement, lensW: number, lensH: number) => Camera | null) | undefined,
-    onlook = undefined as ((point: { x: number; y: number }) => void) | undefined,
+    onlook = undefined as ((point: { x: number; y: number; span?: number }) => void) | undefined,
     onview = undefined as (() => void) | undefined,
     onpointerdown = undefined as ((event: PointerEvent) => void) | undefined,
     onpointermove = undefined as ((event: PointerEvent) => void) | undefined,
@@ -49,7 +49,7 @@
     resetKey?: string;
     frameOf: (root: SVGSVGElement) => Frame | null;
     preset?: (root: SVGSVGElement, lensW: number, lensH: number) => Camera | null;
-    onlook?: (point: { x: number; y: number }) => void;
+    onlook?: (point: { x: number; y: number; span?: number }) => void;
     onview?: () => void;
     onpointerdown?: (event: PointerEvent) => void;
     onpointermove?: (event: PointerEvent) => void;
@@ -75,6 +75,7 @@
   let camera: Camera | null = null;
   let basePpm: number | null = null;
   let seenKey = '';
+  let seenSpan = 0;
   let told = '';
   let cursor: { x: number; y: number } | null = null;
 
@@ -91,13 +92,16 @@
   function publishLook() {
     const cam = camera;
     const tell = untrack(() => onlook);
-    if (!cam || !tell) return;
-    const x = Math.round(cam.worldX * 100) / 100;
-    const y = Math.round(cam.worldY * 100) / 100;
-    const key = `${x},${y}`;
+    const host = lens;
+    if (!cam || !tell || !(cam.ppm > 0)) return;
+    const near = (value: number) => (Math.abs(value) * cam.ppm < 1.5 ? 0 : Math.round(value * 100) / 100);
+    const x = near(cam.worldX);
+    const y = near(cam.worldY);
+    const span = host ? Math.round(Math.min(host.clientWidth, host.clientHeight) / cam.ppm * 100) / 100 : 0;
+    const key = `${x},${y},${span}`;
     if (key === told) return;
     told = key;
-    tell({ x, y });
+    tell({ x, y, span });
   }
 
   function applyCamera(root: SVGSVGElement, host: HTMLElement, frame: Frame) {
@@ -145,6 +149,7 @@
       seenKey = resetKey;
       camera = null;
       basePpm = null;
+      seenSpan = 0;
       told = '';
       zoom = 1;
       fitted = null;
@@ -164,6 +169,13 @@
       if (retry) requestAnimationFrame(() => settle(false));
       return;
     }
+    const span = Number(root.dataset.length || 0);
+    if (seenSpan > 0 && span > 0 && (span > seenSpan * 2 || seenSpan > span * 2)) {
+      camera = null;
+      basePpm = null;
+    }
+    if (span > 0) seenSpan = span;
+    if (!camera && root.querySelector('.fc-pitch, [data-fixed]')) fitObjects();
     if (!camera) adoptCamera(root, host, frame);
     if (!camera) return;
     applyCamera(root, host, frame);
@@ -291,7 +303,7 @@
   }
 
   function objectNodes(root: SVGSVGElement): SVGGraphicsElement[] {
-    const picked = [...root.querySelectorAll('[data-pick]')]
+    const picked = [...root.querySelectorAll('[data-pick], [data-fixed]')]
       .filter((node): node is SVGGraphicsElement => node instanceof SVGGraphicsElement && !node.closest('#svg-edit, #svg-selection'));
     if (picked.length) return picked;
     const pitch = root.querySelector('.fc-pitch');
@@ -303,20 +315,35 @@
   function objectExtent(root: SVGSVGElement, frame: Frame): { minX: number; minY: number; maxX: number; maxY: number } | null {
     const into = root.getScreenCTM()?.inverse();
     if (!into) return null;
+    const limit = Math.max(Number(root.dataset.length || 0), 1) * 4;
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
     for (const node of objectNodes(root)) {
+      if (node.closest('defs')) continue;
       const from = node.getScreenCTM();
       if (!from) continue;
       let box: DOMRect;
       try { box = node.getBBox(); }
       catch { continue; }
       if (!(box.width > 0) && !(box.height > 0)) continue;
+      let left = Infinity;
+      let top = Infinity;
+      let right = -Infinity;
+      let bottom = -Infinity;
+      const worlds: { x: number; y: number }[] = [];
       for (const [x, y] of [[box.x, box.y], [box.x + box.width, box.y], [box.x, box.y + box.height], [box.x + box.width, box.y + box.height]]) {
         const point = new DOMPoint(x, y).matrixTransform(from).matrixTransform(into);
         const world = worldPoint(frame, point.x, point.y);
+        worlds.push(world);
+        left = Math.min(left, world.x);
+        right = Math.max(right, world.x);
+        top = Math.min(top, world.y);
+        bottom = Math.max(bottom, world.y);
+      }
+      if (Math.max(box.width, box.height) > 40 && Math.max(right - left, bottom - top) > limit) continue;
+      for (const world of worlds) {
         minX = Math.min(minX, world.x);
         minY = Math.min(minY, world.y);
         maxX = Math.max(maxX, world.x);
@@ -471,8 +498,8 @@
       let delta = event.deltaY;
       if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
       else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= host.clientHeight;
-      const next = Math.min(basePpm * 8, Math.max(basePpm * 0.4, camera.ppm * Math.exp(-delta * 0.0018)));
-      if (Math.abs(next - camera.ppm) < 0.01) return;
+      const next = camera.ppm * Math.exp(-delta * 0.0018);
+      if (!Number.isFinite(next) || next <= 0) return;
       const rect = host.getBoundingClientRect();
       const fx = (event.clientX - rect.left) / rect.width;
       const fy = (event.clientY - rect.top) / rect.height;
@@ -492,8 +519,8 @@
     let delta = event.deltaY;
     if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
     else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= host.clientHeight;
-    const next = Math.min(8, Math.max(0.4, zoom * Math.exp(-delta * 0.0018)));
-    if (Math.abs(next - zoom) < 0.001) return;
+    const next = zoom * Math.exp(-delta * 0.0018);
+    if (!Number.isFinite(next) || next <= 0) return;
     const ratio = next / zoom;
     const rect = host.getBoundingClientRect();
     const offsetX = event.clientX - rect.left;
@@ -618,8 +645,9 @@
   .sheet.editing :global([data-box-handle="w"]) { cursor: ew-resize; }
   .sheet.editing :global(circle[data-handle]),
   .sheet.editing :global(rect[data-handle]),
-  .sheet.editing :global([data-knot]),
-  .sheet.editing :global([data-rotate]) { cursor: grab; }
+  .sheet.editing :global([data-knot]) { cursor: grab; }
+  .sheet.editing :global([data-rotate] .fc-knob),
+  .sheet.editing :global([data-shape-rotate]) { cursor: var(--cursor-rotate); }
   .sheet.editing :global([data-resize="x"]) { cursor: ew-resize; }
   .sheet.editing :global([data-resize="y"]) { cursor: ns-resize; }
   .sheet.editing :global([data-resize="xy"]) { cursor: nwse-resize; }

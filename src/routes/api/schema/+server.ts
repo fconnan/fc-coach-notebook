@@ -1,48 +1,14 @@
 import { json } from '@sveltejs/kit';
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { parse } from 'yaml';
 import type { RequestHandler } from './$types';
-import { dottedId, elementKind, elementScene, libraryFor } from '$lib/schema/scene';
-import { fitMode } from '$lib/schema/fit';
-import { hasStretch } from '$lib/schema/stretch';
-import { readSvg } from '$lib/schema/svg';
-import { parseShare } from '$lib/schema/size';
-import { SCHEMA_VERSION, type LibraryEntry, type SchemaDoc, type SizeSpec, type StretchSpec, type SvgAsset, type SvgVariant } from '$lib/schema/types';
+import { loadLibrary, svgOwnerProps } from '$lib/schema/library';
+import { elementScene, libraryFor } from '$lib/schema/scene';
+import type { LibraryEntry } from '$lib/schema/types';
 import { isUuidFolder, markdownTitle } from '$lib/workspace/exerciseFile';
 import { renameToTitle } from '$lib/workspace/renameFolder';
 
 const root = path.resolve('data');
-
-/** Le YAML de l’élément l’emporte sur les attributs du SVG, axe par axe. */
-function applyStretch(asset: SvgAsset, doc: SchemaDoc): SvgAsset {
-  const spec: StretchSpec = {
-    x: doc.stretch?.x || asset.stretch?.x,
-    y: doc.stretch?.y || asset.stretch?.y
-  };
-  const stretched = !spec.x && !spec.y
-    ? applySize({ ...asset, stretch: undefined }, doc)
-    : applySize({ ...asset, stretch: spec }, doc);
-  return applyFit(stretched, doc);
-}
-
-/** Le YAML de l’élément l’emporte sur data-fit. Sans flag, un dessin à bandes reste déformable. */
-function applyFit(asset: SvgAsset, doc: SchemaDoc): SvgAsset {
-  const fromDoc = doc.fit !== undefined && String(doc.fit).trim() !== '';
-  const mode = fromDoc ? fitMode(doc.fit) : asset.fit ?? (hasStretch(asset.stretch) ? 'free' : 'none');
-  return { ...asset, fit: mode === 'none' ? undefined : mode };
-}
-
-/** Le YAML de l’élément l’emporte sur les attributs du SVG. */
-function applySize(asset: SvgAsset, doc: SchemaDoc): SvgAsset {
-  const fromDoc = doc.size;
-  const realW = fromDoc?.real?.w ?? asset.size?.realW;
-  const realH = fromDoc?.real?.h ?? asset.size?.realH;
-  const min = fromDoc?.min !== undefined ? parseShare(fromDoc.min) : asset.size?.min;
-  if (realW === undefined && realH === undefined && min === undefined) return { ...asset, size: undefined };
-  const size: SizeSpec = { realW, realH, min };
-  return { ...asset, size };
-}
 
 function inside(target: string): string | null {
   const abs = path.resolve(root, target);
@@ -87,87 +53,8 @@ async function resolveDir(at: string, id: string): Promise<string | null> {
   return findExerciseDir(id);
 }
 
-async function walk(dir: string, out: string[]) {
-  const entries = await readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const next = path.join(dir, entry.name);
-    if (entry.isDirectory()) await walk(next, out);
-    else if (entry.isFile() && /\.(ya?ml|svg)$/i.test(entry.name)) out.push(next);
-  }
-}
-
-async function variantAssets(file: string, variants: SvgVariant[] | undefined, doc: SchemaDoc): Promise<SvgAsset[]> {
-  const assets: SvgAsset[] = [];
-  const dir = path.dirname(file);
-  const home = path.join(root, 'elements');
-  for (const variant of variants || []) {
-    if (!variant?.path || typeof variant.path !== 'string') continue;
-    const abs = path.resolve(dir, variant.path);
-    const rel = path.relative(home, abs);
-    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) continue;
-    try {
-      const parsed = readSvg(await readFile(abs, 'utf8'));
-        if (parsed.markup) assets.push(applyStretch({ style: variant.style || '', markup: parsed.markup, viewBox: parsed.viewBox, stretch: parsed.stretch, size: parsed.size, fit: parsed.fit }, doc));
-    } catch { /* dessin absent */ }
-  }
-  return assets;
-}
-
 async function readLibrary(skip = ''): Promise<LibraryEntry[]> {
-  const files: string[] = [];
-  try { await walk(path.join(root, 'elements'), files); } catch { /* éléments absents */ }
-  const groups = new Map<string, { yaml?: string; svg?: string }>();
-  for (const file of files) {
-    if (file === skip) continue;
-    const id = dottedId(path.basename(file));
-    if (!id) continue;
-    const group = groups.get(id) || {};
-    if (/\.svg$/i.test(file)) { if (!group.svg) group.svg = file; }
-    else if (!group.yaml) group.yaml = file;
-    groups.set(id, group);
-  }
-  const library: LibraryEntry[] = [];
-  for (const [id, group] of groups) {
-    const kind = elementKind(id);
-    const leaf = id.slice(kind.length + 1);
-    let doc: SchemaDoc = { version: SCHEMA_VERSION, type: kind, id };
-    let held = group.svg || '';
-    if (group.yaml) {
-      try {
-        const parsed = parse(await readFile(group.yaml, 'utf8')) as SchemaDoc;
-        if (!parsed || parsed.version !== SCHEMA_VERSION) continue;
-        doc = parsed;
-        doc.trajectory = parsed.trajectory;
-        doc.params = parsed.params;
-      } catch { continue; }
-      held = group.yaml;
-    } else if (!group.svg) continue;
-    doc.type = kind;
-    doc.id = id;
-    const rel = path.relative(root, held).replaceAll('\\', '/');
-    const svgs: SvgAsset[] = [];
-    if (group.svg) {
-      try {
-        const parsed = readSvg(await readFile(group.svg, 'utf8'));
-        if (parsed.markup) svgs.push(applyStretch({ style: '', markup: parsed.markup, viewBox: parsed.viewBox, stretch: parsed.stretch, size: parsed.size, fit: parsed.fit }, doc));
-      } catch { /* dessin absent */ }
-    }
-    if (group.yaml) {
-      for (const asset of await variantAssets(group.yaml, doc.svg, doc)) {
-        if (svgs.some(item => item.style === asset.style)) continue;
-        svgs.push(asset);
-      }
-    }
-    library.push({
-      id,
-      name: leaf,
-      type: kind,
-      file: rel,
-      dir: path.posix.dirname(rel) === '.' ? '' : path.posix.dirname(rel),
-      doc,
-      svgs
-    });
-  }
+  const library = await loadLibrary(root, skip);
   const names = libraryFor('', library);
   for (const entry of library) {
     try { entry.doc.preview = elementScene(entry.doc, names); }
@@ -179,6 +66,7 @@ async function readLibrary(skip = ''): Promise<LibraryEntry[]> {
 export const GET: RequestHandler = async ({ url }) => {
   const part = url.searchParams.get('part') || 'all';
   if (part === 'library') return json({ library: await readLibrary() });
+  if (part === 'svg-meta') return json(await svgOwnerProps(root, url.searchParams.get('file') || ''));
   const at = url.searchParams.get('at') || '';
   const dir = await resolveDir(at, url.searchParams.get('id') || '');
   if (!dir) return json({ error: 'Chemin invalide.' }, { status: 400 });

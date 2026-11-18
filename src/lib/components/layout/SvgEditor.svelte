@@ -23,6 +23,7 @@
 
   let { file }: { file: string } = $props();
 
+  let fileMeta = $state<{ realW?: number; realH?: number; min?: number; stretchX?: string; stretchY?: string; fixed?: boolean }>({});
   let source = $state('');
   let disk = $state('');
   let opened = $state('');
@@ -98,7 +99,14 @@
 
   const dirty = $derived(loaded && canon(source) !== canon(disk));
   const shown = $derived(source.replace(/<script\b[\s\S]*?<\/script>/gi, ''));
-  const drawnAsset = $derived(readSvg(shown));
+  const drawnAsset = $derived.by(() => {
+    const parsed = readSvg(shown);
+    const stretch = fileMeta.stretchX || fileMeta.stretchY ? { x: fileMeta.stretchX, y: fileMeta.stretchY } : undefined;
+    const size = fileMeta.realW !== undefined || fileMeta.realH !== undefined
+      ? { realW: fileMeta.realW, realH: fileMeta.realH, min: fileMeta.min }
+      : undefined;
+    return { ...parsed, stretch, size };
+  });
   const stretchOn = $derived(Boolean(drawnAsset.stretch?.x || drawnAsset.stretch?.y));
   const fields = $derived(paramsOf(shown));
   const ordered = $derived([...fields].sort((a, b) => Number(isColorValue(b.fallback)) - Number(isColorValue(a.fallback))));
@@ -111,17 +119,27 @@
     if (!stretchOn) return withFrameMargin(filled);
     const asset = readSvg(filled);
     const box = stretchBox(asset.viewBox);
-    if (!box) return withFrameMargin(filled);
+    if (!box) return withFileMeta(withFrameMargin(filled));
     const length = box.w * growX;
     const height = box.h * growY;
     const out = stretchSvg(
-      { markup: asset.markup, viewBox: asset.viewBox, stretch: asset.stretch },
+      { markup: asset.markup, viewBox: asset.viewBox, stretch: drawnAsset.stretch },
       length,
       height
     );
-    return withFrameMargin(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${out.viewBox}">${out.markup}</svg>`);
+    return withFileMeta(withFrameMargin(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${out.viewBox}">${out.markup}</svg>`));
   });
   const frameKey = $derived(`${file}\n${readSvg(preview).viewBox}\n${drawnAsset.size?.realW ?? ''}\n${drawnAsset.size?.realH ?? ''}`);
+
+  function withFileMeta(markup: string): string {
+    const bits: string[] = [];
+    if (fileMeta.realW !== undefined) bits.push(`data-real-w="${fileMeta.realW}"`);
+    if (fileMeta.realH !== undefined) bits.push(`data-real-h="${fileMeta.realH}"`);
+    if (fileMeta.min !== undefined) bits.push(`data-min-size="${fileMeta.min}"`);
+    if (fileMeta.fixed) bits.push('data-fixed="1"');
+    if (!bits.length) return markup;
+    return markup.replace(/<svg\b/i, `<svg ${bits.join(' ')}`);
+  }
 
   /** Marge d’affichage autour du viewBox. Le cadre jaune reste celui du fichier. */
   function withFrameMargin(markup: string): string {
@@ -213,9 +231,19 @@
     editor.focus();
   }
 
+  async function loadMeta() {
+    fileMeta = {};
+    try {
+      const response = await fetch(`/api/schema?part=svg-meta&file=${encodeURIComponent(file)}`);
+      if (!response.ok) return;
+      fileMeta = await response.json() as typeof fileMeta;
+    } catch { /* métadonnées absentes */ }
+  }
+
   async function load() {
     loaded = false;
     error = '';
+    await loadMeta();
     const draft = get(libraryDraft);
     if (draft && draft.path === file) {
       source = opened = draft.source;

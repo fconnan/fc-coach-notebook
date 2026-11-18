@@ -1,4 +1,5 @@
-import { parse } from 'yaml';
+import type { ParamSession } from './parameters';
+import { readSchema } from './layout';
 import { buildScene, elementKind, elementScene, libraryFor, renderSvg } from './scene';
 import type { LibraryEntry, SchemaDoc, TrajectorySpec } from './types';
 
@@ -16,7 +17,7 @@ function withOverlay(doc: SchemaDoc, overlay?: TrajectoryOverlay): SchemaDoc {
   };
 }
 
-const DEFAULT_SOURCE = 'version: fccn-schema:1\nname: exercise\npitch: half-attack\n';
+const DEFAULT_SOURCE = 'version: fccn-schema:1\nsettings:\n  - name: exercise\nitems:\n  - pitch: half-attack\n';
 
 let libraryTask: Promise<LibraryEntry[]> | null = null;
 
@@ -42,7 +43,7 @@ function loadLibrary(): Promise<LibraryEntry[]> {
 
 export interface ExercisePreview {
   phases: { name: string; duration: number }[];
-  render: (phase: number, progress: number, picks?: boolean, overlay?: TrajectoryOverlay) => string;
+  render: (phase: number, progress: number, picks?: boolean, overlay?: TrajectoryOverlay, session?: ParamSession) => string;
 }
 
 function svgOf(scene: ReturnType<typeof buildScene>, picks = false): string {
@@ -51,7 +52,7 @@ function svgOf(scene: ReturnType<typeof buildScene>, picks = false): string {
 
 export async function liveElementPreview(source: string, elementId = ''): Promise<ExercisePreview> {
   const library = await loadLibrary();
-  const doc = parse(source) as SchemaDoc;
+  const doc = readSchema(source);
   if (!doc || typeof doc !== 'object') throw new Error('YAML illisible');
   if (elementId) {
     doc.id = elementId;
@@ -64,18 +65,18 @@ export async function liveElementPreview(source: string, elementId = ''): Promis
   }));
   return {
     phases,
-    render: (phase, progress, picks, overlay) => elementScene(withOverlay(doc, overlay), names, phase, progress, Boolean(picks))
+    render: (phase, progress, picks, overlay, session) => elementScene(withOverlay(doc, overlay), names, phase, progress, Boolean(picks), session)
   };
 }
 
 export async function liveExercisePreview(source: string, at = '', id = ''): Promise<ExercisePreview> {
   const library = await loadLibrary();
-  const doc = parse(source || DEFAULT_SOURCE) as SchemaDoc;
+  const doc = readSchema(source || DEFAULT_SOURCE);
   if (!doc || typeof doc !== 'object') throw new Error('YAML illisible');
   const names = libraryFor(at || id, library, at ? `${at}/schema.yaml` : '');
   return {
     phases: buildScene(doc, names, 0, 0).phases,
-    render: (phase, progress, picks) => svgOf(buildScene(doc, names, phase, progress), picks)
+    render: (phase, progress, picks, _overlay, session) => svgOf(buildScene(doc, names, phase, progress, session), picks)
   };
 }
 
@@ -89,10 +90,10 @@ export async function loadExercisePreview(at: string, id = ''): Promise<Exercise
   ]);
   const body = await response.json() as { source?: string; error?: string };
   if (!response.ok) throw new Error(body.error || 'Schéma illisible');
-  const doc = parse(body.source || DEFAULT_SOURCE) as SchemaDoc;
+  const doc = readSchema(body.source || DEFAULT_SOURCE);
   const names = libraryFor(at || id, library, at ? `${at}/schema.yaml` : '');
   return {
     phases: buildScene(doc, names, 0, 0).phases,
-    render: (phase, progress, picks) => svgOf(buildScene(doc, names, phase, progress), picks)
+    render: (phase, progress, picks, _overlay, session) => svgOf(buildScene(doc, names, phase, progress, session), picks)
   };
 }

@@ -2,8 +2,8 @@
   import { untrack, type Snippet } from 'svelte';
   import { schemaFrame, spanCamera, type Camera } from '$lib/editor/board';
   import { insertAnchor, nearestSegment, pathAnchors, pathHint, pathKind, removeAnchor, setPathKind, stampPath, type PathKind } from '$lib/editor/pathEdit';
-  import { bindShapeControls } from '$lib/editor/shapeHandles';
-  import { fitShape, translateShape, type FittedShape, type ShapeAttrs } from '$lib/editor/shapeModel';
+  import { bindShapeControls, holdRotateCursor, pointerAngle, shapeAngle } from '$lib/editor/shapeHandles';
+  import { fitShape, rotateShape, shapeCenter, translateShape, type FittedShape, type ShapeAttrs } from '$lib/editor/shapeModel';
   import { ratioBox, type FitMode } from '$lib/schema/fit';
   import { readShape } from '$lib/schema/edit';
   import ShapeMenu from './ShapeMenu.svelte';
@@ -12,11 +12,13 @@
   import { ballRadius, ballTransform, playerTokenRadius } from '$lib/schema/ball';
   import { crispStrokes } from '$lib/schema/crisp';
   import { chrome } from '$lib/schema/scene';
+  import { refreshUpright } from '$lib/schema/upright';
   import { curvePath, type Point } from '$lib/trajectory';
   import { frameOfSize, stretchSvg } from '$lib/schema/stretch';
-  import { parse } from 'yaml';
+  import { readSchema } from '$lib/schema/layout';
   import { draftOf, type TrajectoryDraft } from '$lib/schema/arrowDraft';
   import { liveElementPreview, liveExercisePreview, loadExercisePreview, type ExercisePreview, type TrajectoryOverlay } from '$lib/schema/preview';
+  import { viewSession } from '$lib/schema/viewStyles';
   import type { SchemaDoc, TrajectorySpec } from '$lib/schema/types';
   import TrajectoryControls from './TrajectoryControls.svelte';
 
@@ -41,11 +43,13 @@
     ontune = undefined as ((ref: string, key: 'wave' | 'amp', value: number) => void) | undefined,
     onrotate = undefined as ((ref: string, angle: number) => void) | undefined,
     onresize = undefined as ((ref: string, w: number | null, h: number | null, x?: number | null, y?: number | null) => void) | undefined,
-    onlook = undefined as ((point: { x: number; y: number }) => void) | undefined,
+    onlook = undefined as ((point: { x: number; y: number; span?: number }) => void) | undefined,
     onfooter = undefined as ((bar: Snippet | undefined) => void) | undefined,
     onshape = undefined as ((ref: string, attrs: Record<string, string>, tag?: string) => void) | undefined,
     onpaint = undefined as ((ref: string, name: 'fill' | 'stroke', value: string) => void) | undefined,
     onforget = undefined as ((ref: string | string[]) => void) | undefined,
+    onparam = undefined as ((ref: string, key: string, value: string) => void) | undefined,
+    choicesOf = undefined as ((element: string) => { key: string; names: string[] }[]) | undefined,
     fitHome = $bindable(true),
     fitZoom = $bindable<(() => void) | undefined>(undefined)
   }: {
@@ -69,12 +73,16 @@
     ontune?: (ref: string, key: 'wave' | 'amp', value: number) => void;
     onrotate?: (ref: string, angle: number) => void;
     onresize?: (ref: string, w: number | null, h: number | null, x?: number | null, y?: number | null) => void;
-    onlook?: (point: { x: number; y: number }) => void;
+    onlook?: (point: { x: number; y: number; span?: number }) => void;
     /** Publie la barre d’animation pour qu’elle se place sous la zone de dessin. */
     onfooter?: (bar: Snippet | undefined) => void;
     onshape?: (ref: string, attrs: Record<string, string>, tag?: string) => void;
     onpaint?: (ref: string, name: 'fill' | 'stroke', value: string) => void;
     onforget?: (ref: string | string[]) => void;
+    /** Écrit ou retire un paramètre de l’item. Une valeur vide retire l’argument. */
+    onparam?: (ref: string, key: string, value: string) => void;
+    /** Valeurs proposées pour l’élément cliqué. */
+    choicesOf?: (element: string) => { key: string; names: string[] }[];
     fitHome?: boolean;
     fitZoom?: () => void;
   } = $props();
@@ -86,6 +94,7 @@
   let progress = $state(0);
   let playing = $state(false);
   let grabbing = $state(false);
+  let releaseSpin: (() => void) | null = null;
   let lensEl = $state<HTMLDivElement | null>(null);
   let sheetEl = $state<HTMLDivElement | null>(null);
   let board = $state<{ settle(retry?: boolean): void; nudge(pin: { lx: number; ly: number; worldX: number; worldY: number }): void } | null>(null);
@@ -153,10 +162,17 @@
     shapes: ShapeMove[];
     /** Réf du ballon inclus dans le bloc, pour que son dessin suive le geste. */
     art: string;
+    /** Angle du pointeur au début d’une rotation de forme, et attributs qui en résultent. */
+    spinOrigin?: number;
+    spun?: ShapeAttrs;
+    /** Repère écran → attributs, figé au début de l’étirement. */
+    plane?: DOMMatrix | null;
   } | null = null;
   /** Sélection du dessin. Le premier est celui que le YAML suit. */
   let marks = $state<string[]>([]);
   let primary = '';
+  /** Clic droit : garder l’objet choisi si le curseur du texte ne le suit pas. */
+  let pinned = '';
   let band = $state<{ left: number; top: number; width: number; height: number } | null>(null);
 
   const token = $derived(source === undefined ? (exerciseId || at) : `live:${exerciseId || at}`);
@@ -167,14 +183,14 @@
   const trackBase = $derived.by(() => {
     if (!arrowOn) return null;
     try {
-      const doc = source ? parse(source) as SchemaDoc : null;
+      const doc = source ? readSchema(source) : null;
       return draftOf(doc && typeof doc === 'object' ? doc : null);
     } catch {
       return draftOf(null);
     }
   });
   const trackShown = $derived(track ?? trackBase);
-  const svg = $derived(active ? active.render(phase, progress, editable, arrowOn && track && trackBase ? overlayOf(track, trackBase) : undefined) : '');
+  const svg = $derived(active ? active.render(phase, progress, editable, arrowOn && track && trackBase ? overlayOf(track, trackBase) : undefined, $viewSession) : '');
   const phases = $derived(active?.phases || []);
 
   $effect(() => {
@@ -342,7 +358,7 @@
       } else if (node.tagName === 'rect') {
         node.setAttribute('x', String(x + Number(node.getAttribute('data-dx') || 0)));
         node.setAttribute('y', String(y + Number(node.getAttribute('data-dy') || 0)));
-      } else if (node.getAttribute('data-kind') === 'mark') {
+      } else if (node.getAttribute('data-kind') === 'mark' || node.getAttribute('data-kind') === 'player') {
         const angle = node.getAttribute('data-angle') || '0';
         node.setAttribute('data-x', String(x));
         node.setAttribute('data-y', String(y));
@@ -398,7 +414,10 @@
     const u = Number(group.getAttribute('data-u')) || 1;
     group.setAttribute('data-glyph', String(factor));
     const draw = group.querySelector('[data-draw]');
-    if (draw instanceof SVGElement) draw.setAttribute('transform', `scale(${factor * ux} ${-factor * uy})`);
+    if (draw instanceof SVGElement) {
+      draw.setAttribute('transform', `scale(${factor * ux} ${-factor * uy})`);
+      refreshUpright(group, Number(group.getAttribute('data-angle')) || 0);
+    }
     const pad = chrome.pad * u;
     const frame = frameOfSize({ x: vx, y: vy, w: vw, h: vh }, w, h);
     const rect = group.querySelector('[data-frame]');
@@ -503,12 +522,19 @@
 
   function down(event: PointerEvent) {
     if (!editable || event.button !== 0) return;
+    pinned = '';
     const target = event.target instanceof Element ? event.target : null;
     const grip = target?.closest('[data-box-handle]');
     if (grip instanceof SVGElement && marks.length === 1) {
       event.preventDefault();
       try { sheetEl?.setPointerCapture(event.pointerId); } catch { /* le pointeur n’est plus actif */ }
       startBox(event, grip.getAttribute('data-box-handle') || '', marks[0]);
+      return;
+    }
+    if (target?.closest('#svg-selection [data-rotate]') && marks.length === 1) {
+      event.preventDefault();
+      try { sheetEl?.setPointerCapture(event.pointerId); } catch { /* le pointeur n’est plus actif */ }
+      startSpin(event, marks[0]);
       return;
     }
     const knot = target?.closest('[data-knot]');
@@ -555,11 +581,13 @@
       onpick?.(ref, false);
       return;
     }
-    if (target?.closest('[data-selection]') && marks.length > 1) {
+    if (target?.closest('[data-selection]') && marks.length) {
       startBlock(event);
       return;
     }
-    const node = target?.closest('[data-pick], [data-ref]');
+    const node = target?.closest('[data-fixed]') && !target.closest('[data-pick]')
+      ? null
+      : target?.closest('[data-pick], [data-ref]');
     const ref = node?.getAttribute('data-pick') || node?.getAttribute('data-ref') || '';
     const drawn = target?.closest('[data-kind="svg"]');
     const grouped = !!ref && marks.includes(ref) && marks.length > 1;
@@ -622,7 +650,7 @@
     const handle = node?.hasAttribute('data-handle')
       ? node
       : sheetEl?.querySelector(`[data-handle][data-ref="${CSS.escape(ref)}"]`);
-    const group = sheetEl?.querySelector(`[data-kind="mark"][data-ref="${CSS.escape(ref)}"]`);
+    const group = sheetEl?.querySelector(`[data-kind="mark"][data-ref="${CSS.escape(ref)}"], [data-kind="player"][data-ref="${CSS.escape(ref)}"]`);
     const ax = Number(group?.getAttribute('data-x') || handle?.getAttribute('data-x') || 0);
     const ay = Number(group?.getAttribute('data-y') || handle?.getAttribute('data-y') || 0);
     const angle = Number(group?.getAttribute('data-angle') || 0);
@@ -680,6 +708,7 @@
       primary = ref;
       marks = [ref];
     }
+    if (drag.mode === 'rotate') holdSpin();
     onpick?.(ref, false);
   }
 
@@ -820,11 +849,25 @@
     }
   }
 
-  function rootBounds(node: SVGGraphicsElement, root: SVGSVGElement): { minX: number; minY: number; maxX: number; maxY: number } | null {
-    let box: DOMRect;
+  /** Boîte locale, sans le transform de l’élément et sans la poignée de rotation. */
+  function ownBox(node: SVGGraphicsElement): DOMRect | null {
+    const hidden: Element[] = [];
+    for (const item of node.querySelectorAll('[data-rotate]')) {
+      if (item.getAttribute('display') === 'none') continue;
+      hidden.push(item);
+      item.setAttribute('display', 'none');
+    }
+    let box: DOMRect | null = null;
     try { box = node.getBBox(); }
-    catch { return null; }
-    if (!(box.width > 0) || !(box.height > 0)) return null;
+    catch { box = null; }
+    for (const item of hidden) item.removeAttribute('display');
+    if (!box || !(box.width > 0) || !(box.height > 0)) return null;
+    return box;
+  }
+
+  function rootBounds(node: SVGGraphicsElement, root: SVGSVGElement): { minX: number; minY: number; maxX: number; maxY: number } | null {
+    const box = ownBox(node);
+    if (!box) return null;
     const from = node.getScreenCTM();
     const to = root.getScreenCTM();
     if (!from || !to) return null;
@@ -843,10 +886,45 @@
     return { minX, minY, maxX, maxY };
   }
 
-  const BOX_CURSOR: Record<string, string> = {
-    nw: 'nwse-resize', n: 'ns-resize', ne: 'nesw-resize', e: 'ew-resize',
-    se: 'nwse-resize', s: 'ns-resize', sw: 'nesw-resize', w: 'ew-resize'
+  const HANDLE_PX = 8;
+  const HANDLE_HIT_PX = 22;
+  const KNOB_PX = 9;
+  const KNOB_HIT_PX = 22;
+  /** Écart minimal entre le bouton et le milieu du côté, pour un objet très plat. */
+  const KNOB_MIN_GAP_PX = 14;
+  /** La zone de clic s'arrête à cette distance du cadre. */
+  const KNOB_CLEAR_PX = 4;
+  const FRAME_PAD_PX = 2;
+  const EDGE_OUT: Record<string, [number, number]> = {
+    e: [1, 0], w: [-1, 0], s: [0, 1], n: [0, -1],
+    ne: [1, -1], nw: [-1, -1], se: [1, 1], sw: [-1, 1]
   };
+
+  /** Curseur d'étirement selon la direction à l'écran, pas selon le nom du bord. */
+  function resizeCursor(dx: number, dy: number): string {
+    const sector = Math.round(Math.atan2(dy, dx) / (Math.PI / 4));
+    return ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'][((sector % 4) + 4) % 4];
+  }
+
+  function cursorFor(from: DOMMatrix, edge: string): string {
+    const [dx, dy] = EDGE_OUT[edge] || [1, 0];
+    return resizeCursor(from.a * dx + from.c * dy, from.b * dx + from.d * dy);
+  }
+
+  function inverseLinear(matrix: DOMMatrix): { a: number; b: number; c: number; d: number } | null {
+    const det = matrix.a * matrix.d - matrix.b * matrix.c;
+    if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
+    return { a: matrix.d / det, b: -matrix.b / det, c: -matrix.c / det, d: matrix.a / det };
+  }
+
+  /** Demi-épaisseur du contour, dans le repère de l'élément. Le cadre s'en écarte. */
+  function strokeOutset(node: SVGGraphicsElement): number {
+    const painted = node.getAttribute('stroke');
+    if (!painted || painted === 'none' || painted === 'transparent') return 0;
+    const width = Number(node.getAttribute('stroke-width'));
+    const size = Number.isFinite(width) && width > 0 ? width : 1;
+    return size / 2;
+  }
 
   function graphicOf(root: ParentNode, ref: string): SVGGraphicsElement | null {
     const nodes = [...root.querySelectorAll(`[data-pick="${CSS.escape(ref)}"]`)]
@@ -892,6 +970,30 @@
     return next;
   }
 
+  /** Même geste que `resizedBox`, dans le repère du tracé : n est le petit y, s le grand y. */
+  function localSized(
+    start: { minX: number; minY: number; maxX: number; maxY: number },
+    edge: string,
+    point: { x: number; y: number },
+    lock: boolean
+  ) {
+    const flip = (box: { minX: number; minY: number; maxX: number; maxY: number }) => ({
+      minX: box.minX,
+      maxX: box.maxX,
+      minY: -box.maxY,
+      maxY: -box.minY
+    });
+    const next = lock ? ratioBox(flip(start), edge, { x: point.x, y: -point.y }) : resizedBox(flip(start), edge, { x: point.x, y: -point.y });
+    return flip(next);
+  }
+
+  function nodePoint(node: SVGGraphicsElement, event: PointerEvent, frozen?: DOMMatrix | null): { x: number; y: number } | null {
+    const matrix = frozen ?? node.getScreenCTM()?.inverse();
+    if (!matrix) return null;
+    const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix);
+    return { x: point.x, y: point.y };
+  }
+
   function paintFitted(node: SVGGraphicsElement, fitted: FittedShape): SVGGraphicsElement {
     let host = node;
     if (host.tagName.toLowerCase() !== fitted.tag) {
@@ -926,10 +1028,10 @@
     const cy = (next.minY + next.maxY) / 2;
     if (fitted.kind === 'shape') {
       let anchorX = start.minX;
-      let anchorY = start.minY;
+      let anchorY = start.maxY;
       if (edge.includes('w')) anchorX = start.maxX;
       else if (!edge.includes('e')) anchorX = (start.minX + start.maxX) / 2;
-      if (edge.includes('s')) anchorY = start.maxY;
+      if (edge.includes('s')) anchorY = start.minY;
       else if (!edge.includes('n')) anchorY = (start.minY + start.maxY) / 2;
       const shaped = fitShape(fitted.tag, fitted.attrs, anchorX, anchorY, sx, sy);
       fitted.node = paintFitted(fitted.node, shaped);
@@ -950,6 +1052,7 @@
       fitted.node.setAttribute('transform', angle != null ? `translate(${cx} ${cy}) rotate(${angle})` : `translate(${cx} ${cy})`);
       const inner = fitted.node.querySelector(':scope > g');
       if (inner instanceof SVGElement) inner.setAttribute('transform', `scale(${fitted.ux * sx} ${fitted.uy * sy})`);
+      refreshUpright(fitted.node, Number(angle) || 0);
     }
     const ring = sheetEl?.querySelector(`circle[data-pick="${CSS.escape(current.ref)}"]`);
     if (ring instanceof SVGElement) {
@@ -966,9 +1069,12 @@
     if (!graphic || graphic.getAttribute('data-kind') === 'arrow') return;
     const fit = selectionFit(graphic);
     if (fit === 'none') return;
-    const box = worldBoxOf(graphic);
-    if (!box) return;
     const kindAttr = graphic.getAttribute('data-kind');
+    const local = kindAttr === 'svg' ? ownBox(graphic) : null;
+    const box = local
+      ? { minX: local.x, minY: local.y, maxX: local.x + local.width, maxY: local.y + local.height }
+      : worldBoxOf(graphic);
+    if (!box) return;
     const kind = graphic.hasAttribute('data-ball') ? 'ball' : kindAttr === 'svg' ? 'shape' : kindAttr === 'player' ? 'player' : 'mark';
     const read = kind === 'shape' && source ? readShape(source, ref) : null;
     const attrs = read?.attrs ?? {};
@@ -1002,15 +1108,28 @@
       members: [], shapes: [], art: '',
       edge,
       box,
+      plane: kind === 'shape' ? graphic.getScreenCTM()?.inverse() ?? null : null,
       fitted: { kind, node: graphic, tag: read?.tag || graphic.tagName.toLowerCase(), attrs, ux, uy, fit }
     };
   }
 
-  /** Cercle dessiné : toujours étirable, jamais déformable. Les autres objets suivent data-fit, absent vaut none. */
+  /** Cercle dessiné : toujours étirable, jamais déformable. Un autre tracé est déformable, sauf `data-fit` explicite. Le reste suit data-fit, absent vaut none. */
   function selectionFit(node: SVGGraphicsElement): FitMode {
     if (node.tagName.toLowerCase() === 'circle' && node.getAttribute('data-kind') === 'svg') return 'ratio';
     const value = node.getAttribute('data-fit');
+    if (node.getAttribute('data-kind') === 'svg') {
+      if (value === 'ratio' || value === 'none') return value;
+      return 'free';
+    }
     return value === 'free' || value === 'ratio' ? value : 'none';
+  }
+
+  /** Joueur, repère ou tracé : la poignée tourne l’objet. Pas un cercle, pas un ballon, pas une flèche. */
+  function canSpin(node: SVGGraphicsElement): boolean {
+    if (node.hasAttribute('data-ball') || node.getAttribute('data-kind') === 'arrow') return false;
+    if (node.getAttribute('data-kind') === 'svg' && node.tagName.toLowerCase() === 'circle') return false;
+    const kind = node.getAttribute('data-kind');
+    return kind === 'player' || kind === 'mark' || kind === 'svg';
   }
 
   function nextBox(
@@ -1019,10 +1138,104 @@
   ): { minX: number; minY: number; maxX: number; maxY: number } | null {
     if (!current.box || !current.edge) return current.box ?? null;
     const lock = current.fitted?.tag === 'circle' || current.fitted?.fit !== 'free';
+    if (current.fitted?.kind === 'shape') return localSized(current.box, current.edge, world, lock);
     return lock ? ratioBox(current.box, current.edge, world) : resizedBox(current.box, current.edge, world);
   }
 
-  /** Rectangle autour de la sélection, dans le repère du svg. Une sélection seule porte les huit poignées. */
+  interface GripSpace {
+    /** Repère local de l'objet vers le SVG racine. */
+    into: DOMMatrix;
+    /** Repère local vers l'écran, pour les curseurs et l'écart constant. */
+    from: DOMMatrix;
+    /** Unité racine correspondant à un pixel d'écran. */
+    unitX: number;
+    unitY: number;
+  }
+
+  function svgEl<T extends keyof SVGElementTagNameMap>(name: T): SVGElementTagNameMap[T] {
+    return document.createElementNS('http://www.w3.org/2000/svg', name);
+  }
+
+  /** Carré ou disque de taille d'écran fixe, centré sur un point du cadre. */
+  function screenHost(parent: SVGGElement, cx: number, cy: number, space: GripSpace): SVGGElement {
+    const host = svgEl('g');
+    const inv = inverseLinear(space.into);
+    host.setAttribute('transform', inv
+      ? `translate(${cx} ${cy}) matrix(${inv.a} ${inv.b} ${inv.c} ${inv.d} 0 0)`
+      : `translate(${cx} ${cy})`);
+    parent.appendChild(host);
+    return host;
+  }
+
+  /** Cadre et poignées. Les poignées restent des carrés d'écran, collés aux bords. */
+  function paintFrame(group: SVGGElement, x: number, y: number, width: number, height: number, multi: boolean, handles: boolean, space: GripSpace) {
+    const hit = svgEl('rect');
+    hit.setAttribute('fill', 'none');
+    hit.setAttribute('stroke', 'transparent');
+    hit.setAttribute('stroke-width', '14');
+    hit.setAttribute('vector-effect', 'non-scaling-stroke');
+    hit.setAttribute('pointer-events', 'stroke');
+    hit.setAttribute('cursor', 'move');
+    hit.setAttribute('x', String(x));
+    hit.setAttribute('y', String(y));
+    hit.setAttribute('width', String(width));
+    hit.setAttribute('height', String(height));
+    group.appendChild(hit);
+    const rect = svgEl('rect');
+    rect.setAttribute('fill', multi ? 'rgba(204, 255, 0, 0.18)' : 'none');
+    rect.setAttribute('stroke', '#ccff00');
+    rect.setAttribute('stroke-width', '1.5');
+    rect.setAttribute('vector-effect', 'non-scaling-stroke');
+    rect.setAttribute('pointer-events', multi ? 'all' : 'none');
+    if (multi) rect.setAttribute('cursor', 'move');
+    rect.setAttribute('x', String(x));
+    rect.setAttribute('y', String(y));
+    rect.setAttribute('width', String(width));
+    rect.setAttribute('height', String(height));
+    group.appendChild(rect);
+    if (!handles) return;
+    const left = x;
+    const right = x + width;
+    const top = y;
+    const bottom = y + height;
+    const midX = (left + right) / 2;
+    const midY = (top + bottom) / 2;
+    const spots: [string, number, number][] = [
+      ['nw', left, top], ['n', midX, top], ['ne', right, top], ['e', right, midY],
+      ['se', right, bottom], ['s', midX, bottom], ['sw', left, bottom], ['w', left, midY]
+    ];
+    const hitW = HANDLE_HIT_PX * space.unitX;
+    const hitH = HANDLE_HIT_PX * space.unitY;
+    const faceW = HANDLE_PX * space.unitX;
+    const faceH = HANDLE_PX * space.unitY;
+    for (const [edge, cx, cy] of spots) {
+      const host = screenHost(group, cx, cy, space);
+      const cursor = cursorFor(space.from, edge);
+      const target = svgEl('rect');
+      target.setAttribute('data-box-handle', edge);
+      target.setAttribute('x', String(-hitW / 2));
+      target.setAttribute('y', String(-hitH / 2));
+      target.setAttribute('width', String(hitW));
+      target.setAttribute('height', String(hitH));
+      target.setAttribute('fill', 'transparent');
+      target.setAttribute('stroke', 'none');
+      target.setAttribute('pointer-events', 'all');
+      target.setAttribute('style', `cursor:${cursor}`);
+      const face = svgEl('rect');
+      face.setAttribute('x', String(-faceW / 2));
+      face.setAttribute('y', String(-faceH / 2));
+      face.setAttribute('width', String(faceW));
+      face.setAttribute('height', String(faceH));
+      face.setAttribute('fill', '#ccff00');
+      face.setAttribute('stroke', '#111827');
+      face.setAttribute('stroke-width', '1.25');
+      face.setAttribute('vector-effect', 'non-scaling-stroke');
+      face.setAttribute('pointer-events', 'none');
+      host.append(target, face);
+    }
+  }
+
+  /** Rectangle autour de la sélection. Un objet seul reste dans son repère : le cadre tourne avec lui. */
   function placeSelection() {
     const root = sheetEl?.querySelector('svg');
     if (!(root instanceof SVGSVGElement) || !sheetEl) return;
@@ -1031,6 +1244,59 @@
       host?.remove();
       return;
     }
+    const rootScreen = root.getScreenCTM();
+    const group = host instanceof SVGGElement ? host : document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    group.id = 'svg-selection';
+    group.setAttribute('data-selection', '1');
+    const lone = marks.length === 1 ? graphicOf(sheetEl, marks[0]) : null;
+    const handles = !!lone && lone.getAttribute('data-kind') !== 'arrow' && selectionFit(lone) !== 'none';
+    group.replaceChildren();
+    if (lone && lone.getAttribute('data-kind') !== 'arrow') {
+      const box = ownBox(lone);
+      const from = lone.getScreenCTM();
+      const to = rootScreen;
+      if (!box || !from || !to) {
+        host?.remove();
+        return;
+      }
+      const into = to.inverse().multiply(from);
+      const sx = Math.hypot(from.a, from.b) || 1;
+      const sy = Math.hypot(from.c, from.d) || 1;
+      const outset = strokeOutset(lone);
+      const padX = FRAME_PAD_PX / sx + outset;
+      const padY = FRAME_PAD_PX / sy + outset;
+      const space: GripSpace = {
+        into,
+        from,
+        unitX: 1 / (Math.hypot(to.a, to.b) || 1),
+        unitY: 1 / (Math.hypot(to.c, to.d) || 1)
+      };
+      group.transform.baseVal.initialize(root.createSVGTransformFromMatrix(into));
+      const frameX = box.x - padX;
+      const frameY = box.y - padY;
+      const frameW = box.width + padX * 2;
+      const frameH = box.height + padY * 2;
+      paintFrame(group, frameX, frameY, frameW, frameH, false, handles, space);
+      if (canSpin(lone)) {
+        const reach = Math.hypot(frameW * sx, frameH * sy) / 2;
+        const along = Math.max(reach, frameH * sy / 2 + KNOB_MIN_GAP_PX);
+        const gap = along - frameH * sy / 2;
+        const hitRadius = Math.max(KNOB_PX / 2 + 2, Math.min(KNOB_HIT_PX / 2, gap - KNOB_CLEAR_PX));
+        const midX = frameX + frameW / 2;
+        placeStem(group, midX, frameY + frameH, midX, frameY + frameH / 2 + along / sy, space, hitRadius);
+      }
+      root.appendChild(group);
+      return;
+    }
+    const fit = rootScreen || root.createSVGMatrix();
+    const space: GripSpace = {
+      into: root.createSVGMatrix(),
+      from: fit,
+      unitX: 1 / (Math.hypot(fit.a, fit.b) || 1),
+      unitY: 1 / (Math.hypot(fit.c, fit.d) || 1)
+    };
+    const pad = FRAME_PAD_PX * space.unitX;
+    group.removeAttribute('transform');
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -1049,55 +1315,39 @@
       host?.remove();
       return;
     }
-    const scale = Math.abs(root.getScreenCTM()?.a || 1) || 1;
-    const pad = 8 / scale;
-    const group = host instanceof SVGGElement ? host : document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    group.id = 'svg-selection';
-    group.setAttribute('data-selection', '1');
-    const lone = marks.length === 1 ? graphicOf(sheetEl, marks[0]) : null;
-    const handles = lone && lone.getAttribute('data-kind') !== 'arrow' && selectionFit(lone) !== 'none';
-    const multi = marks.length > 1;
-    group.replaceChildren();
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('fill', multi ? 'rgba(204, 255, 0, 0.18)' : 'none');
-    rect.setAttribute('stroke', '#ccff00');
-    rect.setAttribute('stroke-width', '1.5');
-    rect.setAttribute('vector-effect', 'non-scaling-stroke');
-    rect.setAttribute('pointer-events', multi ? 'all' : 'none');
-    if (multi) rect.setAttribute('cursor', 'move');
-    rect.setAttribute('x', String(minX - pad));
-    rect.setAttribute('y', String(minY - pad));
-    rect.setAttribute('width', String(maxX - minX + pad * 2));
-    rect.setAttribute('height', String(maxY - minY + pad * 2));
-    group.appendChild(rect);
-    if (handles) {
-      const left = minX - pad;
-      const right = maxX + pad;
-      const top = minY - pad;
-      const bottom = maxY + pad;
-      const midX = (left + right) / 2;
-      const midY = (top + bottom) / 2;
-      const size = 8 / scale;
-      const spots: [string, number, number][] = [
-        ['nw', left, top], ['n', midX, top], ['ne', right, top], ['e', right, midY],
-        ['se', right, bottom], ['s', midX, bottom], ['sw', left, bottom], ['w', left, midY]
-      ];
-      for (const [edge, x, y] of spots) {
-        const handle = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        handle.setAttribute('data-box-handle', edge);
-        handle.setAttribute('x', String(x - size / 2));
-        handle.setAttribute('y', String(y - size / 2));
-        handle.setAttribute('width', String(size));
-        handle.setAttribute('height', String(size));
-        handle.setAttribute('fill', '#ccff00');
-        handle.setAttribute('stroke', '#111827');
-        handle.setAttribute('stroke-width', '1.25');
-        handle.setAttribute('vector-effect', 'non-scaling-stroke');
-        handle.setAttribute('style', `cursor:${BOX_CURSOR[edge]}`);
-        group.appendChild(handle);
-      }
-    }
+    paintFrame(group, minX - pad, minY - pad, maxX - minX + pad * 2, maxY - minY + pad * 2, marks.length > 1, handles, space);
     root.appendChild(group);
+  }
+
+  /** Tige du milieu du côté jusqu'au bouton, à la même distance du centre que les coins. */
+  function placeStem(group: SVGGElement, x1: number, y1: number, x2: number, y2: number, space: GripSpace, hitRadiusPx: number) {
+    const stem = svgEl('g');
+    stem.setAttribute('data-rotate', '1');
+    const line = svgEl('line');
+    line.setAttribute('x1', String(x1));
+    line.setAttribute('y1', String(y1));
+    line.setAttribute('x2', String(x2));
+    line.setAttribute('y2', String(y2));
+    line.setAttribute('stroke', '#ccff00');
+    line.setAttribute('stroke-width', '1.5');
+    line.setAttribute('vector-effect', 'non-scaling-stroke');
+    line.setAttribute('pointer-events', 'none');
+    stem.appendChild(line);
+    const host = screenHost(stem, x2, y2, space);
+    const hit = svgEl('ellipse');
+    hit.setAttribute('rx', String(hitRadiusPx * space.unitX));
+    hit.setAttribute('ry', String(hitRadiusPx * space.unitY));
+    hit.setAttribute('style', 'fill:transparent;stroke:none;cursor:var(--cursor-rotate)');
+    hit.setAttribute('pointer-events', 'all');
+    const face = svgEl('ellipse');
+    face.setAttribute('rx', String((KNOB_PX / 2) * space.unitX));
+    face.setAttribute('ry', String((KNOB_PX / 2) * space.unitY));
+    face.setAttribute('style', 'fill:#ccff00;stroke:#111827');
+    face.setAttribute('stroke-width', '1.25');
+    face.setAttribute('vector-effect', 'non-scaling-stroke');
+    face.setAttribute('pointer-events', 'none');
+    host.append(hit, face);
+    group.appendChild(stem);
   }
 
   function slideArrow(member: Member, dx: number, dy: number) {
@@ -1125,7 +1375,7 @@
     if (!root) return found;
     for (const node of root.querySelectorAll('[data-pick]')) {
       const ref = node.getAttribute('data-pick') || '';
-      if (!ref || found.includes(ref)) continue;
+      if (!ref || found.includes(ref) || node.closest('[data-fixed]')) continue;
       const box = node.getBoundingClientRect();
       if (box.width < 1 && box.height < 1) continue;
       if (box.right < left || box.left > right || box.bottom < top || box.top > bottom) continue;
@@ -1161,13 +1411,80 @@
     return Math.round(angle * 10) / 10;
   }
 
+  function spinDrawn(current: NonNullable<typeof drag>, event: PointerEvent) {
+    const fitted = current.fitted;
+    if (!fitted || current.spinOrigin == null) return;
+    const center = shapeCenter(fitted.tag, fitted.attrs);
+    if (!center) return;
+    const now = pointerAngle(fitted.node, center.x, center.y, event);
+    if (now == null) return;
+    const next = rotateShape(fitted.tag, fitted.attrs, current.angle + now - current.spinOrigin);
+    for (const [key, value] of Object.entries(next)) {
+      if (value) fitted.node.setAttribute(key, value);
+    }
+    current.spun = next;
+    if (boundShape?.ref === current.ref) boundShape.refresh(next);
+    placeSelection();
+  }
+
+  function startSpin(event: PointerEvent, ref: string) {
+    const graphic = sheetEl ? graphicOf(sheetEl, ref) : null;
+    if (!graphic || !canSpin(graphic)) return;
+    playing = false;
+    progress = 0;
+    const blank = {
+      ref,
+      canMove: false,
+      moved: false,
+      startX: event.clientX,
+      startY: event.clientY,
+      ox: 0, oy: 0, sx: 0, sy: 0, relative: false,
+      mode: 'rotate' as const,
+      role: 'end' as const,
+      index: 0,
+      axis: 'xy' as const,
+      vx: 0, vy: 0, vw: 0, vh: 0, mw: 0, mh: 0, grabX: 0, grabY: 0,
+      worldX: 0, worldY: 0,
+      members: [], shapes: [], art: ''
+    };
+    if (graphic.getAttribute('data-kind') === 'svg') {
+      const shape = source ? readShape(source, ref) : null;
+      if (!shape) return;
+      const center = shapeCenter(shape.tag, shape.attrs);
+      const origin = center ? pointerAngle(graphic, center.x, center.y, event) : null;
+      if (origin == null) return;
+      drag = {
+        ...blank,
+        ax: 0, ay: 0,
+        angle: shapeAngle(shape.attrs),
+        spinOrigin: origin,
+        fitted: { kind: 'shape', node: graphic, tag: shape.tag, attrs: { ...shape.attrs }, ux: 1, uy: 1, fit: 'free' }
+      };
+      holdSpin();
+      return;
+    }
+    drag = {
+      ...blank,
+      ax: Number(graphic.getAttribute('data-x') || 0),
+      ay: Number(graphic.getAttribute('data-y') || 0),
+      angle: Number(graphic.getAttribute('data-angle') || 0)
+    };
+    holdSpin();
+  }
+
+  function holdSpin() {
+    releaseSpin?.();
+    releaseSpin = holdRotateCursor();
+  }
+
   function turn(ref: string, x: number, y: number) {
     const current = drag;
-    const group = sheetEl?.querySelector(`[data-kind="mark"][data-ref="${CSS.escape(ref)}"]`);
+    const group = sheetEl?.querySelector(`[data-kind="mark"][data-ref="${CSS.escape(ref)}"], [data-kind="player"][data-ref="${CSS.escape(ref)}"]`);
     if (!current || !(group instanceof SVGElement)) return;
     const angle = aim(current.ax, current.ay, x, y);
     group.setAttribute('data-angle', String(angle));
     group.setAttribute('transform', `translate(${current.ax} ${current.ay}) rotate(${angle})`);
+    refreshUpright(group, angle);
   }
 
   function resize(ref: string, world: { x: number; y: number }, current = drag) {
@@ -1199,7 +1516,7 @@
         current.moved = true;
         grabbing = true;
       }
-      const world = worldAt(event);
+      const world = current.fitted?.kind === 'shape' ? nodePoint(current.fitted.node, event, current.plane) : worldAt(event);
       if (!world || !current.box || !current.edge) return;
       const next = nextBox(current, world);
       if (next) applyBox(current, next);
@@ -1226,7 +1543,11 @@
       const world = worldAt(event);
       if (!world) return;
       if (current.mode === 'resize') resize(current.ref, world);
-      else turn(current.ref, world.x, world.y);
+      else if (current.fitted?.kind === 'shape') spinDrawn(current, event);
+      else {
+        turn(current.ref, world.x, world.y);
+        placeSelection();
+      }
       return;
     }
     if (!current?.canMove) return;
@@ -1250,19 +1571,22 @@
       return;
     }
     shift(current.ref, world.x, world.y);
+    placeSelection();
   }
 
   function up(event: PointerEvent) {
     const current = drag;
     drag = null;
     grabbing = false;
+    releaseSpin?.();
+    releaseSpin = null;
     try {
       if (sheetEl?.hasPointerCapture(event.pointerId)) sheetEl.releasePointerCapture(event.pointerId);
     } catch { /* le pointeur n’est plus actif */ }
     if (!current) return;
     if (current.mode === 'box') {
       if (current.moved && current.box && current.edge && current.fitted) {
-        const world = worldAt(event);
+        const world = current.fitted.kind === 'shape' ? nodePoint(current.fitted.node, event, current.plane) : worldAt(event);
         const next = world ? nextBox(current, world) : current.box;
         if (!next) return;
         const shaped = applyBox(current, next);
@@ -1292,6 +1616,7 @@
     if (current.mode === 'band') {
       band = null;
       if (!current.moved) {
+        pinned = '';
         primary = '';
         marks = [];
         onpick?.('');
@@ -1312,6 +1637,10 @@
       return;
     }
     if (current.mode === 'rotate') {
+      if (current.fitted?.kind === 'shape') {
+        if (current.spun) onshape?.(current.ref, current.spun, current.fitted.tag);
+        return;
+      }
       if (!world) return;
       onrotate?.(current.ref, aim(current.ax, current.ay, world.x, world.y));
       return;
@@ -1433,15 +1762,21 @@
     return { x: round(point.x), y: round(point.y) };
   }
 
-  function openShapeMenu(event: MouseEvent) {
-    const hit = shapeNodeOf(event);
+  function shapeFromChrome(event: MouseEvent): { node: SVGGraphicsElement; ref: string } | null {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest('#svg-selection, #svg-edit') || !sheetEl) return null;
+    const ref = hitRef(target);
+    if (!ref) return null;
+    const node = sheetEl.querySelector(`[data-kind="svg"][data-pick="${CSS.escape(ref)}"]`);
+    return node instanceof SVGGraphicsElement ? { node, ref } : null;
+  }
+
+  function openShapeMenu(event: MouseEvent, sections: ParamSection[]) {
+    const hit = shapeNodeOf(event) || shapeFromChrome(event);
     const shape = hit ? readShape(source || '', hit.ref) : null;
     if (!hit || !shape) return false;
     event.preventDefault();
     event.stopPropagation();
-    primary = hit.ref;
-    marks = [hit.ref];
-    onpick?.(hit.ref, false);
     const local = localOn(hit.node, event);
     const anchors = shape.tag === 'path' ? pathAnchors(shape.attrs.d || '') : [];
     const kind = shape.tag === 'path' ? pathKind(shape.attrs.d || '', pathHint(shape.attrs)) : null;
@@ -1461,7 +1796,8 @@
       addAt: local && anchors.length ? nearestSegment(anchors, local) + 1 : 1,
       addX: local?.x || 0,
       addY: local?.y || 0,
-      remove: onPoint ? Number(anchorAttr) : null
+      remove: onPoint ? Number(anchorAttr) : null,
+      sections
     };
     return true;
   }
@@ -1488,6 +1824,7 @@
   function dropSelection(event: KeyboardEvent) {
     if (event.key === 'Escape') {
       menu = null;
+      playerMenu = null;
       shapeMenu = null;
       return;
     }
@@ -1496,9 +1833,11 @@
     if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"], .monaco-editor')) return;
     event.preventDefault();
     const refs = [...marks];
+    pinned = '';
     primary = selected;
     marks = [];
     menu = null;
+    playerMenu = null;
     shapeMenu = null;
     onpick?.('');
     onforget?.(refs);
@@ -1531,40 +1870,127 @@
     shapeMenu = { ...current, kind };
   }
 
+  /** L’anneau d’un joueur porte le `data-pick`. Les paramètres sont sur le groupe. */
+  function hitRef(target: Element | null): string {
+    if (!target) return '';
+    if (target.closest('[data-shape-ui]') && boundShape?.ref) return boundShape.ref;
+    const node = target.closest('[data-pick], [data-ref], [data-zone]');
+    const picked = node?.getAttribute('data-pick') || node?.getAttribute('data-ref') || node?.getAttribute('data-zone') || '';
+    if (picked) return picked;
+    const knots = target.closest('[data-knots]')?.getAttribute('data-knots') || '';
+    if (knots) return knots;
+    if (target.closest('#svg-selection') && marks.length === 1) return marks[0];
+    return '';
+  }
+
+  function elementHost(ref: string): Element | null {
+    if (!sheetEl || !ref) return null;
+    const host = sheetEl.querySelector(`[data-element][data-pick="${CSS.escape(ref)}"]`);
+    return host instanceof Element ? host : null;
+  }
+
+  function readParams(node: Element | null): Record<string, string> {
+    const current: Record<string, string> = {};
+    try {
+      const parsed = JSON.parse(node?.getAttribute('data-params') || '{}') as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        for (const [key, value] of Object.entries(parsed)) {
+          if (typeof value === 'string') current[key] = value;
+        }
+      }
+    } catch { /* attribut illisible */ }
+    return current;
+  }
+
+  function paramSections(ref: string): ParamSection[] {
+    const host = elementHost(ref);
+    const element = host?.getAttribute('data-element') || '';
+    const current = readParams(host);
+    return (choicesOf?.(element) || [])
+      .filter(section => section.names.length)
+      .map(section => ({ key: section.key, names: section.names, current: current[section.key] || '' }));
+  }
+
+  /** Même sélection qu’un clic gauche : cadre, et poignées pour un tracé. */
+  function selectRef(ref: string) {
+    playing = false;
+    progress = 0;
+    pinned = ref;
+    primary = ref;
+    marks = [ref];
+    onpick?.(ref, false);
+    const node = sheetEl?.querySelector(`[data-kind="svg"][data-pick="${CSS.escape(ref)}"]`);
+    if (!(node instanceof SVGGraphicsElement)) return;
+    shapeEpoch += 1;
+    mountShape(ref, source || '', sheetEl);
+  }
+
+  function arrowHost(target: Element | null, ref: string): Element | null {
+    const direct = target?.closest('[data-kind="arrow"]');
+    if (direct instanceof Element) return direct;
+    if (target?.closest('[data-knots]')?.getAttribute('data-knots') !== ref || !sheetEl) return null;
+    const host = sheetEl.querySelector(`[data-kind="arrow"][data-pick="${CSS.escape(ref)}"]`);
+    return host instanceof Element ? host : null;
+  }
+
   function openMenu(event: MouseEvent) {
     if (!editable) return;
-    if (openShapeMenu(event)) return;
     const target = event.target instanceof Element ? event.target : null;
-    const knot = target?.closest('[data-knot]');
-    const arrow = target?.closest('[data-kind="arrow"]');
-    const ref = arrow?.getAttribute('data-pick') || knot?.closest('[data-knots]')?.getAttribute('data-knots') || '';
-    const host = arrow || (ref ? sheetEl?.querySelector(`[data-kind="arrow"][data-pick="${CSS.escape(ref)}"]`) : null);
-    if (!ref || !(host instanceof Element)) return;
+    const ref = hitRef(target);
+    if (!ref) return;
     event.preventDefault();
-    const world = worldAt(event);
-    const group = knotGroup(ref);
-    const stored = world ? storedAt(ref, world) : null;
-    const role = knot?.getAttribute('data-role');
-    const onVia = role === 'via';
-    const motif = host.getAttribute('data-motif') || 'none';
-    onpick?.(ref, false);
-    menu = {
-      x: event.clientX,
-      y: event.clientY,
-      ref,
-      add: stored && group && world ? { index: segmentNear(knotPoints(group), world), x: stored.x, y: stored.y } : null,
-      remove: onVia ? Number(knot?.getAttribute('data-index') || 0) : world && group ? nearestVia(group, world) : null,
-      removeNear: !onVia,
-      wave: motif === 'sine' || motif === 'zigzag',
-      waveValue: readNum(host, 'data-wave', 0.7),
-      ampValue: readNum(host, 'data-amp', 0.2)
-    };
+    event.stopPropagation();
+    selectRef(ref);
+    const sections = paramSections(ref);
+    if (openShapeMenu(event, sections)) {
+      menu = null;
+      playerMenu = null;
+      return;
+    }
+    const host = arrowHost(target, ref);
+    shapeMenu = null;
+    if (host) {
+      const world = worldAt(event);
+      const group = knotGroup(ref);
+      const stored = world ? storedAt(ref, world) : null;
+      const knot = target?.closest('[data-knot]');
+      const role = knot?.getAttribute('data-role');
+      const onVia = role === 'via';
+      const motif = host.getAttribute('data-motif') || 'none';
+      playerMenu = null;
+      menu = {
+        x: event.clientX,
+        y: event.clientY,
+        ref,
+        add: stored && group && world ? { index: segmentNear(knotPoints(group), world), x: stored.x, y: stored.y } : null,
+        remove: onVia ? Number(knot?.getAttribute('data-index') || 0) : world && group ? nearestVia(group, world) : null,
+        removeNear: !onVia,
+        wave: motif === 'sine' || motif === 'zigzag',
+        waveValue: readNum(host, 'data-wave', 0.7),
+        ampValue: readNum(host, 'data-amp', 0.2),
+        sections
+      };
+      return;
+    }
+    menu = null;
+    playerMenu = sections.length ? { x: event.clientX, y: event.clientY, ref, sections } : null;
   }
 
   function closeMenu(event: Event) {
-    if (event.target instanceof Node && (menuEl?.contains(event.target) || shapeMenuEl?.contains(event.target))) return;
+    if (event.target instanceof Node && (menuEl?.contains(event.target) || playerMenuEl?.contains(event.target) || shapeMenuEl?.contains(event.target))) return;
     menu = null;
+    playerMenu = null;
     shapeMenu = null;
+  }
+
+  function pickParam(ref: string, key: string, value: string) {
+    const sections = playerMenu?.ref === ref ? playerMenu.sections : menu?.ref === ref ? menu.sections : shapeMenu?.ref === ref ? shapeMenu.sections : [];
+    const section = sections.find(item => item.key === key);
+    menu = null;
+    playerMenu = null;
+    shapeMenu = null;
+    if (!section || value === section.current) return;
+    onparam?.(ref, key, value);
   }
 
   function addFromMenu() {
@@ -1636,6 +2062,7 @@
     };
   });
 
+  type ParamSection = { key: string; names: string[]; current: string };
   type ArrowMenu = {
     x: number;
     y: number;
@@ -1646,9 +2073,22 @@
     wave: boolean;
     waveValue: number;
     ampValue: number;
+    sections: ParamSection[];
   };
   let menu = $state<ArrowMenu | null>(null);
   let menuEl = $state<HTMLDivElement | null>(null);
+  let playerMenu = $state<{ x: number; y: number; ref: string; sections: ParamSection[] } | null>(null);
+  let playerMenuEl = $state<HTMLDivElement | null>(null);
+
+  $effect(() => {
+    const current = playerMenu;
+    const node = playerMenuEl;
+    if (!current || !node) return;
+    const box = node.getBoundingClientRect();
+    const x = Math.max(8, Math.min(current.x, window.innerWidth - box.width - 8));
+    const y = Math.max(8, Math.min(current.y, window.innerHeight - box.height - 8));
+    if (x !== current.x || y !== current.y) playerMenu = { ...current, x, y };
+  });
   let shapeMenu = $state<{
     x: number;
     y: number;
@@ -1663,12 +2103,13 @@
     addX: number;
     addY: number;
     remove: number | null;
+    sections: ParamSection[];
   } | null>(null);
   let shapeMenuEl = $state<HTMLDivElement | null>(null);
 
   let shownMark = '';
   let shapeEpoch = 0;
-  let boundShape: { ref: string; node: SVGGraphicsElement; grab: (event: PointerEvent) => void; dispose: () => void } | null = null;
+  let boundShape: { ref: string; node: SVGGraphicsElement; grab: (event: PointerEvent) => void; refresh: (attrs: ShapeAttrs) => void; dispose: () => void } | null = null;
 
   function clearShape() {
     boundShape?.dispose();
@@ -1699,21 +2140,34 @@
       group,
       tag: shape.tag,
       attrs: shape.attrs,
+      spin: false,
+      knots: shape.tag === 'path' || shape.tag === 'polygon' || shape.tag === 'polyline',
       onSelect: () => {
         primary = ref;
         marks = [ref];
         onpick?.(ref, false);
       },
       onEdit: (attrs, commit) => {
+        placeSelection();
         if (commit) onshape?.(ref, attrs);
       }
     });
-    boundShape = { ref, node, grab: controls.grab, dispose: controls.dispose };
+    boundShape = { ref, node, grab: controls.grab, refresh: controls.refresh, dispose: controls.dispose };
+    placeSelection();
   }
 
   $effect(() => {
     if (!editable) return;
     const mark = selected;
+    const held = pinned;
+    if (held && mark !== held) {
+      if (!mark) {
+        if (primary !== held) primary = held;
+        if (marks.length !== 1 || marks[0] !== held) marks = [held];
+        return;
+      }
+      pinned = '';
+    }
     if (mark === primary) return;
     if (mark && marks.includes(mark) && marks.length > 1) {
       primary = mark;
@@ -1725,7 +2179,7 @@
 
   $effect(() => {
     if (!editable || source === undefined) return;
-    const ref = marks.length > 1 ? '' : (selected || '');
+    const ref = marks.length === 1 ? marks[0] : '';
     const text = source;
     svg;
     const host = sheetEl;
@@ -1758,12 +2212,14 @@
       group.setAttribute('display', group.getAttribute('data-knots') === mark ? 'inline' : 'none');
     }
     for (const node of root.querySelectorAll('[data-rotate], [data-resize]')) {
+      if (node.closest('#svg-selection')) continue;
       const host = node.closest('[data-pick]');
       const selected = host?.getAttribute('data-pick') === mark;
       const on = selected && (node.hasAttribute('data-rotate') || host?.getAttribute('data-fit') === 'free');
       node.setAttribute('fill-opacity', on ? '1' : '0');
       node.setAttribute('stroke-opacity', on ? '1' : '0');
       node.setAttribute('pointer-events', on ? 'all' : 'none');
+      node.querySelector('.fc-knob')?.setAttribute('pointer-events', on ? 'all' : 'none');
     }
     if (editable && marks.length >= 1) placeSelection();
     else root.querySelector('#svg-selection')?.remove();
@@ -1848,6 +2304,12 @@
         <input type="range" min="0" max="1.5" step="0.05" value={menu.ampValue} aria-label="Amplitude" oninput={(event) => tune('amp', event)} />
       </label>
     {/if}
+    {@render paramList(menu.sections, menu.ref)}
+  </div>
+{/if}
+{#if playerMenu}
+  <div class="menu" style:left="{playerMenu.x}px" style:top="{playerMenu.y}px" bind:this={playerMenuEl} role="menu" aria-label="Paramètres">
+    {@render paramList(playerMenu.sections, playerMenu.ref)}
   </div>
 {/if}
 {#if shapeMenu}
@@ -1861,15 +2323,31 @@
       kind={shapeMenu.kind}
       canAdd={shapeMenu.canAdd}
       canRemove={shapeMenu.canRemove}
+      sections={shapeMenu.sections}
       onpaint={paintFromMenu}
       ondelete={forgetFromMenu}
       onadd={addFromShape}
       onremove={removeFromShape}
       onkind={kindFromMenu}
+      onparam={(key, value) => pickParam(shapeMenu?.ref || '', key, value)}
     />
   </div>
 {/if}
 <svelte:window onkeydown={dropSelection} onpointerdown={closeMenu} />
+
+{#snippet paramList(sections: ParamSection[], ref: string)}
+  {#each sections as section (section.key)}
+    <div class="label">{section.key}</div>
+    <button type="button" role="menuitemradio" aria-checked={!section.current} class:on={!section.current} onclick={() => pickParam(ref, section.key, '')}>
+      <span class="tick">{!section.current ? '✓' : ''}</span>Défaut
+    </button>
+    {#each section.names as name (name)}
+      <button type="button" role="menuitemradio" aria-checked={name === section.current} class:on={name === section.current} onclick={() => pickParam(ref, section.key, name)}>
+        <span class="tick">{name === section.current ? '✓' : ''}</span>{name}
+      </button>
+    {/each}
+  {/each}
+{/snippet}
 
 {#snippet animationBar()}
   <AnimationBar {phases} {phase} {playing} onphase={showPhase} onreset={resetAnimation} ontoggle={togglePlay} />
@@ -1894,6 +2372,8 @@
     position: fixed;
     z-index: 80;
     min-width: 14rem;
+    max-height: 70vh;
+    overflow: auto;
     padding: 0.25rem;
     border: 1px solid var(--color-default-medium);
     border-radius: 0.5rem;
@@ -1915,7 +2395,13 @@
     text-align: left;
   }
   .menu button { cursor: pointer; }
-  .menu button:hover { background: var(--color-neutral-secondary-medium); }
+  .menu button:hover, .menu button.on { background: var(--color-neutral-secondary-medium); }
+  .tick { width: 1rem; flex: none; }
+  .label {
+    padding: 0.35rem 0.55rem 0.05rem;
+    color: var(--color-body);
+    font-size: 0.7rem;
+  }
   .tune span { flex: 1 1 auto; }
   .tune input[type='range'] {
     width: 5.5rem;
